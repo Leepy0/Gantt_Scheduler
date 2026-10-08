@@ -197,7 +197,12 @@ public class HttpTests : IClassFixture<AppFactory>
     public async Task PDF_내보내기()
     {
         var client = await RegisteredClientAsync();
-        foreach (var url in new[] { "/Projects/Detail?handler=Pdf&id=1", "/Projects/Detail?handler=Pdf&id=2", "/Insights/Weekly?handler=Pdf" })
+        // (주소, 가로 양식 여부)
+        foreach (var (url, landscape) in new[]
+                 {
+                     ("/Projects/Detail?handler=Pdf&id=1", true), ("/Projects/Detail?handler=Pdf&id=2", true),
+                     ("/Insights/Weekly?handler=Pdf", false),
+                 })
         {
             var res = await client.GetAsync(url);
             var bytes = await res.Content.ReadAsByteArrayAsync();
@@ -205,6 +210,13 @@ public class HttpTests : IClassFixture<AppFactory>
                 $"{url} → {(int)res.StatusCode}\n{System.Text.Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 1000))}");
             Assert.Equal("application/pdf", res.Content.Headers.ContentType?.MediaType);
             Assert.True(bytes.Length > 1000 && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "%PDF", url + " 이 PDF 가 아님");
+
+            // 쪽 방향: 과제 일정은 A4 가로(표가 넓다), 주간 보고는 세로
+            var box = Regex.Match(System.Text.Encoding.Latin1.GetString(bytes), @"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)");
+            Assert.True(box.Success, url + " 에서 쪽 크기를 찾지 못함");
+            var width = double.Parse(box.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var height = double.Parse(box.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(landscape ? width > height : height > width, $"{url} 쪽 크기 {width}x{height}");
         }
     }
 

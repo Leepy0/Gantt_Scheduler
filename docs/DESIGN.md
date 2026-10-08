@@ -23,24 +23,38 @@
    - 작업: 실적 종료 있음 → 완료 / 실적 시작 있음 → 진행 중 / 없음 → 예정. 목표 종료가 지난 미완료는 지연, 목표보다 늦게 끝난 완료는 "초과 완료"
 4. **과제 상태**는 진행/보류/중단/완료. 완료는 모든 단계가 끝나면 자동으로 바뀌고, 완료 취소 시 다시 진행으로 돌아온다. 보류·중단은 사유 필수.
 5. **목표일을 바꿀 때는 사유 필수** (단계 목표일, 작업 목표 일정). 처음 정할 때는 사유 없이 기록만 남긴다.
-6. **연쇄 이동**: 단계 목표일을 바꿀 때 이후 미완료 단계를 같은 일수만큼 함께 옮길 수 있다. 한 번의 사유로 묶어 기록한다(BatchId).
+6. **연쇄 이동**: 단계 목표일을 바꿀 때 이후 미완료 단계를 같은 **근무일 수**만큼 함께 옮길 수 있다. 한 번의 사유로 묶어 기록한다(BatchId).
 7. **입고 추천일** = 검수 단계 일자(완료일 우선, 없으면 목표일) + 법인의 해상 운송 소요일. 입고 단계 편집 시 추천값으로 보여 준다.
 8. **지연 판정의 '오늘'은 한국 시간** 기준.
 9. 기준 정보는 지우지 않고 **사용 중지**한다(기존 과제에 계속 표시). 단계 템플릿과 공휴일만 바로 삭제한다. 단계 템플릿은 과제 생성 시점에 복사되므로 나중에 바꿔도 기존 과제는 영향이 없다.
 
-규칙 구현은 `Domain/Rules.cs`(계산)와 `Services/ProjectService.cs`(변경 검증)에 있다.
+10. **근무일**: 주말과 관리 화면의 공휴일을 뺀 날. 기간 표시(근무일 n일), 연쇄 이동, 의존 관계에 따른 일정 밀기에 쓴다. 지연 일수(D+n)는 달력 날짜 기준 그대로다.
+11. **의존 관계**는 "선행이 끝나야 후행을 시작"(FS) 한 가지다. 후행은 선행 종료 다음 근무일(+간격) 이후에 시작해야 한다.
+    - 사람이 입력한 일정이 선행보다 이르면 거절한다. 순환 연결도 거절한다.
+    - 선행 일정이 늦어지면 **아직 시작하지 않은** 후행은 근무일 기간을 유지한 채 자동으로 밀린다(이력에 기록). 이미 시작한 후행은 건드리지 않는다.
+    - **여유** = 일정을 미뤄도 단계 목표일과 후행 작업에 영향이 없는 일수. 미완료이고 여유가 0 이하인 작업이 **임계 작업**이다.
+12. **기준선**은 "기준선 확정"을 누른 시점의 단계 목표일·작업 목표 일정을 따로 저장한 것이다. 이후 일정이 바뀌면 기준선 대비 +n일로 보여 준다. 다시 확정하면 덮어쓴다.
+13. **체크리스트**: 단계에 체크 항목을 둘 수 있고, 남은 항목이 있으면 단계를 완료할 수 없다. 유형의 단계 템플릿에 기본 항목을 넣어 두면 과제 생성 시 복사된다.
+14. **동시 수정**: 과제·단계·작업에 버전 번호를 둔다. 화면이 읽은 버전과 저장 시점의 버전이 다르면 저장을 거절하고(HTTP 409) 화면을 최신 내용으로 바꾼다. 뒤에 저장한 사람이 앞사람 내용을 모르고 덮어쓰는 일을 막는다.
+15. **과제 복제**: 단계·체크 항목·기기/용기 내역을 복사하고, 날짜는 새 착수일에 맞춰 통째로 옮긴다. 작업과 의존 관계는 선택. 실적·진행률·완료·활동·첨부·기준선은 복사하지 않는다.
+
+규칙 구현은 `Domain/Rules.cs`(계산), `Domain/WorkCalendar.cs`(근무일), `Services/ProjectService.cs`(변경 검증)에 있다.
 
 ## 3. 데이터 모델
 
 ```
-AppUser ─< UserAddress(Ip)
+OrgUnit (ParentId, Level 1 그룹 → 2 파트)
+AppUser(OrgUnit?) ─< UserAddress(Ip)
 Location (ParentId, Level 1 법인 → 2 제품군 → 3 라인 → 4 층; 법인만 Country, OceanLeadDays)
-Category(Kind: General/Automation/Container) ─< StageTemplate(Kind: Normal/Inspection/Inbound)
+Category(Kind: General/Automation/Container) ─< StageTemplate(Kind: Normal/Inspection/Inbound) ─< TemplateCheckItem
 EquipmentType (ParentId: AGV·AMR → ANT/Belt/Roller/상차형)   ContainerType   Vendor   Holiday
 
-Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Description)
-  ├─< Stage(Name, Kind, SortOrder, TargetDate, CompletedDate)
-  │     └─< WorkItem(Title, Owner, CoOwner, Progress, PlanStart/End, ActualStart/End, Note)
+Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Description, BaselineAt, Version)
+  ├─< Stage(Name, Kind, SortOrder, TargetDate, CompletedDate, BaselineDate, Version)
+  │     ├─< CheckItem(Text, SortOrder, IsDone, DoneBy, DoneAt)
+  │     └─< WorkItem(Title, Owner, CoOwner, Progress, PlanStart/End, ActualStart/End, BaselineStart/End, Note, Version)
+  ├─< WorkLink(Predecessor, Successor, LagDays)   ← 작업 의존 관계 (같은 과제 안에서만)
+  ├─< Attachment(FileName, StoredName, ContentType, Size, StageId?, UploadedBy, UploadedAt)
   ├─< ProjectEquipment(EquipmentType, Quantity)   ← 유형이 Automation 일 때
   ├─< ProjectContainer(ContainerType, Quantity)   ← 유형이 Container 일 때
   └─< Activity(Type, Text, Reason, OldValue, NewValue, BatchId, User, At, StageId?, WorkItemId?)
@@ -49,6 +63,9 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
 - 과제의 `CorporationId` 는 `LocationId` 의 최상위(법인)를 미리 풀어 둔 값이다. 법인별 집계를 간단히 하기 위해서다.
 - `Activity.StageId / WorkItemId` 는 FK 가 아닌 느슨한 참조다. 단계·작업을 지워도 이력은 남는다.
 - 협력사는 과제에 문자열로 저장한다. 관리 화면의 협력사 목록은 자동완성 후보로만 쓴다(목록에 없는 이름도 입력 가능).
+- `Version` 은 EF 의 동시성 토큰이다. 저장할 때 서비스가 1씩 올리고, UPDATE 의 WHERE 에도 들어가 읽기~저장 사이에 끼어든 변경을 DB 수준에서도 잡는다.
+- 첨부 파일 본문은 DB 가 아니라 디스크(`Storage:Path/과제번호/임의이름`)에 둔다. 원래 파일 이름은 DB 에만 있어 경로 조작 위험이 없다. 허용 확장자만 받는다.
+- 사용자의 소속은 조직(OrgUnit) 참조다. 파트에 속하면 "그룹 · 파트"로, 그룹 직속이면 그룹 이름만 표시한다.
 - 시각은 UTC 로 저장하고 화면에서 현지 시각으로 바꾼다. 날짜는 `DateOnly`.
 
 ## 4. 화면
@@ -56,16 +73,19 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
 | 화면 | 주소 | 내용 |
 |---|---|---|
 | 대시보드 | `/` | KPI(진행·지연·7일 내 목표·올해 완료), 지연 과제, 다가오는 일정, 진행 과제 간트(목표/실행 2줄), 유형별·법인별 현황. 전체/내 과제 전환 |
+| 내 할 일 | `/My` | 내가 담당(공동 담당 포함)인 작업과 내 과제의 단계를 지연 / 이번 주 / 예정으로 |
 | 과제 목록 | `/Projects` | 상태 탭, 검색, 유형·법인 필터, Excel 내보내기 |
 | 과제 등록·수정 | `/Projects/Edit` | 유형 선택 → 위치 연쇄 선택(하위가 하나면 자동 선택) → 유형에 따라 기기/용기 내역 |
-| 과제 상세 | `/Projects/Detail?id=` | 요약, 단계 진행 표시, 탭 3개 — **일정**(간트/목록 전환, 단계·작업 편집), **정보**, **활동**(댓글·변경 이력) |
-| 관리 | `/Admin` | 계층, 유형·단계, 기기, 용기, 협력사, 사용자, 공휴일 |
+| 과제 상세 | `/Projects/Detail?id=` | 요약, 단계 진행 표시, 탭 4개 — **일정**(간트/목록 전환, 막대 끌어 일정 변경, 기준선·의존선 표시, 단계·작업·체크리스트 편집), **정보**, **자료**(첨부), **활동**(댓글·변경 이력). 기준선 확정, 복제, Excel·PDF 내보내기 |
+| 분석 | `/Insights/LeadTime`, `/Weekly`, `/History` | 유형별 단계 리드타임(평균·최소·최대·목표 대비), 주간 보고(실적·일정 변경·진행 내용·다음 주 계획, Excel·PDF), 전체 변경 이력(기간·사용자·종류·검색) |
+| 관리 | `/Admin` | 계층, 유형·단계·체크 항목, 기기, 용기, 협력사, 조직, 사용자, 공휴일 |
 | 이름 등록 | `/Welcome` | 처음 접속한 IP 에서 한 번 |
 
 화면 구성 원칙:
 
 - 상세 화면은 서버가 준 JSON 하나로 그리고, 변경할 때마다 서버가 최신 과제 전체를 돌려줘 다시 그린다. 클라이언트에 계산 규칙을 두지 않는다.
 - 간트는 `wwwroot/js/gantt.js` 하나를 대시보드와 상세가 같이 쓴다. 외부 라이브러리·CDN 없음(사내망).
+- 간트 끌기는 마우스·펜에서만 동작한다. 터치에서는 화면 스크롤과 겹치므로 막대를 눌러 시트에서 날짜를 고친다. 끌어서 목표 일정을 바꿔도 사유 입력은 똑같이 거친다.
 - 모바일: 하단 탭, 과제 상세는 목록 보기가 기본(간트로 전환 가능), 편집 창은 아래에서 올라오는 시트. 입력 요소 48px.
 - 색: 평소에는 중립색 + 강조색(#1428A0)만 쓰고, 빨강은 지연, 노랑은 임박·초과 완료에만 쓴다. 상태는 색과 함께 아이콘·글자로 표시한다.
 
@@ -82,20 +102,27 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
 | | 용도 | 스키마 관리 |
 |---|---|---|
 | SQL Server | 운영 | EF 마이그레이션 — 앱 시작 시 자동 적용. 테이블은 `pm` 스키마 |
-| SQLite | 미리보기·개발·테스트 | 파일이 없으면 그때 새로 만든다(`EnsureCreated`). 모델을 바꾸면 파일을 지우고 다시 실행 |
+| SQLite | 미리보기·개발·테스트 | 파일이 없으면 그때 새로 만든다(`EnsureCreated`). 모델이 바뀌면(스키마 해시 비교) 파일을 지우고 자동으로 다시 만든다 |
 
 마이그레이션은 SQL Server 기준 한 벌만 관리한다. SQLite DB 는 버려도 되는 데이터만 담는다는 전제다.
 
 조회는 과제 전체를 단계·작업까지 읽어 메모리에서 집계한다. 과제 수백 건 규모에서는 충분하고, 두 DB 의 쿼리 번역 차이를 피할 수 있다. 과제가 수천 건을 넘으면 대시보드·목록 쿼리를 DB 집계로 바꿔야 한다.
 
-## 7. 이번 범위에서 뺀 것
+## 7. 내보내기 양식
 
-이전 설계에 있었지만 아직 넣지 않았다.
+| 파일 | 형식 | 구성 |
+|---|---|---|
+| 과제 목록 | Excel | 제목·기준일·필터 조건 → 표(상태 색, 지연 일수, 기준선 대비). 자동 필터, A4 가로 한 장 폭 |
+| 과제 일정 | Excel | 시트 4개 — 일정(요약 + 단계·작업 표), 간트(주 단위 칸 색), 체크리스트, 활동 |
+| 과제 일정 | PDF | A4 가로. 요약 + 단계·작업 표(기준선·목표·실적·대비) |
+| 주간 보고 | Excel / PDF | 요약(진행·지연·이번 주 완료·일정 변경) + 과제별 실적 / 일정 변경·사유 / 진행 내용 / 다음 주 계획 |
 
-- 첨부 파일과 미리보기
+Excel 은 ClosedXML, PDF 는 PDFsharp-MigraDoc(MIT) 로 만든다. PDF 는 한글 TTF 글꼴 파일이 필요하다(README 설정 참고).
+
+## 8. 아직 넣지 않은 것
+
 - 지연·임박 알림(메일/메신저)
-- 리드타임 통계(단계별 실제 소요일)
 - TV 상황판 화면
-- PDF 내보내기
 - Excel 가져오기
-- 작업 간 의존 관계(선행/후행) — 이전에도 생략하기로 한 항목
+- 과제 간 의존 관계, FS 외의 의존 유형(SS·FF)
+- 담당자별 부하(리소스) 보기

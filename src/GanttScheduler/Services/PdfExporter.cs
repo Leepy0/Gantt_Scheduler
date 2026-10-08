@@ -187,7 +187,8 @@ public class PdfExporter
         normal.Font.Color = Text;
 
         var sec = doc.AddSection();
-        sec.PageSetup = doc.DefaultPageSetup.Clone();
+        // DefaultPageSetup 을 복제하면 세로 기준 쪽 크기가 그대로 박혀 가로 설정이 먹지 않는다.
+        // 용지와 방향만 정하고 크기 계산은 MigraDoc 에 맡긴다
         sec.PageSetup.PageFormat = PageFormat.A4;
         sec.PageSetup.Orientation = landscape ? Orientation.Landscape : Orientation.Portrait;
         sec.PageSetup.LeftMargin = Unit.FromCentimeter(1.5);

@@ -357,7 +357,7 @@ public class ExcelExporter
             ws.Cell(r, 11).Value = Lines(p.Next);
             r++;
         }
-        Body(ws, head, r - 1, 11, centered: new[] { 5, 6 }, wrap: new[] { 1, 7, 8, 9, 10, 11 });
+        Body(ws, head, r - 1, 11, centered: new[] { 5, 6 }, wrap: new[] { 1, 7, 8, 9, 10, 11 }, top: true);
         Print(ws, head);
         return Save(wb);
     }
@@ -438,8 +438,9 @@ public class ExcelExporter
         ws.SheetView.FreezeRows(row);
     }
 
-    // 표 본문 테두리·정렬·자동 필터
-    private static void Body(IXLWorksheet ws, int headRow, int lastRow, int columns, int[]? centered = null, int[]? wrap = null)
+    // 표 본문 테두리·정렬·자동 필터.
+    // top: 여러 줄 칸이 있는 표는 모든 칸을 위쪽에 맞춘다 (한 줄 칸만 가운데에 떠 보이지 않게)
+    private static void Body(IXLWorksheet ws, int headRow, int lastRow, int columns, int[]? centered = null, int[]? wrap = null, bool top = false)
     {
         if (lastRow <= headRow)
         {
@@ -460,6 +461,7 @@ public class ExcelExporter
             range.Style.Alignment.WrapText = true;
             range.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         }
+        if (top) ws.Range(headRow + 1, 1, lastRow, columns).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
         all.SetAutoFilter();
     }
 
