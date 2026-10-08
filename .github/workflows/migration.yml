@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -31,6 +31,7 @@ jobs:
           NAME: ${{ inputs.name }}
         run: |
           case "$NAME" in *[!A-Za-z0-9_]*|"") echo "이름은 영문·숫자·밑줄만 사용합니다."; exit 1;; esac
+          dotnet restore src/GanttScheduler
           dotnet tool install --global dotnet-ef --version "10.0.*"
           export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet ef migrations add "$NAME" --project src/GanttScheduler --output-dir Data/Migrations

@@ -31,9 +31,9 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -72,9 +72,11 @@ jobs:
         run: |
           set -o pipefail
           cd e2e && npm install --no-audit --no-fund --silent && cd ..
-          ASPNETCORE_ENVIRONMENT=Development Database__SqlitePath=$RUNNER_TEMP/e2e.db \
-            dotnet src/GanttScheduler/bin/Release/net10.0/GanttScheduler.dll --contentRoot src/GanttScheduler --urls http://localhost:5080 > out/logs/app.log 2>&1 &
+          # 앱을 프로젝트 폴더에서 띄운다 (wwwroot·설정 파일 기준 경로)
+          (cd src/GanttScheduler && ASPNETCORE_ENVIRONMENT=Development Database__SqlitePath=$RUNNER_TEMP/e2e.db \
+            nohup dotnet bin/Release/net10.0/GanttScheduler.dll --urls http://localhost:5080 > ../../out/logs/app.log 2>&1 &)
           for i in $(seq 1 30); do curl -sf http://localhost:5080/health > /dev/null && break; sleep 1; done
+          curl -sf http://localhost:5080/health > /dev/null || { echo "앱이 시작되지 않았습니다."; cat out/logs/app.log; exit 1; }
           PW_CHANNEL=chrome OUT_DIR=$PWD/out node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
 
       - name: 결과를 preview 브랜치에 올리기
