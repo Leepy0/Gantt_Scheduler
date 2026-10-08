@@ -1,0 +1,103 @@
+@page
+@model GanttScheduler.Pages.Projects.EditModel
+@{
+    ViewData["Title"] = Model.IsNew ? "과제 등록" : "과제 수정";
+    ViewData["Nav"] = "projects";
+}
+
+<div class="page-head">
+    <a class="btn icon" href="@(Model.IsNew ? Url.Page("/Projects/Index") : Url.Page("/Projects/Detail", new { id = Model.Id }))" aria-label="뒤로"><svg class="ic"><use href="#i-left" /></svg></a>
+    <h1>@(Model.IsNew ? "과제 등록" : "과제 수정")</h1>
+</div>
+
+<form method="post" class="card form edit-form" id="edit-form" novalidate>
+    <input type="hidden" asp-for="Id" />
+    <input type="hidden" asp-for="Form.LocationId" id="location-id" />
+
+    @if (Model.Error != null)
+    {
+        <p class="form-error" role="alert"><svg class="ic"><use href="#i-alert" /></svg>@Model.Error</p>
+    }
+
+    <label class="field" data-field="title">
+        <span class="label">과제명</span>
+        <input asp-for="Form.Title" maxlength="200" required autocomplete="off" />
+    </label>
+
+    <div class="field" data-field="categoryId">
+        <span class="label">유형</span>
+        @if (Model.IsNew)
+        {
+            <div class="choice-row" role="radiogroup" aria-label="유형">
+                @foreach (var c in Model.Categories)
+                {
+                    <label class="choice">
+                        <input type="radio" name="Form.CategoryId" value="@c.Id" checked="@(Model.Form.CategoryId == c.Id)" />
+                        <span>@c.Name</span>
+                    </label>
+                }
+            </div>
+            <span class="hint">유형에 따라 기본 단계가 만들어집니다. 등록 후에는 바꿀 수 없습니다.</span>
+        }
+        else
+        {
+            <input type="hidden" asp-for="Form.CategoryId" />
+            <div class="readonly">@Model.CategoryName</div>
+        }
+    </div>
+
+    <div class="field" data-field="locationId">
+        <span class="label">위치</span>
+        <div class="cascade" id="cascade">
+            <select data-level="1" aria-label="법인"></select>
+            <select data-level="2" aria-label="제품군"></select>
+            <select data-level="3" aria-label="라인"></select>
+            <select data-level="4" aria-label="층"></select>
+        </div>
+        <span class="hint">법인은 필수, 나머지는 아는 데까지 선택합니다.</span>
+    </div>
+
+    <div class="field-row">
+        <label class="field" data-field="owner">
+            <span class="label">담당자</span>
+            <input asp-for="Form.Owner" maxlength="50" list="user-names" autocomplete="off" />
+        </label>
+        <label class="field" data-field="startDate">
+            <span class="label">착수일</span>
+            <input type="date" name="Form.StartDate" id="Form_StartDate" value="@(Model.Form.StartDate?.ToString("yyyy-MM-dd"))" />
+        </label>
+    </div>
+
+    <label class="field" data-field="vendor">
+        <span class="label">협력사 <span class="opt">선택</span></span>
+        <input asp-for="Form.Vendor" maxlength="100" list="vendor-names" autocomplete="off" />
+    </label>
+
+    <div class="field" id="items-field" data-field="equipments" hidden>
+        <span class="label" id="items-label">기기 내역</span>
+        <div id="items" class="items"></div>
+        <button type="button" class="btn small" id="add-item"><svg class="ic"><use href="#i-plus" /></svg>행 추가</button>
+    </div>
+
+    <label class="field" data-field="description">
+        <span class="label">설명 <span class="opt">선택</span></span>
+        <textarea asp-for="Form.Description" rows="4" maxlength="2000"></textarea>
+    </label>
+
+    <div class="form-actions">
+        <a class="btn" href="@(Model.IsNew ? Url.Page("/Projects/Index") : Url.Page("/Projects/Detail", new { id = Model.Id }))">취소</a>
+        <button type="submit" class="btn primary">@(Model.IsNew ? "등록" : "저장")</button>
+    </div>
+
+    <datalist id="user-names">
+        @foreach (var n in Model.UserNames) {<option value="@n"></option>}
+    </datalist>
+    <datalist id="vendor-names">
+        @foreach (var n in Model.VendorNames) {<option value="@n"></option>}
+    </datalist>
+</form>
+
+<script id="page-data" type="application/json">@Html.Raw(Model.MetaJson)</script>
+@section Scripts {
+    <script src="~/js/edit.js" asp-append-version="true"></script>
+}

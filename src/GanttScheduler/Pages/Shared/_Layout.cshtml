@@ -1,0 +1,49 @@
+@inject CurrentUser Me
+@{
+    var nav = ViewData["Nav"] as string ?? "";
+    var bare = ViewData["Bare"] as bool? ?? false;
+}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1428A0" />
+    <title>@ViewData["Title"] · 과제 스케줄러</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body class="@(bare ? "bare" : "")">
+    <partial name="_Icons" />
+    @if (!bare)
+    {
+        <header class="top">
+            <a class="brand" asp-page="/Index">과제 스케줄러</a>
+            <nav class="top-nav" aria-label="주 메뉴">
+                <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")" aria-current="@(nav == "dash" ? "page" : null)">대시보드</a>
+                <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")" aria-current="@(nav == "projects" ? "page" : null)">과제</a>
+                <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)">관리</a>
+            </nav>
+            <div class="me" title="접속 IP @Me.Ip">
+                <svg class="ic"><use href="#i-user" /></svg>
+                <span>@Me.Name</span>
+            </div>
+        </header>
+    }
+    <main class="page">
+        @RenderBody()
+    </main>
+    @if (!bare)
+    {
+        <nav class="bottom-nav" aria-label="주 메뉴">
+            <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")"><svg class="ic"><use href="#i-dash" /></svg><span>대시보드</span></a>
+            <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")"><svg class="ic"><use href="#i-list" /></svg><span>과제</span></a>
+            <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")"><svg class="ic"><use href="#i-gear" /></svg><span>관리</span></a>
+        </nav>
+    }
+    <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+    @Html.AntiForgeryToken()
+    <script>window.APP_BASE = '@Url.Content("~/")';</script>
+    <script src="~/js/app.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

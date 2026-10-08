@@ -1,0 +1,13 @@
+@page
+@attribute [Microsoft.AspNetCore.Mvc.IgnoreAntiforgeryToken]
+@{
+    ViewData["Title"] = "오류";
+    ViewData["Bare"] = true;
+}
+<section class="welcome">
+    <div class="card welcome-card">
+        <h1>요청을 처리하지 못했습니다</h1>
+        <p class="muted">서버에서 오류가 발생했습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 알려 주세요.</p>
+        <a class="btn primary block" href="~/">대시보드로 이동</a>
+    </div>
+</section>

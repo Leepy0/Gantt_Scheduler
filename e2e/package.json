@@ -1,0 +1,11 @@
+{
+  "name": "gantt-scheduler-e2e",
+  "private": true,
+  "description": "화면 점검 스크립트 (Playwright)",
+  "scripts": {
+    "check": "node run.cjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.0"
+  }
+}

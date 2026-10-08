@@ -1,0 +1,48 @@
+# EF Core 마이그레이션 추가 (SQL Server 기준).
+# 모델(Domain/Entities.cs, Data/AppDb.cs)을 바꾼 뒤 Actions 탭에서 이름을 넣고 실행하면
+# src/GanttScheduler/Data/Migrations 에 마이그레이션을 만들어 main 에 커밋한다.
+# PC 에 .NET SDK 가 있으면 직접 실행해도 된다:
+#   dotnet ef migrations add <이름> --project src/GanttScheduler --output-dir Data/Migrations
+name: 마이그레이션 추가
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "마이그레이션 이름 (영문, 예: AddWorkPriority)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  add:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 마이그레이션 생성
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          case "$NAME" in *[!A-Za-z0-9_]*|"") echo "이름은 영문·숫자·밑줄만 사용합니다."; exit 1;; esac
+          dotnet tool install --global dotnet-ef --version "10.0.*"
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef migrations add "$NAME" --project src/GanttScheduler --output-dir Data/Migrations
+          # 적용될 SQL 을 로그로 남긴다
+          dotnet ef migrations script --project src/GanttScheduler --idempotent | tail -n 200
+
+      - name: main 에 커밋
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/GanttScheduler/Data/Migrations
+          git commit -m "마이그레이션 추가: $NAME"
+          git push

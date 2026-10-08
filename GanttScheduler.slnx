@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GanttScheduler/GanttScheduler.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GanttScheduler.Tests/GanttScheduler.Tests.csproj" />
+  </Folder>
+</Solution>

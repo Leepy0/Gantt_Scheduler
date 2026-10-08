@@ -1,0 +1,72 @@
+@page
+@model GanttScheduler.Pages.Projects.DetailModel
+@{
+    ViewData["Title"] = Model.Project.Title;
+    ViewData["Nav"] = "projects";
+}
+
+<div id="detail" class="detail">
+    <div class="page-head">
+        <a class="btn icon" asp-page="/Projects/Index" aria-label="과제 목록"><svg class="ic"><use href="#i-left" /></svg></a>
+        <h1 id="p-title">@Model.Project.Title</h1>
+    </div>
+
+    <section class="card summary" id="summary" aria-live="polite"></section>
+
+    <nav class="stepper" id="stepper" aria-label="단계 진행"></nav>
+
+    <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="on" data-tab="schedule" aria-selected="true">일정</button>
+        <button type="button" role="tab" data-tab="info" aria-selected="false">정보</button>
+        <button type="button" role="tab" data-tab="activity" aria-selected="false">활동 <span class="count" id="activity-count"></span></button>
+    </div>
+
+    <section class="tab-panel" id="tab-schedule">
+        <div class="toolbar">
+            <div class="seg small" id="view-mode" role="group" aria-label="보기 방식">
+                <button type="button" data-view="gantt"><svg class="ic"><use href="#i-gantt" /></svg>간트</button>
+                <button type="button" data-view="list"><svg class="ic"><use href="#i-list" /></svg>목록</button>
+            </div>
+            <div class="seg small" id="zoom" role="group" aria-label="간트 배율">
+                <button type="button" data-zoom="day">일</button>
+                <button type="button" data-zoom="week">주</button>
+                <button type="button" data-zoom="month">월</button>
+            </div>
+            <button type="button" class="btn small" id="go-today">오늘</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn small" id="add-stage"><svg class="ic"><use href="#i-plus" /></svg>단계</button>
+            <button type="button" class="btn small primary" id="add-work"><svg class="ic"><use href="#i-plus" /></svg>작업</button>
+        </div>
+        <div class="card flush" id="schedule-gantt">
+            <div id="gantt" class="gantt-host tall"></div>
+            <div class="legend">
+                <span><i class="lg plan"></i>목표</span>
+                <span><i class="lg done"></i>실적(완료)</span>
+                <span><i class="lg cur"></i>실적(진행 중)</span>
+                <span><i class="lg over"></i>목표 초과 완료</span>
+                <span><i class="lg late"></i>지연</span>
+                <span><i class="lg fc"></i>작업 기준 예상 종료</span>
+            </div>
+        </div>
+        <div id="schedule-list" class="stage-list" hidden></div>
+    </section>
+
+    <section class="tab-panel" id="tab-info" hidden></section>
+
+    <section class="tab-panel" id="tab-activity" hidden>
+        <form class="card comment-form" id="comment-form">
+            <label class="field">
+                <span class="label">진행 내용 남기기</span>
+                <textarea id="comment-text" rows="2" maxlength="1000" placeholder="진행 상황이나 이슈를 남겨 주세요"></textarea>
+            </label>
+            <div class="form-actions"><button type="submit" class="btn primary">등록</button></div>
+        </form>
+        <div class="card flush"><ul class="feed" id="feed"></ul></div>
+    </section>
+</div>
+
+<script id="page-data" type="application/json">@Html.Raw(Model.DataJson)</script>
+@section Scripts {
+    <script src="~/js/gantt.js" asp-append-version="true"></script>
+    <script src="~/js/detail.js" asp-append-version="true"></script>
+}

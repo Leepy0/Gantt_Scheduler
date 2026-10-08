@@ -1,0 +1,141 @@
+@page
+@model GanttScheduler.Pages.Projects.IndexModel
+@{
+    ViewData["Title"] = "과제";
+    ViewData["Nav"] = "projects";
+    // Excel 내보내기는 현재 필터 그대로
+    var excelRoute = new Dictionary<string, string> { ["state"] = Model.StateKey };
+    if (!string.IsNullOrWhiteSpace(Model.Q)) excelRoute["q"] = Model.Q;
+    if (Model.Category != null) excelRoute["category"] = Model.Category.Value.ToString();
+    if (Model.Corp != null) excelRoute["corp"] = Model.Corp.Value.ToString();
+    if (Model.Mine) excelRoute["mine"] = "true";
+}
+
+<div class="page-head">
+    <h1>과제</h1>
+    <span class="count">@Model.Rows.Count</span>
+    <span class="spacer"></span>
+    <a class="btn" asp-page="/Projects/Index" asp-page-handler="Excel" asp-all-route-data="excelRoute" title="Excel 내보내기">
+        <svg class="ic"><use href="#i-download" /></svg><span class="hide-sm">Excel</span>
+    </a>
+    <a class="btn primary" asp-page="/Projects/Edit"><svg class="ic"><use href="#i-plus" /></svg>과제 등록</a>
+</div>
+
+<form method="get" class="filters" id="filters">
+    <div class="state-tabs" role="group" aria-label="상태">
+        @foreach (var (key, label) in GanttScheduler.Pages.Projects.IndexModel.States)
+        {
+            <label class="state-tab @(Model.StateKey == key ? "on" : "")">
+                <input type="radio" name="state" value="@key" checked="@(Model.StateKey == key)" />@label
+            </label>
+        }
+    </div>
+    <div class="filter-row">
+        <label class="search">
+            <svg class="ic"><use href="#i-search" /></svg>
+            <input type="search" name="q" value="@Model.Q" placeholder="과제명·담당자·위치 검색" aria-label="검색" />
+        </label>
+        <select name="category" aria-label="유형">
+            <option value="">유형 전체</option>
+            @foreach (var c in Model.Categories)
+            {
+                <option value="@c.Id" selected="@(Model.Category == c.Id)">@c.Name</option>
+            }
+        </select>
+        <select name="corp" aria-label="법인">
+            <option value="">법인 전체</option>
+            @foreach (var c in Model.Corporations)
+            {
+                <option value="@c.Id" selected="@(Model.Corp == c.Id)">@c.Name</option>
+            }
+        </select>
+        <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
+        <button type="submit" class="btn">조회</button>
+    </div>
+</form>
+
+@if (Model.Rows.Count == 0)
+{
+    <section class="card">
+        <p class="empty">
+            조건에 맞는 과제가 없습니다.
+            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a>
+        </p>
+    </section>
+}
+else
+{
+    <section class="card flush">
+        <div class="ptable" role="table" aria-label="과제 목록">
+            <div class="ptable-head" role="row">
+                <span role="columnheader">과제</span>
+                <span role="columnheader">위치</span>
+                <span role="columnheader">담당</span>
+                <span role="columnheader">현재 단계</span>
+                <span role="columnheader">진행률</span>
+                <span role="columnheader">목표 종료</span>
+                <span role="columnheader">상태</span>
+            </div>
+            @foreach (var p in Model.Rows)
+            {
+                <a class="ptable-row" role="row" asp-page="/Projects/Detail" asp-route-id="@p.Id">
+                    <span class="c-title" role="cell">
+                        <span class="row-title">@p.Title</span>
+                        <span class="row-sub">@p.Category</span>
+                    </span>
+                    <span class="c-loc" role="cell">
+                        <span>@p.Corporation</span>
+                        <span class="row-sub">@p.LocationPath</span>
+                    </span>
+                    <span class="c-owner" role="cell">@p.Owner</span>
+                    <span class="c-stage" role="cell">
+                        @if (p.CurrentStage != null)
+                        {
+                            <span>@p.CurrentStage</span>
+                            <span class="row-sub">@(p.CurrentTarget?.ToString("MM-dd") ?? "목표일 미정")</span>
+                        }
+                        else
+                        {
+                            <span class="muted">-</span>
+                        }
+                    </span>
+                    <span class="c-progress" role="cell">
+                        <span class="progress" aria-hidden="true"><i style="width:@(p.Progress)%"></i></span>
+                        <span class="num">@p.Progress%</span>
+                    </span>
+                    <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
+                    <span class="c-state" role="cell">
+                        @if (p.DelayDays > 0)
+                        {
+                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@p.DelayDays</span>
+                        }
+                        else if (p.State == "active")
+                        {
+                            <span class="chip accent">진행</span>
+                        }
+                        else if (p.State == "done")
+                        {
+                            <span class="chip ok"><svg class="ic"><use href="#i-check" /></svg>완료</span>
+                        }
+                        else if (p.State == "hold")
+                        {
+                            <span class="chip"><svg class="ic"><use href="#i-pause" /></svg>보류</span>
+                        }
+                        else
+                        {
+                            <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>중단</span>
+                        }
+                    </span>
+                </a>
+            }
+        </div>
+    </section>
+}
+
+@section Scripts {
+    <script>
+        // 상태 탭·선택 상자는 바꾸는 즉시 조회
+        document.querySelectorAll('#filters input[type=radio], #filters select, #filters input[type=checkbox]')
+            .forEach(function (el) { el.addEventListener('change', function () { document.getElementById('filters').submit(); }); });
+    </script>
+}

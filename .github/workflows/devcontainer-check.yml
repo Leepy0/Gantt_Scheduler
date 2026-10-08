@@ -1,0 +1,22 @@
+# Codespaces 미리보기 환경(.devcontainer)이 빌드되고 앱이 뜨는지 확인 (수동 실행)
+name: 미리보기 환경 점검
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: devcontainers/ci@v0.3
+        with:
+          push: never
+          runCmd: |
+            set -e
+            tools/preview.sh start
+            for i in $(seq 1 90); do curl -sf http://localhost:5080/health > /dev/null && break; sleep 2; done
+            curl -sf http://localhost:5080/health
+            curl -s -o /dev/null -w 'welcome %{http_code}\n' http://localhost:5080/Welcome
+            tail -n 5 /tmp/gantt-preview.log

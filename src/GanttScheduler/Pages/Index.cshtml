@@ -1,0 +1,188 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "대시보드";
+    ViewData["Nav"] = "dash";
+    var d = Model.Data;
+    var catMax = Math.Max(1, d.ByCategory.Select(s => s.Total).DefaultIfEmpty(0).Max());
+    var corpMax = Math.Max(1, d.ByCorporation.Select(s => s.Total).DefaultIfEmpty(0).Max());
+    string Pct(int v, int max) => (v * 100.0 / max).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+}
+
+<div class="page-head">
+    <h1>대시보드</h1>
+    <div class="seg" role="group" aria-label="범위">
+        <a asp-page="/Index" class="@(Model.Mine ? "" : "on")">전체</a>
+        <a asp-page="/Index" asp-route-mine="true" class="@(Model.Mine ? "on" : "")">내 과제</a>
+    </div>
+    <span class="spacer"></span>
+    <span class="asof">기준 @Model.AsOf</span>
+    <a class="btn icon" asp-page="/Index" asp-route-mine="@(Model.Mine ? "true" : null)" title="새로고침" aria-label="새로고침"><svg class="ic"><use href="#i-refresh" /></svg></a>
+</div>
+
+<section class="kpis">
+    <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@(Model.Mine ? "true" : null)">
+        <span class="kpi-label">진행 과제</span>
+        <span class="kpi-value">@d.Kpi.Active</span>
+        <span class="kpi-sub">보류 @d.Kpi.Hold</span>
+    </a>
+    <a class="kpi @(d.Kpi.Delayed > 0 ? "alarm" : "")" asp-page="/Projects/Index" asp-route-state="delayed" asp-route-mine="@(Model.Mine ? "true" : null)">
+        <span class="kpi-label">@if (d.Kpi.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span>
+        <span class="kpi-value">@d.Kpi.Delayed</span>
+        <span class="kpi-sub">목표일 초과</span>
+    </a>
+    <div class="kpi">
+        <span class="kpi-label">7일 내 목표</span>
+        <span class="kpi-value">@d.Kpi.DueThisWeek</span>
+        <span class="kpi-sub">단계 기준</span>
+    </div>
+    <a class="kpi" asp-page="/Projects/Index" asp-route-state="done" asp-route-mine="@(Model.Mine ? "true" : null)">
+        <span class="kpi-label">올해 완료</span>
+        <span class="kpi-value">@d.Kpi.DoneThisYear</span>
+        <span class="kpi-sub">@d.Today.Year 년</span>
+    </a>
+</section>
+
+<div class="grid-2">
+    <section class="card">
+        <header class="card-head"><h2>지연 과제</h2><span class="count">@d.Delayed.Count</span></header>
+        @if (d.Delayed.Count == 0)
+        {
+            <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 중인 과제가 없습니다.</p>
+        }
+        else
+        {
+            <ul class="rows">
+                @foreach (var p in d.Delayed)
+                {
+                    <li>
+                        <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@p.Id">
+                            <span class="row-main">
+                                <span class="row-title">@p.Title</span>
+                                <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner</span>
+                            </span>
+                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@p.DelayDays</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section class="card">
+        <header class="card-head"><h2>다가오는 일정</h2><span class="muted">@Dashboard.UpcomingDays 일 이내</span></header>
+        @if (d.Upcoming.Count == 0)
+        {
+            <p class="empty">예정된 단계 목표일이 없습니다.</p>
+        }
+        else
+        {
+            <ul class="rows">
+                @foreach (var u in d.Upcoming)
+                {
+                    <li>
+                        <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@u.ProjectId">
+                            <span class="row-main">
+                                <span class="row-title">@u.Project</span>
+                                <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")</span>
+                            </span>
+                            @if (u.DDay <= 7)
+                            {
+                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(u.DDay == 0 ? "오늘" : "D-" + u.DDay)</span>
+                            }
+                            else
+                            {
+                                <span class="chip">D-@u.DDay</span>
+                            }
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+</div>
+
+<section class="card">
+    <header class="card-head">
+        <h2>진행 과제 일정</h2>
+        <span class="count">@d.Timeline.Count</span>
+        <span class="spacer"></span>
+        <div class="seg small" id="zoom" role="group" aria-label="간트 배율">
+            <button type="button" data-zoom="day">일</button>
+            <button type="button" data-zoom="week" class="on">주</button>
+            <button type="button" data-zoom="month">월</button>
+        </div>
+        <button type="button" class="btn small" id="go-today">오늘</button>
+    </header>
+    @if (d.Timeline.Count == 0)
+    {
+        <p class="empty">진행 중인 과제가 없습니다. <a asp-page="/Projects/Edit">과제 등록</a></p>
+    }
+    else
+    {
+        <div id="gantt" class="gantt-host"></div>
+        <div class="legend">
+            <span><i class="lg plan"></i>목표</span>
+            <span><i class="lg done"></i>실행(완료)</span>
+            <span><i class="lg cur"></i>실행(진행 중)</span>
+            <span><i class="lg over"></i>목표 초과 완료</span>
+            <span><i class="lg late"></i>지연</span>
+        </div>
+    }
+</section>
+
+<div class="grid-2">
+    <section class="card">
+        <header class="card-head"><h2>유형별 현황</h2></header>
+        <div class="bars">
+            @foreach (var s in d.ByCategory)
+            {
+                <div class="bar-row">
+                    <span class="bar-name">@s.Name</span>
+                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
+                        @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, catMax)"></i>}
+                        @if (s.Delayed > 0) {<i class="b late" style="width:@Pct(s.Delayed, catMax)"></i>}
+                        @if (s.Done > 0) {<i class="b done" style="width:@Pct(s.Done, catMax)"></i>}
+                        @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, catMax)"></i>}
+                    </span>
+                    <span class="bar-num">@s.Total</span>
+                </div>
+            }
+            @if (d.ByCategory.Count == 0) {<p class="empty">과제가 없습니다.</p>}
+        </div>
+        <div class="legend">
+            <span><i class="lg on"></i>진행</span><span><i class="lg late"></i>지연</span><span><i class="lg done2"></i>완료</span><span><i class="lg paused"></i>보류·중단</span>
+        </div>
+    </section>
+
+    <section class="card">
+        <header class="card-head">
+            <h2>법인별 현황</h2>
+            <span class="spacer"></span>
+            @if (d.ByCorporation.Count > 5) {<button type="button" class="btn small" id="corp-more" aria-expanded="false">전체 보기</button>}
+        </header>
+        <div class="bars" id="corp-bars">
+            @for (var i = 0; i < d.ByCorporation.Count; i++)
+            {
+                var s = d.ByCorporation[i];
+                <div class="bar-row @(i >= 5 ? "extra" : "")">
+                    <span class="bar-name">@s.Name</span>
+                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
+                        @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, corpMax)"></i>}
+                        @if (s.Delayed > 0) {<i class="b late" style="width:@Pct(s.Delayed, corpMax)"></i>}
+                        @if (s.Done > 0) {<i class="b done" style="width:@Pct(s.Done, corpMax)"></i>}
+                        @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, corpMax)"></i>}
+                    </span>
+                    <span class="bar-num">@s.Total</span>
+                </div>
+            }
+            @if (d.ByCorporation.Count == 0) {<p class="empty">과제가 없습니다.</p>}
+        </div>
+    </section>
+</div>
+
+<script id="page-data" type="application/json">@Html.Raw(Model.DataJson)</script>
+@section Scripts {
+    <script src="~/js/gantt.js" asp-append-version="true"></script>
+    <script src="~/js/dashboard.js" asp-append-version="true"></script>
+}

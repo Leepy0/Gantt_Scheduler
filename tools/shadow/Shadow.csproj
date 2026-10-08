@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- 로컬(오프라인) 검증 전용 프로젝트: 패키지 참조 없이 가짜 EF 로 빌드한다. tools/shadow/build.sh 가 사용 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>GanttScheduler</RootNamespace>
+    <AssemblyName>GanttScheduler</AssemblyName>
+  </PropertyGroup>
+</Project>

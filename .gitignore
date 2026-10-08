@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+*.user
+App_Data/
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+e2e/out/
+publish/
+out/

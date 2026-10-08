@@ -1,18 +1,119 @@
+# push 마다: 빌드 → 테스트(SQLite) → SQL Server 마이그레이션·테스트 → 화면 점검(데스크톱·모바일 캡처)
+# 결과(로그·캡처)는 preview 브랜치에 올린다. 휴대폰에서도 GitHub 로 바로 볼 수 있다.
 name: CI
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
 jobs:
-  probe:
+  build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Gantt_Ci_2026!"
+        ports:
+          - 1433:1433
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          dotnet --list-sdks
-          google-chrome --version || true
-          mkdir -p out && echo "probe $(date -u)" > out/probe.txt
-      - uses: actions/upload-artifact@v4
+
+      - uses: actions/setup-dotnet@v4
         with:
-          name: probe
-          path: out
+          dotnet-version: 10.0.x
+
+      - name: 준비
+        run: mkdir -p out/logs out/screens
+
+      - name: 빌드
+        id: build
+        run: |
+          set -o pipefail
+          dotnet build GanttScheduler.slnx -c Release 2>&1 | tee out/logs/build.log
+
+      - name: 테스트 (SQLite)
+        id: test
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -o pipefail
+          dotnet test GanttScheduler.slnx -c Release --no-build --logger "console;verbosity=normal" 2>&1 | tee out/logs/test-sqlite.log
+
+      - name: 테스트 (SQL Server, 마이그레이션 적용)
+        id: sqlserver
+        if: always() && steps.build.outcome == 'success' && hashFiles('src/GanttScheduler/Data/Migrations/*.cs') != ''
+        env:
+          TEST_DB: SqlServer
+          TEST_SQLSERVER: "Server=localhost,1433;User Id=sa;Password=Gantt_Ci_2026!;TrustServerCertificate=True"
+        run: |
+          set -o pipefail
+          # SQL Server 컨테이너가 접속을 받을 때까지 대기
+          for i in $(seq 1 60); do (echo > /dev/tcp/localhost/1433) 2>/dev/null && break; sleep 2; done
+          sleep 10
+          dotnet test GanttScheduler.slnx -c Release --no-build --logger "console;verbosity=normal" 2>&1 | tee out/logs/test-sqlserver.log
+
+      - name: 화면 점검 (데스크톱·모바일)
+        id: e2e
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -o pipefail
+          cd e2e && npm install --no-audit --no-fund --silent && cd ..
+          ASPNETCORE_ENVIRONMENT=Development Database__SqlitePath=$RUNNER_TEMP/e2e.db \
+            dotnet src/GanttScheduler/bin/Release/net10.0/GanttScheduler.dll --contentRoot src/GanttScheduler --urls http://localhost:5080 > out/logs/app.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:5080/health > /dev/null && break; sleep 1; done
+          PW_CHANNEL=chrome OUT_DIR=$PWD/out node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
+
+      - name: 결과를 preview 브랜치에 올리기
+        if: always()
+        env:
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          SQLSERVER: ${{ steps.sqlserver.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+        run: |
+          label() { case "$1" in success) echo "통과";; failure) echo "**실패**";; *) echo "건너뜀";; esac; }
+          cd out
+          {
+            echo "# 최신 빌드 미리보기"
+            echo
+            echo "- 커밋: \`${GITHUB_SHA::7}\` — $(git -C .. log -1 --pretty=%s)"
+            echo "- 시각: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') (KST)"
+            echo "- 실행: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "| 단계 | 결과 |"
+            echo "|---|---|"
+            echo "| 빌드 | $(label "$BUILD") |"
+            echo "| 테스트 (SQLite) | $(label "$TEST") |"
+            echo "| 테스트 (SQL Server·마이그레이션) | $(label "$SQLSERVER") |"
+            echo "| 화면 점검 | $(label "$E2E") |"
+            echo
+            if [ -f report.md ]; then sed 's/^# /## /' report.md; echo; fi
+            if ls screens/m*.png > /dev/null 2>&1; then
+              echo "## 모바일 화면"; echo
+              for f in screens/m*.png; do echo "### $(basename "$f" .png)"; echo; echo "<img src=\"$f\" width=\"320\">"; echo; done
+            fi
+            if ls screens/d*.png > /dev/null 2>&1; then
+              echo "## 데스크톱 화면"; echo
+              for f in screens/d*.png; do echo "### $(basename "$f" .png)"; echo; echo "![]($f)"; echo; done
+            fi
+          } > README.md
+          git init -q -b preview
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "미리보기: ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" preview

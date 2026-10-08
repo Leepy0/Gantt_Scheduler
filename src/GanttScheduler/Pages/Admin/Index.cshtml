@@ -1,0 +1,30 @@
+@page
+@model GanttScheduler.Pages.Admin.IndexModel
+@{
+    ViewData["Title"] = "관리";
+    ViewData["Nav"] = "admin";
+}
+
+<div class="page-head">
+    <h1>관리</h1>
+    @if (!Model.IsAdmin)
+    {
+        <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>조회 전용</span>
+    }
+</div>
+
+<div class="tabs scroll" role="tablist" id="admin-tabs">
+    <button type="button" role="tab" data-kind="location" class="on">계층</button>
+    <button type="button" role="tab" data-kind="category">유형·단계</button>
+    <button type="button" role="tab" data-kind="equipment">기기</button>
+    <button type="button" role="tab" data-kind="container">용기</button>
+    <button type="button" role="tab" data-kind="vendor">협력사</button>
+    <button type="button" role="tab" data-kind="user">사용자</button>
+    <button type="button" role="tab" data-kind="holiday">공휴일</button>
+</div>
+
+<section id="admin-body" class="admin-body" data-admin="@(Model.IsAdmin ? "1" : "0")" aria-live="polite"></section>
+
+@section Scripts {
+    <script src="~/js/admin.js" asp-append-version="true"></script>
+}
