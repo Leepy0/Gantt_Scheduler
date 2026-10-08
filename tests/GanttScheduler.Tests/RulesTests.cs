@@ -136,6 +136,62 @@ public class RulesTests
     }
 
     [Fact]
+    public void 근무일_달력은_주말과_공휴일을_뺀다()
+    {
+        // 2026-10-09(금) 한글날, 10-10~11 주말
+        var cal = new WorkCalendar(new[] { new DateOnly(2026, 10, 9) });
+        DateOnly Day(int d) => new(2026, 10, d);
+
+        Assert.False(cal.IsWorkingDay(Day(9)));
+        Assert.False(cal.IsWorkingDay(Day(10)));
+        Assert.True(cal.IsWorkingDay(Day(12)));
+
+        Assert.Equal(4, cal.WorkingDays(Day(5), Day(9)));          // 월~목
+        Assert.Equal(0, cal.WorkingDays(Day(9), Day(11)));
+        Assert.Equal(0, cal.WorkingDays(Day(8), Day(7)));          // 거꾸로면 0
+
+        Assert.Equal(Day(12), cal.AddWorkingDays(Day(8), 1));      // 목 다음 근무일은 월
+        Assert.Equal(Day(8), cal.AddWorkingDays(Day(12), -1));
+        Assert.Equal(Day(10), cal.AddWorkingDays(Day(10), 0));     // 0 이면 휴일이어도 그대로
+        Assert.Equal(Day(14), cal.AddWorkingDays(Day(8), 3));
+
+        Assert.Equal(1, cal.Distance(Day(8), Day(12)));
+        Assert.Equal(-1, cal.Distance(Day(12), Day(8)));
+        Assert.Equal(0, cal.Distance(Day(8), Day(11)));            // 사이에 근무일이 없다
+
+        Assert.Equal(Day(12), cal.EarliestStartAfter(Day(8), 0));
+        Assert.Equal(Day(14), cal.EarliestStartAfter(Day(8), 2));
+    }
+
+    [Fact]
+    public void 여유_일수는_단계_목표일과_후행_작업에서_거슬러_계산한다()
+    {
+        var cal = WorkCalendar.WeekendsOnly;
+        DateOnly Day(int d) => new(2026, 10, d);
+        var a = new WorkItem { Id = 1, PlanStart = Day(12), PlanEnd = Day(13) };     // 월~화
+        var b = new WorkItem { Id = 2, PlanStart = Day(15), PlanEnd = Day(16) };     // 목~금 (A 뒤에 하루 틈)
+        var c = new WorkItem { Id = 3, PlanStart = Day(12), PlanEnd = Day(14) };     // 의존 없음
+        var stage = new Stage { Id = 1, TargetDate = Day(20), Works = { a, b, c } };
+        var free = new WorkItem { Id = 4, PlanStart = Day(12), PlanEnd = Day(30) };
+        var noTarget = new Stage { Id = 2, Works = { free } };
+        var p = NewProject(stage, noTarget);
+        p.Links.Add(new WorkLink { PredecessorId = 1, SuccessorId = 2 });
+
+        var floats = Rules.Floats(p, cal);
+        Assert.Equal(4, floats[2]);                 // B: 목표일 10-20 까지 4일
+        Assert.Equal(5, floats[1]);                 // A: B 시작까지 틈 1일 + B 의 여유 4일 (자기 단계 여유 7일보다 작다)
+        Assert.Equal(6, floats[3]);
+        Assert.False(floats.ContainsKey(4));        // 목표일 없는 단계는 제약이 없다
+
+        // 후행이 선행보다 먼저 시작하면 위반
+        Assert.False(Rules.Violates(a, b, 0, cal));
+        Assert.True(Rules.Violates(a, b, 2, cal));  // 간격 2근무일이면 10-16 이후여야 한다
+
+        Assert.True(Rules.Reaches(new[] { (1, 2), (2, 3) }, 1, 3));
+        Assert.False(Rules.Reaches(new[] { (1, 2), (2, 3) }, 3, 1));
+    }
+
+    [Fact]
     public void 단계_막대_구간은_직전_단계_일자에서_이어진다()
     {
         var a = new Stage { Id = 1, Name = "A", TargetDate = D(-20), CompletedDate = D(-18) };

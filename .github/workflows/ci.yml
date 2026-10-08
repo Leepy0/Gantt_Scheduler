@@ -38,7 +38,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: 준비
-        run: mkdir -p out/logs out/screens
+        run: |
+          mkdir -p out/logs out/screens out/exports
+          # PDF 내보내기와 화면 캡처에 쓸 한글 글꼴
+          sudo apt-get install -y -qq --no-install-recommends fonts-nanum > /dev/null && fc-cache -f
 
       - name: 빌드
         id: build
@@ -71,8 +74,6 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         run: |
           set -o pipefail
-          # 캡처에 한글이 깨지지 않도록 글꼴 설치
-          sudo apt-get install -y -qq --no-install-recommends fonts-nanum > /dev/null && fc-cache -f
           cd e2e && npm install --no-audit --no-fund --silent && cd ..
           # 앱을 프로젝트 폴더에서 띄운다 (wwwroot·설정 파일 기준 경로)
           (cd src/GanttScheduler && ASPNETCORE_ENVIRONMENT=Development Database__SqlitePath=$RUNNER_TEMP/e2e.db \
@@ -106,6 +107,11 @@ jobs:
             echo "| 화면 점검 | $(label "$E2E") |"
             echo
             if [ -f report.md ]; then sed 's/^# /## /' report.md; echo; fi
+            if ls exports/* > /dev/null 2>&1; then
+              echo "## 내보내기 파일"; echo
+              for f in exports/*; do echo "- [$(basename "$f")]($f)"; done
+              echo
+            fi
             if ls screens/m*.png > /dev/null 2>&1; then
               echo "## 모바일 화면"; echo
               for f in screens/m*.png; do echo "### $(basename "$f" .png)"; echo; echo "<img src=\"$f\" width=\"320\">"; echo; done

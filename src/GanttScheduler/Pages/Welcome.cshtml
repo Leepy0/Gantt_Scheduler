@@ -11,14 +11,18 @@
         <p class="muted">이 기기(@Model.Ip)에서 처음 접속했습니다. 등록한 이름이 작성자·담당자로 표시됩니다.</p>
         <form method="post" class="form">
             <input type="hidden" asp-for="ReturnUrl" />
+            <input type="hidden" asp-for="OrgUnitId" id="org-id" />
             <label class="field">
                 <span class="label">이름</span>
                 <input asp-for="Name" maxlength="50" autocomplete="name" required autofocus />
             </label>
-            <label class="field">
-                <span class="label">부서 <span class="opt">선택</span></span>
-                <input asp-for="Dept" maxlength="50" autocomplete="organization-title" />
-            </label>
+            <div class="field" id="org-field" hidden>
+                <span class="label">소속 <span class="opt">선택</span></span>
+                <div class="field-row">
+                    <select id="org-group" aria-label="그룹"></select>
+                    <select id="org-part" aria-label="파트"></select>
+                </div>
+            </div>
             @if (Model.Error != null)
             {
                 <p class="form-error" role="alert"><svg class="ic"><use href="#i-alert" /></svg>@Model.Error</p>
@@ -27,3 +31,11 @@
         </form>
     </div>
 </section>
+<script id="page-data" type="application/json">@Html.Raw(Model.OrgJson)</script>
+@section Scripts {
+    <script src="~/js/org.js" asp-append-version="true"></script>
+    <script>
+        OrgPicker.bind(App.data().orgs, document.getElementById('org-group'), document.getElementById('org-part'),
+            document.getElementById('org-id'), document.getElementById('org-field'), App.data().selected);
+    </script>
+}

@@ -1,0 +1,89 @@
+@page
+@model WeeklyModel
+@{
+    ViewData["Title"] = "주간 보고";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "weekly";
+    var r = Model.Report;
+    var prev = r.From.AddDays(-7).ToString("yyyy-MM-dd");
+    var next = r.From.AddDays(7).ToString("yyyy-MM-dd");
+    var day = r.From.ToString("yyyy-MM-dd");
+    var mine = Model.Mine ? "true" : null;
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<div class="toolbar">
+    <a class="btn icon" asp-page="/Insights/Weekly" asp-route-day="@prev" asp-route-mine="@mine" aria-label="이전 주"><svg class="ic"><use href="#i-left" /></svg></a>
+    <b class="num">@r.From.ToString("yyyy-MM-dd") ~ @r.To.ToString("MM-dd")</b>
+    <a class="btn icon" asp-page="/Insights/Weekly" asp-route-day="@next" asp-route-mine="@mine" aria-label="다음 주"><svg class="ic"><use href="#i-right" /></svg></a>
+    <div class="seg small" role="group" aria-label="범위">
+        <a asp-page="/Insights/Weekly" asp-route-day="@day" class="@(Model.Mine ? "" : "on")">전체</a>
+        <a asp-page="/Insights/Weekly" asp-route-day="@day" asp-route-mine="true" class="@(Model.Mine ? "on" : "")">내 과제</a>
+    </div>
+    <span class="spacer"></span>
+    <a class="btn small" asp-page="/Insights/Weekly" asp-page-handler="Excel" asp-route-day="@day" asp-route-mine="@mine"><svg class="ic"><use href="#i-download" /></svg>Excel</a>
+    <a class="btn small" asp-page="/Insights/Weekly" asp-page-handler="Pdf" asp-route-day="@day" asp-route-mine="@mine"><svg class="ic"><use href="#i-download" /></svg>PDF</a>
+</div>
+
+<section class="kpis">
+    <div class="kpi"><span class="kpi-label">진행 과제</span><span class="kpi-value">@r.Active</span></div>
+    <div class="kpi @(r.Delayed > 0 ? "alarm" : "")"><span class="kpi-label">@if (r.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span><span class="kpi-value">@r.Delayed</span></div>
+    <div class="kpi"><span class="kpi-label">이번 주 완료</span><span class="kpi-value">@r.DoneCount</span></div>
+    <div class="kpi"><span class="kpi-label">일정 변경</span><span class="kpi-value">@r.ChangeCount</span></div>
+</section>
+
+@if (r.Projects.Count == 0)
+{
+    <section class="card"><p class="empty">이 기간에 해당하는 과제가 없습니다.</p></section>
+}
+
+@foreach (var p in r.Projects)
+{
+    var quiet = p.Done.Count + p.Changes.Count + p.Comments.Count + p.Next.Count == 0;
+    <section class="card weekly">
+        <header class="card-head">
+            <h2><a asp-page="/Projects/Detail" asp-route-id="@p.Id">@p.Title</a></h2>
+            @if (p.DelayDays > 0)
+            {
+                <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@p.DelayDays</span>
+            }
+            else
+            {
+                <span class="chip">@p.StateLabel</span>
+            }
+            <span class="spacer"></span>
+            <span class="muted">@p.Category · @p.Corporation · @p.Owner · 진행률 @p.Progress%@(p.CurrentStage == null ? "" : " · " + p.CurrentStage + (p.CurrentTarget == null ? "" : " 목표 " + p.CurrentTarget.Value.ToString("MM-dd")))</span>
+        </header>
+        @if (quiet)
+        {
+            <p class="muted">이번 주 기록된 변동이 없습니다.</p>
+        }
+        else
+        {
+            <dl class="dl weekly-dl">
+                @if (p.Done.Count > 0)
+                {
+                    <dt>이번 주 실적</dt>
+                    <dd><ul class="bullets">@foreach (var x in p.Done) {<li>@x.Text <span class="muted num">@x.Date.ToString("MM-dd")</span></li>}</ul></dd>
+                }
+                @if (p.Changes.Count > 0)
+                {
+                    <dt>일정·상태 변경</dt>
+                    <dd><ul class="bullets">@foreach (var x in p.Changes) {<li>@x.Text <span class="muted">@x.User</span>@if (x.Reason != null) {<div class="feed-reason">@x.Reason</div>}</li>}</ul></dd>
+                }
+                @if (p.Comments.Count > 0)
+                {
+                    <dt>진행 내용</dt>
+                    <dd><ul class="bullets">@foreach (var x in p.Comments) {<li>@x.Text <span class="muted">@x.User · <span class="num">@x.Date.ToString("MM-dd")</span></span></li>}</ul></dd>
+                }
+                @if (p.Next.Count > 0)
+                {
+                    <dt>다음 주 계획</dt>
+                    <dd><ul class="bullets">@foreach (var x in p.Next) {<li>@x</li>}</ul></dd>
+                }
+            </dl>
+        }
+    </section>
+}

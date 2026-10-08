@@ -22,6 +22,12 @@ public class KoreaClock : IClock
     public static DateTime ToKst(DateTime utc) =>
         TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), Kst);
 
+    // 한국 날짜의 0시를 UTC 시각으로
+    public static DateTime StartOfDayUtc(DateOnly kstDate) =>
+        TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(kstDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified), Kst);
+
+    public static DateOnly KstDate(DateTime utc) => DateOnly.FromDateTime(ToKst(utc));
+
     private static TimeZoneInfo FindKst()
     {
         foreach (var id in new[] { "Asia/Seoul", "Korea Standard Time" })
@@ -54,7 +60,8 @@ public class UserGateMiddleware
     {
         me.Ip = NormalizeIp(ctx.Connection.RemoteIpAddress);
 
-        var addr = await db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.Ip == me.Ip);
+        var addr = await db.UserAddresses.Include(a => a.User).ThenInclude(u => u!.OrgUnit).ThenInclude(o => o!.Parent)
+            .FirstOrDefaultAsync(a => a.Ip == me.Ip);
         if (addr?.User != null && addr.User.IsActive)
         {
             me.User = addr.User;
@@ -108,13 +115,13 @@ public class UserService
     }
 
     // 이름으로 등록. 같은 이름의 사용자가 이미 있으면 이 IP 를 그 사용자에 연결한다(PC 교체·IP 변경 대응)
-    public async Task<AppUser> RegisterAsync(string ip, string? name, string? dept)
+    public async Task<AppUser> RegisterAsync(string ip, string? name, int? orgUnitId)
     {
         name = (name ?? "").Trim();
-        dept = string.IsNullOrWhiteSpace(dept) ? null : dept.Trim();
         if (name.Length == 0) throw new RuleException("이름을 입력해 주세요.", "name");
         if (name.Length > 50) throw new RuleException("이름은 50자 이내로 입력해 주세요.", "name");
-        if (dept != null && dept.Length > 50) throw new RuleException("부서는 50자 이내로 입력해 주세요.", "dept");
+        if (orgUnitId != null && !await _db.OrgUnits.AnyAsync(o => o.Id == orgUnitId.Value))
+            throw new RuleException("소속을 다시 선택해 주세요.", "orgUnitId");
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Name == name);
         if (user != null && !user.IsActive)
@@ -124,13 +131,13 @@ public class UserService
         {
             // 관리자가 한 명도 없으면 처음 등록하는 사람이 관리자가 된다
             var hasAdmin = await _db.Users.AnyAsync(u => u.IsAdmin);
-            user = new AppUser { Name = name, Dept = dept, IsAdmin = !hasAdmin, CreatedAt = _clock.UtcNow };
+            user = new AppUser { Name = name, OrgUnitId = orgUnitId, IsAdmin = !hasAdmin, CreatedAt = _clock.UtcNow };
             _db.Users.Add(user);
             await _db.SaveChangesAsync();
         }
-        else if (dept != null && user.Dept == null)
+        else if (orgUnitId != null && user.OrgUnitId == null)
         {
-            user.Dept = dept;
+            user.OrgUnitId = orgUnitId;
         }
 
         var addr = await _db.UserAddresses.FirstOrDefaultAsync(a => a.Ip == ip);

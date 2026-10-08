@@ -1,7 +1,8 @@
 // 화면 점검 스크립트: 실행 중인 앱을 데스크톱·모바일 크기로 돌며 주요 흐름을 눌러 보고 화면을 캡처한다.
 //   BASE_URL  대상 주소 (기본 http://localhost:5080) — 샘플 데이터(Seed:Demo)로 막 띄운 앱이어야 한다
-//   OUT_DIR   결과 폴더 (기본 e2e/out) — screens/*.png, report.md
+//   OUT_DIR   결과 폴더 (기본 e2e/out) — screens/*.png, exports/*(내보낸 Excel·PDF), report.md
 //   PW_CHANNEL=chrome  설치된 Chrome 사용 (CI). 지정하지 않으면 Playwright 의 Chromium
+//   FAKE_EXPORT=1      내보내기 파일의 형식 검사를 건너뛴다 (가짜 내보내기를 쓰는 로컬 섀도 빌드용)
 const fs = require('fs');
 const path = require('path');
 
@@ -11,7 +12,9 @@ try { ({ chromium } = require('playwright')); } catch (e) { ({ chromium } = requ
 const BASE = (process.env.BASE_URL || 'http://localhost:5080').replace(/\/$/, '');
 const OUT = process.env.OUT_DIR || path.join(__dirname, 'out');
 const SHOTS = path.join(OUT, 'screens');
+const EXPORTS = path.join(OUT, 'exports');
 fs.mkdirSync(SHOTS, { recursive: true });
+fs.mkdirSync(EXPORTS, { recursive: true });
 
 const results = [];      // { name, ok, error }
 const problems = [];     // 콘솔 오류·실패한 요청
@@ -38,7 +41,7 @@ function watch(page, label) {
     });
     page.on('pageerror', (e) => problems.push(`[${label}] pageerror: ${e.message}`));
     page.on('response', (r) => {
-        // 400 은 규칙 위반 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
+        // 400·409 는 규칙 위반·동시 수정 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
         if (r.status() >= 500 || r.status() === 404) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
     });
 }
@@ -49,6 +52,8 @@ async function shot(page, name, full = true) {
 }
 
 function assert(cond, message) { if (!cond) throw new Error(message); }
+
+const SHEET = 'dialog.sheet[open]';
 
 async function openProject(page, title) {
     await page.goto(BASE + '/Projects?state=all');
@@ -65,9 +70,22 @@ async function setRange(page, selector, value) {
 }
 
 async function submitSheet(page) {
-    await page.locator('dialog.sheet[open] button[type=submit]').click();
-    await page.waitForSelector('dialog.sheet[open]', { state: 'detached', timeout: 10000 });
+    await page.locator(SHEET + ' button[type=submit]').click();
+    await page.waitForSelector(SHEET, { state: 'detached', timeout: 10000 });
 }
+
+async function closeSheet(page) {
+    await page.locator(SHEET + ' [data-close]').first().click();
+    await page.waitForSelector(SHEET, { state: 'detached' });
+}
+
+async function sheetError(page) {
+    await page.waitForSelector(SHEET + ' .form-error:not([hidden])');
+    return (await page.locator(SHEET + ' .sheet-body > .form-error').innerText()).trim();
+}
+
+const stageRow = (page, name) => page.locator('#gantt .g-row.stage', { hasText: name }).locator('.g-name');
+const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: name });
 
 (async () => {
     const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
@@ -82,30 +100,31 @@ async function submitSheet(page) {
     await step('처음 접속하면 이름 등록 화면으로 이동', async () => {
         await page.goto(BASE + '/');
         assert(page.url().includes('/Welcome'), '등록 화면으로 이동하지 않음: ' + page.url());
-        await shot(page, 'd00-welcome');
     });
 
-    await step('이름 등록 후 대시보드 표시', async () => {
+    await step('이름·소속(그룹 → 파트) 등록 후 대시보드 표시', async () => {
         await page.fill('input[name=Name]', '평영');
-        await page.fill('input[name=Dept]', '물류기술팀');
+        await page.selectOption('#org-group', { label: '물류기술그룹' });
+        await page.selectOption('#org-part', { label: '자동화파트' });
+        await shot(page, 'd00-welcome');
         await page.click('button[type=submit]');
         await page.waitForSelector('.kpis');
         assert((await page.locator('#gantt .g-row').count()) >= 5, '간트 행이 5개 미만');
         assert((await page.locator('.kpi.alarm .kpi-value').innerText()).trim() === '2', '지연 KPI 가 2 가 아님');
+        assert((await page.locator('.top .me').getAttribute('title')).includes('물류기술그룹 · 자동화파트'), '소속이 저장되지 않음');
         await shot(page, 'd01-dashboard');
     });
 
     await step('대시보드 간트 일 단위 배율', async () => {
         await page.click('#zoom [data-zoom=day]');
         assert((await page.locator('#gantt .g-tick.today').count()) === 1, '오늘 눈금이 없음');
-        await shot(page, 'd02-dashboard-day', false);
         await page.click('#zoom [data-zoom=week]');
     });
 
     await step('과제 목록·필터', async () => {
         await page.goto(BASE + '/Projects');
         assert((await page.locator('.ptable-row').count()) === 6, '진행 과제가 6건이 아님');
-        await shot(page, 'd03-projects');
+        await shot(page, 'd02-projects');
         await page.locator('.state-tab', { hasText: '지연' }).click();
         await page.waitForURL(/state=delayed/);
         assert((await page.locator('.ptable-row').count()) === 2, '지연 과제가 2건이 아님');
@@ -113,73 +132,206 @@ async function submitSheet(page) {
         assert((await page.locator('.ptable-row').count()) === 2, '검색 결과가 2건이 아님');
     });
 
-    await step('과제 상세 간트', async () => {
+    await step('과제 상세 간트 — 기준선·의존선 표시', async () => {
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
         assert((await page.locator('#gantt .g-row.stage').count()) === 8, '단계 행이 8개가 아님');
         assert((await page.locator('#gantt .g-row.work').count()) === 3, '작업 행이 3개가 아님');
-        await shot(page, 'd04-detail-gantt');
+        assert((await page.locator('#gantt .g-links svg > path').count()) >= 1, '의존선이 없음');
+        assert((await page.locator('#gantt .g-bar.base').count()) >= 3, '작업 기준선 막대가 없음');
+        assert((await page.locator('#summary .summary-chips').innerText()).includes('기준선'), '기준선 표시가 없음');
+        await shot(page, 'd03-detail-gantt');
     });
 
-    await step('단계 목표일 변경 — 사유 없이는 거절, 사유 입력 후 연쇄 이동', async () => {
-        await page.locator('#gantt .g-row.stage', { hasText: '검수' }).locator('.g-name').click();
-        await page.waitForSelector('dialog.sheet[open]');
-        await page.fill('dialog.sheet[open] input[name=targetDate]', kstToday(12));
-        await page.locator('dialog.sheet[open] button[type=submit]').click();
-        await page.waitForSelector('dialog.sheet[open] .form-error:not([hidden])');
-        await shot(page, 'd05-stage-sheet-error', false);
-        await page.fill('dialog.sheet[open] textarea[name=reason]', '주행 시험 재실시로 일주일 순연');
-        await page.check('dialog.sheet[open] input[name=cascade]');
+    await step('체크리스트 — 남은 항목이 있으면 단계 완료 거절, 체크·추가·삭제', async () => {
+        await stageRow(page, '검수').click();
+        await page.waitForSelector(SHEET + ' [data-checks] li');
+        await page.click(SHEET + ' [data-done-today]');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('체크리스트 2개'), '체크리스트 미완료 거절 메시지가 아님');
+        await shot(page, 'd04-stage-sheet-checklist', false);
+        await page.click(SHEET + ' [data-clear-done]');
+
+        const boxes = page.locator(SHEET + ' [data-checks] input[type=checkbox]');
+        for (let i = 1; i < 3; i++) {
+            await boxes.nth(i).check();
+            await page.waitForFunction((n) => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === n, (i + 1) + '/3');
+        }
+        await page.fill(SHEET + ' [data-new-check]', '현장 사진 첨부');
+        await page.click(SHEET + ' [data-add-check]');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/4');
+        await page.locator(SHEET + ' [data-checks] li', { hasText: '현장 사진 첨부' }).locator('[data-del-check]').click();
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/3');
+        await closeSheet(page);
+        assert((await page.locator('#stepper .step').nth(4).innerText()).includes('체크 3/3'), '단계 표시에 체크 수가 없음');
+    });
+
+    await step('단계 목표일 변경 — 사유 없이는 거절, 사유 입력 후 근무일 기준 연쇄 이동', async () => {
+        const before = await page.locator('#stepper .step').allInnerTexts();
+        await stageRow(page, '검수').click();
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' input[name=targetDate]', kstToday(12));
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('사유'), '사유 요구 메시지가 아님');
+        await page.fill(SHEET + ' textarea[name=reason]', '주행 시험 재실시로 일주일 순연');
+        await page.check(SHEET + ' input[name=cascade]');
         await submitSheet(page);
         const steps = await page.locator('#stepper .step').allInnerTexts();
         assert(steps[4].includes(kstToday(12).slice(5)), '검수 목표일이 바뀌지 않음: ' + steps[4]);
-        assert(steps[5].includes(kstToday(19).slice(5)), '입고 목표일이 연쇄 이동하지 않음: ' + steps[5]);
+        assert(steps[5] !== before[5] && steps[6] !== before[6], '이후 단계가 연쇄 이동하지 않음');
+        assert(steps[4].includes('기준선 +7일'), '기준선 대비 표시가 없음: ' + steps[4]);
     });
 
     await step('작업 추가·진행률 수정', async () => {
         await page.click('#add-work');
-        await page.waitForSelector('dialog.sheet[open]');
-        await page.fill('dialog.sheet[open] input[name=title]', '안전 인증 서류 준비');
-        await page.fill('dialog.sheet[open] input[name=coOwner]', '신규담당');
-        await shot(page, 'd06-work-sheet-new', false);
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' input[name=title]', '안전 인증 서류 준비');
+        await page.fill(SHEET + ' input[name=coOwner]', '신규담당');
+        await shot(page, 'd05-work-sheet-new', false);
         await submitSheet(page);
         assert((await page.locator('#gantt .g-row.work').count()) === 4, '작업이 추가되지 않음');
 
-        await page.locator('#gantt .g-row.work', { hasText: '주행 시험' }).locator('.g-name').click();
-        await page.waitForSelector('dialog.sheet[open]');
-        await setRange(page, 'dialog.sheet[open] input[name=progress]', 70);
-        await page.fill('dialog.sheet[open] [data-comment]', '곡선 구간 속도 재확인 완료');
-        await page.click('dialog.sheet[open] [data-add-comment]');
+        await workRow(page, '주행 시험').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await setRange(page, SHEET + ' input[name=progress]', 70);
+        await page.fill(SHEET + ' [data-comment]', '곡선 구간 속도 재확인 완료');
+        await page.click(SHEET + ' [data-add-comment]');
         await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-feed]').innerText.includes('곡선 구간 속도 재확인 완료'));
-        await shot(page, 'd07-work-sheet-edit', false);
         await submitSheet(page);
-        const row = await page.locator('#gantt .g-row.work', { hasText: '주행 시험' }).innerText();
+        const row = await workRow(page, '주행 시험').innerText();
         assert(row.includes('70%'), '진행률이 70% 로 바뀌지 않음: ' + row);
+    });
+
+    await step('간트 드래그 — 작업 막대를 끌면 사유를 받고 일정 변경', async () => {
+        await page.click('#zoom [data-zoom=day]');
+        const bar = workRow(page, '검수 문서 검토').locator('.g-bar.draggable');
+        await bar.scrollIntoViewIfNeeded();
+        const titleBefore = await bar.getAttribute('title');
+        const box = await bar.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 28 * 3, box.y + box.height / 2, { steps: 6 });   // 일 단위 배율: 하루 28px → 3일
+        await shot(page, 'd06-gantt-drag', false);
+        await page.mouse.up();
+        await page.waitForSelector(SHEET);
+        assert((await page.locator(SHEET + ' .sheet-head h2').innerText()).includes('목표 일정 변경'), '일정 변경 확인 창이 아님');
+        await page.fill(SHEET + ' textarea[name=reason]', '검수 일정 순연에 맞춤');
+        await submitSheet(page);
+        const titleAfter = await workRow(page, '검수 문서 검토').locator('.g-bar.draggable').getAttribute('title');
+        assert(titleAfter !== titleBefore, '드래그한 일정이 저장되지 않음: ' + titleAfter);
+        await page.click('#zoom [data-zoom=week]');
+    });
+
+    await step('의존 관계 — 선행보다 이르면 거절, 일정을 맞추면 연결', async () => {
+        const links = await page.locator('#gantt .g-links svg > path').count();
+        await workRow(page, '안전 인증 서류 준비').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await page.locator(SHEET + ' .pick-list label', { hasText: '검수 문서 검토' }).locator('input').check();
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('이후에 시작해야'), '선행 관계 거절 메시지가 아님');
+        await shot(page, 'd07-work-sheet-predecessor', false);
+        await page.fill(SHEET + ' input[name=planStart]', kstToday(25));
+        await page.fill(SHEET + ' input[name=planEnd]', kstToday(27));
+        await page.fill(SHEET + ' textarea[name=reason]', '선행 작업 종료 이후로 조정');
+        await submitSheet(page);
+        assert((await page.locator('#gantt .g-links svg > path').count()) === links + 1, '의존선이 추가되지 않음');
+        await shot(page, 'd08-detail-gantt-links');
+    });
+
+    await step('기준선 다시 확정', async () => {
+        await page.click('#btn-baseline');
+        await page.waitForSelector(SHEET + ' [data-yes]');
+        await page.click(SHEET + ' [data-yes]');
+        await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('기준선 유지'));
     });
 
     await step('목록 보기·정보·활동 탭', async () => {
         await page.click('#view-mode [data-view=list]');
         assert((await page.locator('#schedule-list .stage-card').count()) === 8, '단계 카드가 8개가 아님');
-        await shot(page, 'd08-detail-list');
+        await shot(page, 'd09-detail-list');
         await page.click('.tabs [data-tab=info]');
         assert((await page.locator('#tab-info .simple-table tbody tr').count()) === 1, '기기 내역이 1행이 아님');
-        await shot(page, 'd09-detail-info');
+        assert((await page.locator('#tab-info').innerText()).includes('물류기술그룹 · 자동화파트'), '담당 소속이 보이지 않음');
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '검수 일정 협력사와 재협의 완료');
         await page.click('#comment-form button[type=submit]');
         await page.waitForFunction(() => document.getElementById('feed').innerText.includes('재협의 완료'));
         const feed = await page.locator('#feed').innerText();
         assert(feed.includes('연쇄 이동'), '연쇄 이동 이력이 없음');
+        assert(feed.includes('기준선 다시 확정'), '기준선 이력이 없음');
         await shot(page, 'd10-detail-activity');
+    });
+
+    await step('자료 — 올리기·미리보기·내려받기·삭제', async () => {
+        await page.click('.tabs [data-tab=files]');
+        // 1x1 PNG
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+        await page.setInputFiles('#file-input', { name: '현장사진.png', mimeType: 'image/png', buffer: png });
+        await page.selectOption('#file-stage', { label: '검수' });
+        await page.click('#upload-btn');
+        await page.waitForFunction(() => document.getElementById('files').innerText.includes('현장사진.png'));
+        await shot(page, 'd11-detail-files');
+
+        const href = await page.locator('#files a.row-title').getAttribute('href');
+        const res = await desktop.request.get(new URL(href, BASE).toString());
+        assert(res.ok() && (await res.body()).equals(png), '내려받은 파일이 올린 파일과 다름');
+
+        await page.click('#files [data-preview]');
+        await page.waitForSelector(SHEET + ' img.preview-img');
+        await closeSheet(page);
+
+        // 받지 않는 형식은 화면에서 먼저 거른다
+        await page.setInputFiles('#file-input', { name: 'run.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ') });
+        await page.click('#upload-btn');
+        await page.waitForSelector('.toast.error');
+
+        await page.click('#files [data-delete-file]');
+        await page.click(SHEET + ' [data-yes]');
+        await page.waitForFunction(() => document.getElementById('files').innerText.includes('올린 자료가 없습니다'));
         await page.click('.tabs [data-tab=schedule]');
         await page.click('#view-mode [data-view=gantt]');
+    });
+
+    await step('동시 수정 — 다른 화면에서 먼저 고치면 저장을 막고 최신 내용으로 바꿈', async () => {
+        await stageRow(page, '설치').click();
+        await page.waitForSelector(SHEET);
+
+        const other = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await other.locator('#stepper .step', { hasText: '설치' }).click();
+        await other.waitForSelector(SHEET);
+        await other.fill(SHEET + ' input[name=name]', '설치·시운전');
+        await submitSheet(other);
+        await other.close();
+
+        await page.fill(SHEET + ' input[name=name]', '현장 설치');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('다른 사용자가 먼저'), '동시 수정 안내가 아님');
+        await shot(page, 'd12-conflict', false);
+        await closeSheet(page);
+        const names = await page.locator('#stepper .step-name').allInnerTexts();
+        assert(names.some((n) => n.includes('설치·시운전')), '최신 내용으로 바뀌지 않음: ' + names.join(','));
+    });
+
+    await step('과제 복제', async () => {
+        await page.click('#btn-clone');
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' input[name=title]', '광주 냉장고 5라인 AGV 도입');
+        await page.fill(SHEET + ' input[name=startDate]', kstToday(30));
+        await page.locator(SHEET + ' button[type=submit]').click();
+        await page.waitForFunction(() => document.getElementById('p-title').textContent === '광주 냉장고 5라인 AGV 도입');
+        assert((await page.locator('#stepper .step').count()) === 8, '단계가 복사되지 않음');
+        assert((await page.locator('#gantt .g-row.work').count()) === 4, '작업이 복사되지 않음');
+        assert((await page.locator('#gantt .g-links svg > path').count()) === 2, '의존 관계가 복사되지 않음');
+        assert((await page.locator('#summary').innerText()).includes('0%'), '진행률이 초기화되지 않음');
     });
 
     await step('모든 단계 완료 시 자동으로 완료 상태', async () => {
         await openProject(page, '폴란드 세탁기 창고 입출고 개선');
         for (let i = 0; i < 3; i++) {
             await page.locator('#stepper .step').nth(i).click();
-            await page.waitForSelector('dialog.sheet[open]');
-            await page.click('dialog.sheet[open] [data-done-today]');
+            await page.waitForSelector(SHEET);
+            await page.click(SHEET + ' [data-done-today]');
             await submitSheet(page);
         }
         const chips = await page.locator('#summary .summary-chips').innerText();
@@ -189,9 +341,8 @@ async function submitSheet(page) {
     await step('상태 변경 — 보류', async () => {
         await openProject(page, '멕시코 냉장고 AGV 도입 검토');
         await page.click('#btn-state');
-        await page.waitForSelector('dialog.sheet[open]');
-        await page.fill('dialog.sheet[open] textarea[name=reason]', '투자 심의 일정 미확정');
-        await shot(page, 'd11-state-sheet', false);
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' textarea[name=reason]', '투자 심의 일정 미확정');
         await submitSheet(page);
         assert((await page.locator('#summary .summary-chips').innerText()).includes('보류'), '보류로 바뀌지 않음');
     });
@@ -206,11 +357,12 @@ async function submitSheet(page) {
         assert((await page.locator('#cascade select[data-level="3"]').inputValue()) !== '', '라인이 자동 선택되지 않음');
         await page.locator('#items .item-row select').first().selectOption({ label: '컨베이어' });
         await page.locator('#items .item-row input[data-k=Quantity]').first().fill('3');
-        await shot(page, 'd12-edit-form');
+        await shot(page, 'd13-edit-form');
         await page.click('#edit-form button[type=submit]');
         await page.waitForSelector('#summary .summary-meta');
         assert((await page.locator('#stepper .step').count()) === 8, '기본 단계 8개가 만들어지지 않음');
         assert((await page.locator('#summary').innerText()).includes('베트남 · 냉장고 · 1라인'), '위치가 저장되지 않음');
+        assert((await page.locator('#stepper .step').nth(4).innerText()).includes('체크 0/3'), '체크리스트 템플릿이 복사되지 않음');
     });
 
     await step('과제 수정 화면에 기존 값 표시', async () => {
@@ -225,18 +377,67 @@ async function submitSheet(page) {
         assert((await page.locator('#tab-info').innerText()).includes('한성로보틱스'), '협력사가 저장되지 않음');
     });
 
-    await step('Excel 내보내기 응답', async () => {
-        const list = await desktop.request.get(BASE + '/Projects?handler=Excel&state=all');
-        assert(list.ok(), '목록 Excel 응답 ' + list.status());
-        assert((await list.body()).length > 100, '목록 Excel 이 비어 있음');
-        const detail = await desktop.request.get(BASE + '/Projects/Detail?handler=Excel&id=1');
-        assert(detail.ok(), '상세 Excel 응답 ' + detail.status());
+    await step('내 할 일', async () => {
+        await page.goto(BASE + '/My');
+        const text = await page.locator('main').innerText();
+        assert(text.includes('안전 인증 서류 준비'), '내가 담당인 작업이 보이지 않음');
+        assert(text.includes('담당 과제의 진행 단계'), '담당 과제 단계가 보이지 않음');
+        await shot(page, 'd14-my');
+        await page.locator('.row-link', { hasText: '안전 인증 서류 준비' }).first().click();
+        await page.waitForSelector(SHEET);
+        assert((await page.locator(SHEET + ' .sheet-head h2').innerText()).includes('안전 인증 서류 준비'), '작업 편집 창이 열리지 않음');
+        await closeSheet(page);
     });
 
-    await step('관리 — 계층 추가·순서 이동, 공휴일', async () => {
+    await step('분석 — 리드타임·주간 보고·변경 이력', async () => {
+        await page.goto(BASE + '/Insights/LeadTime');
+        assert((await page.locator('.lead-table tbody tr').count()) >= 8, '리드타임 행이 부족함');
+        await shot(page, 'd15-insights-leadtime');
+
+        await page.locator('.tabs a', { hasText: '주간 보고' }).click();
+        await page.waitForSelector('.weekly');
+        const weekly = await page.locator('main').innerText();
+        assert(weekly.includes('주행 시험 재실시로 일주일 순연'), '이번 주 일정 변경 사유가 없음');
+        assert(weekly.includes('재협의 완료'), '이번 주 진행 내용이 없음');
+        await shot(page, 'd16-insights-weekly');
+
+        await page.locator('.tabs a', { hasText: '변경 이력' }).click();
+        await page.waitForSelector('.history li');
+        const total = +(await page.locator('.card-head .count').innerText());
+        assert(total > 20, '이력 건수가 너무 적음: ' + total);
+        await page.selectOption('select[name=kind]', 'schedule');
+        await page.click('.filters button[type=submit]');
+        await page.waitForURL(/kind=schedule/);
+        const filtered = +(await page.locator('.card-head .count').innerText());
+        assert(filtered > 0 && filtered < total, '구분 필터가 적용되지 않음');
+        assert((await page.locator('.history .chip').allInnerTexts()).every((t) => t === '일정 변경'), '다른 구분이 섞여 있음');
+        await shot(page, 'd17-insights-history');
+    });
+
+    await step('Excel·PDF 내보내기', async () => {
+        const targets = [
+            ['과제목록.xlsx', '/Projects?handler=Excel&state=all'],
+            ['과제일정.xlsx', '/Projects/Detail?handler=Excel&id=1'],
+            ['과제일정.pdf', '/Projects/Detail?handler=Pdf&id=1'],
+            ['주간보고.xlsx', '/Insights/Weekly?handler=Excel'],
+            ['주간보고.pdf', '/Insights/Weekly?handler=Pdf'],
+        ];
+        for (const [name, url] of targets) {
+            const res = await desktop.request.get(BASE + url);
+            assert(res.ok(), name + ' 응답 ' + res.status() + ' ' + (await res.text()).slice(0, 200));
+            const body = await res.body();
+            fs.writeFileSync(path.join(EXPORTS, name), body);
+            if (!process.env.FAKE_EXPORT) {
+                const magic = body.subarray(0, 4).toString('latin1');
+                assert(name.endsWith('.pdf') ? magic === '%PDF' : magic.startsWith('PK'), name + ' 형식이 아님: ' + magic);
+                assert(body.length > 3000, name + ' 이 너무 작음: ' + body.length);
+            }
+        }
+    });
+
+    await step('관리 — 계층 추가·순서 이동, 체크 항목, 조직, 사용자 소속', async () => {
         await page.goto(BASE + '/Admin');
         await page.waitForSelector('.columns .node');
-        await shot(page, 'd13-admin-location');
         const corpForm = page.locator('form[data-add="1"]');
         await corpForm.locator('input[name=name]').fill('인도');
         await corpForm.locator('button[type=submit]').click();
@@ -246,12 +447,32 @@ async function submitSheet(page) {
             const names = [...document.querySelectorAll('.column:first-child .node-name')].map((n) => n.textContent);
             return names.indexOf('인도') === names.length - 2;
         });
+
         await page.click('#admin-tabs [data-kind=category]');
         await page.waitForSelector('.columns .node');
-        await shot(page, 'd14-admin-category');
+        assert((await page.locator('.columns .column').count()) === 3, '유형·단계·체크 항목 3열이 아님');
+        await page.locator('.column').nth(1).locator('.node-main', { hasText: '검수' }).click();
+        await page.waitForFunction(() => document.querySelectorAll('.column')[2].innerText.includes('FAT 성적서 확인'));
+        await shot(page, 'd18-admin-category');
+
+        await page.click('#admin-tabs [data-kind=org]');
+        await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('자동화파트'));
+        const partForm = page.locator('form[data-add="2"]');
+        await partForm.locator('input[name=name]').fill('시뮬레이션파트');
+        await partForm.locator('button[type=submit]').click();
+        await page.waitForFunction(() => document.querySelector('.columns').innerText.includes('시뮬레이션파트'));
+        await shot(page, 'd19-admin-org');
+
         await page.click('#admin-tabs [data-kind=user]');
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('평영'));
-        await shot(page, 'd15-admin-user');
+        await page.locator('.node', { hasText: '신규담당' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' [data-org-group]');
+        await page.selectOption(SHEET + ' [data-org-group]', { label: '물류기술그룹' });
+        await page.selectOption(SHEET + ' [data-org-part]', { label: '시뮬레이션파트' });
+        await shot(page, 'd20-admin-user', false);
+        await submitSheet(page);
+        await page.waitForFunction(() => [...document.querySelectorAll('.node')].some((n) => n.innerText.includes('신규담당') && n.innerText.includes('물류기술그룹 · 시뮬레이션파트')));
+
         await page.click('#admin-tabs [data-kind=holiday]');
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('한글날'));
     });
@@ -260,9 +481,8 @@ async function submitSheet(page) {
         await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
         await page.click('.tabs [data-tab=info]');
         await page.click('#btn-delete');
-        await page.waitForSelector('dialog.sheet[open] [data-yes]');
-        await shot(page, 'd16-delete-confirm', false);
-        await page.click('dialog.sheet[open] [data-yes]');
+        await page.waitForSelector(SHEET + ' [data-yes]');
+        await page.click(SHEET + ' [data-yes]');
         await page.waitForURL(/\/Projects(\?|$)/);
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 0, '삭제되지 않음');
@@ -291,53 +511,74 @@ async function submitSheet(page) {
         await m.goto(BASE + '/');
         await m.waitForSelector('.kpis');
         assert(await m.locator('.bottom-nav').isVisible(), '하단 탭이 보이지 않음');
+        assert((await m.locator('.bottom-nav a').count()) === 5, '하단 탭이 5개가 아님');
         await noOverflow('대시보드');
         await shot(m, 'm01-dashboard');
+    });
+
+    await step('모바일 내 할 일', async () => {
+        await m.locator('.bottom-nav a', { hasText: '내 할 일' }).click();
+        await m.waitForSelector('.page-head h1');
+        await noOverflow('내 할 일');
+        await shot(m, 'm02-my');
     });
 
     await step('모바일 과제 목록', async () => {
         await m.locator('.bottom-nav a', { hasText: '과제' }).click();
         await m.waitForSelector('.ptable-row');
         await noOverflow('과제 목록');
-        await shot(m, 'm02-projects');
+        await shot(m, 'm03-projects');
     });
 
     await step('모바일 과제 상세 — 기본은 목록 보기', async () => {
         await m.locator('.ptable-row', { hasText: '베트남 세탁기 2라인 AMR 확대' }).click();
         await m.waitForSelector('#schedule-list .stage-card');
         await noOverflow('과제 상세');
-        await shot(m, 'm03-detail-list');
+        await shot(m, 'm04-detail-list');
     });
 
     await step('모바일 작업 시트', async () => {
-        await m.locator('#schedule-list .work-item', { hasText: '제어기 조립' }).click();
-        await m.waitForSelector('dialog.sheet[open]');
-        await shot(m, 'm04-work-sheet', false);
-        await setRange(m, 'dialog.sheet[open] input[name=progress]', 85);
+        // 다른 작업의 '선행: 제어기 조립' 표시와 겹치지 않게 제목으로 찾는다
+        const item = m.locator('#schedule-list .work-item', { has: m.locator('.work-title', { hasText: '제어기 조립' }) });
+        await item.click();
+        await m.waitForSelector(SHEET);
+        await shot(m, 'm05-work-sheet', false);
+        await setRange(m, SHEET + ' input[name=progress]', 85);
         await submitSheet(m);
-        assert((await m.locator('#schedule-list .work-item', { hasText: '제어기 조립' }).innerText()).includes('85%'), '진행률이 저장되지 않음');
+        assert((await item.innerText()).includes('85%'), '진행률이 저장되지 않음');
     });
 
-    await step('모바일 간트 보기', async () => {
+    await step('모바일 간트 보기·단계 시트', async () => {
         await m.click('#view-mode [data-view=gantt]');
         await m.waitForSelector('#gantt .g-row.stage');
         await noOverflow('간트');
-        await shot(m, 'm05-detail-gantt');
-        await m.locator('#gantt .g-row.stage', { hasText: '제작' }).locator('.g-name').click();
-        await m.waitForSelector('dialog.sheet[open]');
-        await shot(m, 'm06-stage-sheet', false);
-        await m.locator('dialog.sheet[open] [data-close]').first().click();
+        await shot(m, 'm06-detail-gantt');
+        await stageRow(m, '검수').click();
+        await m.waitForSelector(SHEET);
+        await shot(m, 'm07-stage-sheet', false);
+        await closeSheet(m);
     });
 
-    await step('모바일 과제 등록·관리 화면', async () => {
+    await step('모바일 자료·분석·과제 등록·관리 화면', async () => {
+        await m.click('.tabs [data-tab=files]');
+        await noOverflow('자료');
+        await shot(m, 'm08-detail-files');
+        await m.goto(BASE + '/Insights/Weekly');
+        await m.waitForSelector('.kpis');
+        await noOverflow('주간 보고');
+        await shot(m, 'm09-insights-weekly');
+        await m.goto(BASE + '/Insights/LeadTime');
+        await noOverflow('리드타임');
+        await m.goto(BASE + '/Insights/History');
+        await noOverflow('변경 이력');
+        await shot(m, 'm10-insights-history');
         await m.goto(BASE + '/Projects/Edit');
         await m.waitForSelector('#edit-form');
         await noOverflow('과제 등록');
-        await shot(m, 'm07-edit-form');
         await m.goto(BASE + '/Admin');
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
-        await shot(m, 'm08-admin');
+        await shot(m, 'm11-admin');
     });
 
     await mobile.close();

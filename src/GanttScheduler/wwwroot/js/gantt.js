@@ -1,18 +1,20 @@
 // 간트 렌더러 — 대시보드(과제 단위)와 과제 상세(단계·작업 단위)가 함께 쓴다.
-// 호출하는 쪽이 행과 막대(날짜·세로 위치·종류)를 만들어 넘기고, 여기서는 시간축과 DOM 만 담당한다.
+// 호출하는 쪽이 행과 막대(날짜·세로 위치·종류)를 만들어 넘기고, 여기서는 시간축과 DOM, 드래그, 의존선만 담당한다.
 //
 // Gantt.render(host, {
 //   rows: [{ key, cls, title, sub, side(html), href, height, toggle: {expanded}, data,
-//            bars:  [{ from, to, top, h, cls, label, title, fill }],
+//            bars:  [{ from, to, top, h, cls, label, title, fill, drag: 'move'|'end', anchor: true }],
 //            marks: [{ date, top, cls, title }] }],
+//   links: [{ from: rowKey, to: rowKey, cls }],     // 선행 행의 anchor 막대 끝 → 후행 행의 anchor 막대 시작
 //   today, holidays: [{date, name}], zoom: 'day'|'week'|'month', corner,
-//   onRowClick(row), onToggle(row), keepScroll
+//   onRowClick(row), onToggle(row), onBarDrag(row, bar, {from, to}), keepScroll
 // })
 window.Gantt = (function () {
     'use strict';
 
     var D = App.d;
     var PPD = { day: 28, week: 10, month: 4 };   // 하루당 픽셀
+    var PAD = 20;                                // 본문 맨 위 여백('오늘' 표시 자리)
     var esc = App.esc;
 
     function el(tag, cls, html) {
@@ -46,7 +48,7 @@ window.Gantt = (function () {
         });
         var start = min - 7;
         start -= (D.dow(start) + 6) % 7;               // 월요일로 맞춤
-        var end = max + 14;
+        var end = max + 21;                            // 뒤쪽은 드래그로 밀 공간을 넉넉히
 
         var leftW = parseInt(getComputedStyle(host).getPropertyValue('--g-left'), 10) || 300;
         var avail = Math.max(0, host.clientWidth - leftW);
@@ -133,14 +135,21 @@ window.Gantt = (function () {
         body.appendChild(todayLabel);
 
         // 맨 위 여백 — '오늘' 표시가 첫 행의 막대를 가리지 않도록
-        body.appendChild(el('div', 'g-pad'));
+        var pad = el('div', 'g-pad');
+        pad.style.height = PAD + 'px';
+        body.appendChild(pad);
 
         // ── 행 ──
         if (rows.length === 0) body.appendChild(el('div', 'g-empty', esc(opts.empty || '표시할 일정이 없습니다.')));
 
-        rows.forEach(function (r) {
+        var suppressClick = false;     // 드래그 직후의 클릭은 행 클릭으로 치지 않는다
+        var geometry = {};             // 행 key → { top, anchor: {x1, x2, y} } (의존선용)
+        var top = PAD;
+
+        rows.forEach(function (r, ri) {
+            var height = r.height || 48;
             var row = el('div', 'g-row ' + (r.cls || '') + (opts.onRowClick || r.href ? ' clickable' : ''));
-            row.style.height = (r.height || 48) + 'px';
+            row.style.height = height + 'px';
 
             var name = el(r.href ? 'a' : 'div', 'g-name');
             if (r.href) name.href = r.href;
@@ -158,24 +167,32 @@ window.Gantt = (function () {
 
             var track = el('div', 'g-track');
             var t = '';
-            (r.bars || []).forEach(function (b) {
+            (r.bars || []).forEach(function (b, bi) {
                 var from = D.num(b.from), to = D.num(b.to);
                 if (to < from) to = from;
                 var bw = (to - from + 1) * ppd - 1;
                 var inner = '';
                 if (b.fill != null) inner = '<i class="g-fill" style="width:' + Math.max(0, Math.min(100, b.fill)) + '%"></i>';
                 else if (b.label && bw >= 40) inner = esc(b.label);
-                t += '<div class="g-bar ' + b.cls + '" style="left:' + x(from) + 'px;width:' + bw + 'px;top:' + b.top + 'px;height:' + b.h +
-                    'px;line-height:' + b.h + 'px"' + (b.title ? ' title="' + esc(b.title) + '"' : '') + '>' + inner + '</div>';
+                var drag = '';
+                if (b.drag && opts.onBarDrag) {
+                    drag = ' data-drag="' + b.drag + '" data-row="' + ri + '" data-bar="' + bi + '"';
+                    inner += (b.drag === 'move' ? '<i class="g-rz l"></i>' : '') + '<i class="g-rz r"></i>';
+                }
+                t += '<div class="g-bar ' + b.cls + (drag ? ' draggable' : '') + '"' + drag + ' style="left:' + x(from) + 'px;width:' + bw + 'px;top:' + b.top +
+                    'px;height:' + b.h + 'px;line-height:' + b.h + 'px"' + (b.title ? ' title="' + esc(b.title) + '"' : '') + '>' + inner + '</div>';
+                if (b.anchor) geometry[r.key] = { x1: x(from), x2: x(to) + ppd - 1, y: top + b.top + b.h / 2, rowTop: top, rowBottom: top + height };
             });
             (r.marks || []).forEach(function (mk) {
-                t += '<div class="g-mark ' + (mk.cls || '') + '" style="left:' + (x(D.num(mk.date)) + ppd) + 'px;top:' + mk.top + 'px"' +
+                var left = x(D.num(mk.date)) + ppd;
+                t += '<div class="g-mark ' + (mk.cls || '') + '" style="left:' + left + 'px;top:' + mk.top + 'px"' +
                     (mk.title ? ' title="' + esc(mk.title) + '"' : '') + '></div>';
             });
             track.innerHTML = t;
             row.appendChild(track);
 
             row.addEventListener('click', function (e) {
+                if (suppressClick) { suppressClick = false; return; }
                 var tg = e.target.closest('.g-toggle');
                 if (tg) {
                     e.preventDefault();
@@ -191,11 +208,104 @@ window.Gantt = (function () {
             });
 
             body.appendChild(row);
+            top += height;
         });
+
+        // ── 의존선: 선행 막대 끝에서 후행 막대 시작으로 꺾은선 ──
+        var paths = '';
+        (opts.links || []).forEach(function (l) {
+            var a = geometry[l.from], b = geometry[l.to];
+            if (!a || !b) return;      // 접힌 단계의 작업은 행이 없다
+            var x1 = a.x2, y1 = a.y, x2 = b.x1, y2 = b.y;
+            var d;
+            if (x2 >= x1 + 14) {
+                d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + y2 + 'H' + (x2 - 1);
+            } else {
+                // 후행이 선행 끝보다 앞에서 시작하면 행 사이로 돌아 들어간다
+                var mid = y2 > y1 ? a.rowBottom : a.rowTop;
+                d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + mid + 'H' + (x2 - 9) + 'V' + y2 + 'H' + (x2 - 1);
+            }
+            var cls = l.cls || '';
+            paths += '<path class="' + cls + '" d="' + d + '" marker-end="url(#g-arrow' + (cls ? '-' + cls : '') + ')"/>';
+        });
+        if (paths) {
+            var svg = el('div', 'g-links');
+            svg.innerHTML = '<svg width="' + width + '" height="' + top + '" aria-hidden="true"><defs>' +
+                ['', 'crit', 'bad'].map(function (c) {
+                    return '<marker id="g-arrow' + (c ? '-' + c : '') + '" class="' + c + '" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">' +
+                        '<path d="M0 0L8 4L0 8z"/></marker>';
+                }).join('') + '</defs>' + paths + '</svg>';
+            body.appendChild(svg);
+        }
+
+        // ── 드래그 편집 (마우스·펜만 — 터치는 스크롤과 겹치므로 시트에서 고친다) ──
+        if (opts.onBarDrag) {
+            var drag = null;
+            var tipEl = el('div', 'g-tip');
+            tipEl.hidden = true;
+
+            body.addEventListener('pointerdown', function (e) {
+                if (e.button !== 0 || e.pointerType === 'touch') return;
+                var barEl = e.target.closest('.g-bar.draggable');
+                if (!barEl) return;
+                var r = rows[+barEl.dataset.row];
+                var b = r.bars[+barEl.dataset.bar];
+                var mode = e.target.classList.contains('g-rz')
+                    ? (e.target.classList.contains('l') ? 'start' : 'end')
+                    : (b.drag === 'move' ? 'move' : null);
+                if (!mode) return;
+                drag = { el: barEl, row: r, bar: b, mode: mode, x: e.clientX, from: D.num(b.from), to: D.num(b.to), moved: false };
+                drag.newFrom = drag.from;
+                drag.newTo = drag.to;
+                barEl.setPointerCapture(e.pointerId);
+                barEl.classList.add('dragging');
+                e.preventDefault();
+            });
+
+            body.addEventListener('pointermove', function (e) {
+                if (!drag) return;
+                var dx = e.clientX - drag.x;
+                if (Math.abs(dx) > 3) drag.moved = true;
+                var d = Math.round(dx / ppd);
+                var from = drag.from, to = drag.to;
+                if (drag.mode === 'move') { from += d; to += d; }
+                else if (drag.mode === 'start') from = Math.min(from + d, to);
+                else to = Math.max(to + d, from);
+                drag.newFrom = from;
+                drag.newTo = to;
+                drag.el.style.left = x(from) + 'px';
+                drag.el.style.width = ((to - from + 1) * ppd - 1) + 'px';
+                tipEl.textContent = drag.bar.drag === 'end' ? D.md(D.str(to)) : D.md(D.str(from)) + ' ~ ' + D.md(D.str(to));
+                tipEl.style.left = (e.clientX + 12) + 'px';
+                tipEl.style.top = (e.clientY - 32) + 'px';
+                tipEl.hidden = false;
+            });
+
+            var finish = function (commit) {
+                if (!drag) return;
+                var g = drag;
+                drag = null;
+                tipEl.hidden = true;
+                g.el.classList.remove('dragging');
+                if (g.moved) {
+                    suppressClick = true;
+                    setTimeout(function () { suppressClick = false; }, 0);
+                }
+                if (commit && (g.newFrom !== g.from || g.newTo !== g.to)) {
+                    opts.onBarDrag(g.row, g.bar, { from: D.str(g.newFrom), to: D.str(g.newTo) });
+                } else {
+                    g.el.style.left = x(g.from) + 'px';
+                    g.el.style.width = ((g.to - g.from + 1) * ppd - 1) + 'px';
+                }
+            };
+            body.addEventListener('pointerup', function () { finish(true); });
+            body.addEventListener('pointercancel', function () { finish(false); });
+        }
 
         grid.appendChild(body);
         host.innerHTML = '';
         host.appendChild(scroll);
+        if (tipEl) host.appendChild(tipEl);
 
         function scrollToToday() {
             scroll.scrollLeft = Math.max(0, x(today) - Math.max(40, (scroll.clientWidth - leftW) * 0.3));
@@ -220,7 +330,7 @@ window.Gantt = (function () {
             bars.push({
                 from: pf, to: stage.targetDate, top: lane.planTop, h: lane.planH,
                 cls: 'plan' + (index % 2 ? ' alt' : ''), label: withLabel ? stage.name : null,
-                title: stage.name + ' 목표 ' + stage.targetDate
+                title: stage.name + ' 목표 ' + stage.targetDate, kind: 'plan'
             });
         }
         if (stage.actualFrom && stage.actualTo) {

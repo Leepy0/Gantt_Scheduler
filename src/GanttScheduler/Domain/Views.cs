@@ -1,38 +1,114 @@
 namespace GanttScheduler.Domain;
 
 // 화면(JSON)으로 내보내는 읽기 전용 모델
-public record WorkView(
-    int Id, int StageId, string Title, string? Owner, string? CoOwner, int Progress,
-    DateOnly PlanStart, DateOnly PlanEnd, DateOnly? ActualStart, DateOnly? ActualEnd,
-    string Status, bool Late, bool DoneLate, string? Note);
+public record WorkView
+{
+    public int Id { get; init; }
+    public int StageId { get; init; }
+    public int Version { get; init; }
+    public string Title { get; init; } = "";
+    public string? Owner { get; init; }
+    public string? CoOwner { get; init; }
+    public int Progress { get; init; }
+    public DateOnly PlanStart { get; init; }
+    public DateOnly PlanEnd { get; init; }
+    public int PlanWorkDays { get; init; }              // 목표 기간의 근무일 수
+    public DateOnly? ActualStart { get; init; }
+    public DateOnly? ActualEnd { get; init; }
+    public DateOnly? BaselineStart { get; init; }
+    public DateOnly? BaselineEnd { get; init; }
+    public string Status { get; init; } = "";
+    public bool Late { get; init; }
+    public bool DoneLate { get; init; }
+    public string? Note { get; init; }
+    public List<int> Predecessors { get; init; } = new();
+    public int? Float { get; init; }                    // 여유 일수 (제약이 없으면 null)
+    public bool Critical { get; init; }                 // 미완료이고 여유가 없음
+    public bool DepViolation { get; init; }             // 선행 작업보다 먼저 시작하게 잡혀 있음
+}
 
-public record StageView(
-    int Id, string Name, string Kind, int Sort,
-    DateOnly? TargetDate, DateOnly? CompletedDate,
-    string Status, int Progress, int LateDays,
-    DateOnly? PlanFrom, DateOnly? ActualFrom, DateOnly? ActualTo,
-    DateOnly? Forecast, int ForecastOver, DateOnly? InboundHint,
-    List<WorkView> Works);
+public record CheckView(int Id, string Text, bool Done, string? DoneBy, DateTime? DoneAt);
+
+public record StageView
+{
+    public int Id { get; init; }
+    public int Version { get; init; }
+    public string Name { get; init; } = "";
+    public string Kind { get; init; } = "";
+    public int Sort { get; init; }
+    public DateOnly? TargetDate { get; init; }
+    public DateOnly? CompletedDate { get; init; }
+    public DateOnly? BaselineDate { get; init; }
+    public int? SlipDays { get; init; }                 // 기준선 대비 (밀리면 양수)
+    public string Status { get; init; } = "";
+    public int Progress { get; init; }
+    public int LateDays { get; init; }
+    public DateOnly? PlanFrom { get; init; }
+    public DateOnly? ActualFrom { get; init; }
+    public DateOnly? ActualTo { get; init; }
+    public DateOnly? Forecast { get; init; }
+    public int ForecastOver { get; init; }
+    public DateOnly? InboundHint { get; init; }
+    public List<CheckView> Checks { get; init; } = new();
+    public int CheckDone { get; init; }
+    public int CheckTotal { get; init; }
+    public List<WorkView> Works { get; init; } = new();
+}
 
 public record ActivityView(
     int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId);
 
 public record ItemView(int TypeId, string Name, int Quantity, string? Note);
 
-public record ProjectView(
-    int Id, string Title, string State,
-    int CategoryId, string Category, string CategoryKind,
-    int CorporationId, string Corporation, int LocationId, string LocationPath,
-    int OwnerId, string Owner, DateOnly StartDate, DateOnly? EndTarget,
-    int Progress, int DelayDays, string? DelayedStage,
-    string? CurrentStage, DateOnly? CurrentTarget,
-    int WorkCount, int OceanLeadDays,
-    List<StageView> Stages,
+public record LinkView(int Id, int From, int To, int Lag);
+
+public record AttachmentView(
+    int Id, string FileName, string ContentType, long Size, string UploadedBy, DateTime UploadedAt, int? StageId, bool Previewable);
+
+public record ProjectView
+{
+    public int Id { get; init; }
+    public int Version { get; init; }
+    public string Title { get; init; } = "";
+    public string State { get; init; } = "";
+    public int CategoryId { get; init; }
+    public string Category { get; init; } = "";
+    public string CategoryKind { get; init; } = "";
+    public int CorporationId { get; init; }
+    public string Corporation { get; init; } = "";
+    public int LocationId { get; init; }
+    public string LocationPath { get; init; } = "";
+    public int OwnerId { get; init; }
+    public string Owner { get; init; } = "";
+    public string? OwnerOrg { get; init; }
+    public DateOnly StartDate { get; init; }
+    public DateOnly? EndTarget { get; init; }
+    public int Progress { get; init; }
+    public int DelayDays { get; init; }
+    public string? DelayedStage { get; init; }
+    public string? CurrentStage { get; init; }
+    public DateOnly? CurrentTarget { get; init; }
+    public int WorkCount { get; init; }
+    public int OceanLeadDays { get; init; }
+    public DateTime? BaselineAt { get; init; }
+    public DateOnly? BaselineEnd { get; init; }
+    public int? SlipDays { get; init; }                 // 목표 종료가 기준선보다 밀린 일수
+    public int CriticalCount { get; init; }
+    public List<StageView> Stages { get; init; } = new();
+    public List<LinkView> Links { get; init; } = new();
+
     // 아래는 상세 화면에서만 채운다
-    string? Vendor, string? Description,
-    List<ItemView>? Equipments, List<ItemView>? Containers,
-    List<ActivityView>? Activities,
-    string? CreatedBy, DateTime? CreatedAt, DateTime? UpdatedAt);
+    public string? Vendor { get; init; }
+    public string? Description { get; init; }
+    public List<ItemView>? Equipments { get; init; }
+    public List<ItemView>? Containers { get; init; }
+    public List<ActivityView>? Activities { get; init; }
+    public List<AttachmentView>? Attachments { get; init; }
+    public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수
+    public string? CreatedBy { get; init; }
+    public DateTime? CreatedAt { get; init; }
+    public DateTime? UpdatedAt { get; init; }
+}
 
 // 위치 트리 조회용 색인
 public class LocationIndex
@@ -65,6 +141,12 @@ public class LocationIndex
 
 public static class Views
 {
+    // 브라우저에서 바로 보여 줄 수 있는 첨부 형식
+    public static readonly HashSet<string> PreviewTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/gif", "application/pdf",
+    };
+
     public static string Key(StageStatus s) => s.ToString().ToLowerInvariant();
     public static string Key(WorkStatus s) => s.ToString().ToLowerInvariant();
     public static string Key(ProjectState s) => s.ToString().ToLowerInvariant();
@@ -81,17 +163,56 @@ public static class Views
         _ => s.ToString(),
     };
 
-    public static WorkView Work(WorkItem w, DateOnly today) => new(
-        w.Id, w.StageId, w.Title, w.Owner?.Name, w.CoOwner?.Name, w.Progress,
-        w.PlanStart, w.PlanEnd, w.ActualStart, w.ActualEnd,
-        Key(Rules.StatusOf(w)), Rules.IsLate(w, today), Rules.IsDoneLate(w), w.Note);
-
-    public static List<StageView> Stages(Project p, DateOnly today, int oceanLeadDays, bool withWorks)
+    // "그룹 · 파트" 표시
+    public static string? OrgName(OrgUnit? unit)
     {
+        if (unit == null) return null;
+        return unit.Parent == null ? unit.Name : $"{unit.Parent.Name} · {unit.Name}";
+    }
+
+    public static WorkView Work(WorkItem w, DateOnly today, WorkCalendar cal,
+        IReadOnlyDictionary<int, int>? floats = null, List<int>? predecessors = null, bool violation = false)
+    {
+        int? slack = floats != null && floats.TryGetValue(w.Id, out var f) ? f : null;
+        return new WorkView
+        {
+            Id = w.Id, StageId = w.StageId, Version = w.Version, Title = w.Title,
+            Owner = w.Owner?.Name, CoOwner = w.CoOwner?.Name, Progress = w.Progress,
+            PlanStart = w.PlanStart, PlanEnd = w.PlanEnd, PlanWorkDays = cal.WorkingDays(w.PlanStart, w.PlanEnd),
+            ActualStart = w.ActualStart, ActualEnd = w.ActualEnd,
+            BaselineStart = w.BaselineStart, BaselineEnd = w.BaselineEnd,
+            Status = Key(Rules.StatusOf(w)), Late = Rules.IsLate(w, today), DoneLate = Rules.IsDoneLate(w), Note = w.Note,
+            Predecessors = predecessors ?? new List<int>(),
+            Float = slack,
+            Critical = w.ActualEnd == null && slack != null && slack.Value <= 0,
+            DepViolation = violation,
+        };
+    }
+
+    public static List<StageView> Stages(Project p, DateOnly today, int oceanLeadDays, bool withWorks, WorkCalendar? calendar = null)
+    {
+        var cal = calendar ?? WorkCalendar.WeekendsOnly;
         var list = new List<StageView>();
         DateOnly? prevTarget = p.StartDate;       // 목표 막대의 시작: 직전 단계 목표일(없으면 착수일)
         DateOnly? prevCompleted = p.StartDate;    // 실행 막대의 시작: 직전 단계 완료일(첫 단계는 착수일)
         var inbound = Rules.InboundRecommendation(p, oceanLeadDays);
+
+        // 의존 관계에서 나오는 값은 작업을 내보낼 때만 계산한다
+        IReadOnlyDictionary<int, int>? floats = null;
+        var preds = new Dictionary<int, List<int>>();
+        var violated = new HashSet<int>();
+        if (withWorks)
+        {
+            floats = Rules.Floats(p, cal);
+            var byId = Rules.AllWorks(p).ToDictionary(w => w.Id);
+            foreach (var l in p.Links)
+            {
+                if (!byId.TryGetValue(l.PredecessorId, out var from) || !byId.TryGetValue(l.SuccessorId, out var to)) continue;
+                if (!preds.TryGetValue(to.Id, out var ids)) preds[to.Id] = ids = new List<int>();
+                ids.Add(from.Id);
+                if (to.ActualStart == null && Rules.Violates(from, to, l.LagDays, cal)) violated.Add(to.Id);
+            }
+        }
 
         foreach (var s in Rules.Ordered(p))
         {
@@ -110,17 +231,26 @@ public static class Views
             var lateDays = status == StageStatus.Late ? today.DayNumber - s.TargetDate!.Value.DayNumber : 0;
 
             var works = withWorks
-                ? s.Works.OrderBy(w => w.PlanStart).ThenBy(w => w.Id).Select(w => Work(w, today)).ToList()
+                ? s.Works.OrderBy(w => w.PlanStart).ThenBy(w => w.Id)
+                    .Select(w => Work(w, today, cal, floats, preds.TryGetValue(w.Id, out var ids) ? ids : null, violated.Contains(w.Id)))
+                    .ToList()
                 : new List<WorkView>();
 
-            list.Add(new StageView(
-                s.Id, s.Name, Key(s.Kind), s.SortOrder,
-                s.TargetDate, s.CompletedDate,
-                Key(status), Rules.StageProgress(s), lateDays,
-                planFrom, actualFrom, actualTo,
-                Rules.Forecast(s, today), Rules.ForecastOverDays(s, today),
-                s.Kind == StageKind.Inbound && s.CompletedDate == null ? inbound : null,
-                works));
+            var checks = s.Checks.OrderBy(c => c.SortOrder).ThenBy(c => c.Id)
+                .Select(c => new CheckView(c.Id, c.Text, c.IsDone, c.DoneBy?.Name, c.DoneAt)).ToList();
+
+            list.Add(new StageView
+            {
+                Id = s.Id, Version = s.Version, Name = s.Name, Kind = Key(s.Kind), Sort = s.SortOrder,
+                TargetDate = s.TargetDate, CompletedDate = s.CompletedDate,
+                BaselineDate = s.BaselineDate, SlipDays = Rules.SlipDays(s),
+                Status = Key(status), Progress = Rules.StageProgress(s), LateDays = lateDays,
+                PlanFrom = planFrom, ActualFrom = actualFrom, ActualTo = actualTo,
+                Forecast = Rules.Forecast(s, today), ForecastOver = Rules.ForecastOverDays(s, today),
+                InboundHint = s.Kind == StageKind.Inbound && s.CompletedDate == null ? inbound : null,
+                Checks = checks, CheckDone = checks.Count(c => c.Done), CheckTotal = checks.Count,
+                Works = works,
+            });
 
             if (s.TargetDate != null) prevTarget = s.TargetDate;
             prevCompleted = s.CompletedDate;   // 미완료면 null → 다음 단계 실행 막대 없음
@@ -128,32 +258,49 @@ public static class Views
         return list;
     }
 
-    public static ProjectView Project(Project p, DateOnly today, LocationIndex locations, bool detail, bool withWorks = true)
+    public static ProjectView Project(Project p, DateOnly today, LocationIndex locations, bool detail,
+        bool withWorks = true, WorkCalendar? calendar = null)
     {
         var corp = locations.Get(p.CorporationId);
         var lead = corp?.OceanLeadDays ?? 0;
         var current = Rules.CurrentStage(p);
         var delayed = Rules.MostDelayedStage(p, today);
         var delayDays = Rules.DelayDays(p, today);
+        var stages = Stages(p, today, lead, withWorks, calendar);
+        var endTarget = Rules.EndTarget(p);
+        var baselineEnd = Rules.BaselineEnd(p);
 
-        return new ProjectView(
-            p.Id, p.Title, Key(p.State),
-            p.CategoryId, p.Category?.Name ?? "", Key(p.Category?.Kind ?? CategoryKind.General),
-            p.CorporationId, corp?.Name ?? "", p.LocationId, locations.PathBelowCorporation(p.LocationId),
-            p.OwnerId, p.Owner?.Name ?? "", p.StartDate, Rules.EndTarget(p),
-            Rules.ProjectProgress(p), delayDays, delayDays > 0 ? delayed?.Name : null,
-            current?.Name, current?.TargetDate,
-            p.Stages.Sum(s => s.Works.Count), lead,
-            Stages(p, today, lead, withWorks),
-            detail ? p.Vendor : null,
-            detail ? p.Description : null,
-            detail ? p.Equipments.OrderBy(e => e.Id).Select(e => new ItemView(e.EquipmentTypeId, EquipmentName(e.EquipmentType), e.Quantity, e.Note)).ToList() : null,
-            detail ? p.Containers.OrderBy(e => e.Id).Select(e => new ItemView(e.ContainerTypeId, e.ContainerType?.Name ?? "", e.Quantity, e.Note)).ToList() : null,
-            detail ? p.Activities.OrderByDescending(a => a.At).ThenByDescending(a => a.Id)
-                        .Select(a => new ActivityView(a.Id, Key(a.Type), a.Text, a.Reason, a.User?.Name ?? "", a.At, a.StageId, a.WorkItemId)).ToList() : null,
-            detail ? p.CreatedBy?.Name : null,
-            detail ? p.CreatedAt : null,
-            detail ? p.UpdatedAt : null);
+        return new ProjectView
+        {
+            Id = p.Id, Version = p.Version, Title = p.Title, State = Key(p.State),
+            CategoryId = p.CategoryId, Category = p.Category?.Name ?? "", CategoryKind = Key(p.Category?.Kind ?? Domain.CategoryKind.General),
+            CorporationId = p.CorporationId, Corporation = corp?.Name ?? "",
+            LocationId = p.LocationId, LocationPath = locations.PathBelowCorporation(p.LocationId),
+            OwnerId = p.OwnerId, Owner = p.Owner?.Name ?? "", OwnerOrg = OrgName(p.Owner?.OrgUnit),
+            StartDate = p.StartDate, EndTarget = endTarget,
+            Progress = Rules.ProjectProgress(p), DelayDays = delayDays, DelayedStage = delayDays > 0 ? delayed?.Name : null,
+            CurrentStage = current?.Name, CurrentTarget = current?.TargetDate,
+            WorkCount = p.Stages.Sum(s => s.Works.Count), OceanLeadDays = lead,
+            BaselineAt = p.BaselineAt, BaselineEnd = baselineEnd,
+            SlipDays = baselineEnd == null || endTarget == null ? null : endTarget.Value.DayNumber - baselineEnd.Value.DayNumber,
+            CriticalCount = stages.Sum(s => s.Works.Count(w => w.Critical)),
+            Stages = stages,
+            Links = withWorks ? p.Links.OrderBy(l => l.Id).Select(l => new LinkView(l.Id, l.PredecessorId, l.SuccessorId, l.LagDays)).ToList() : new List<LinkView>(),
+
+            Vendor = detail ? p.Vendor : null,
+            Description = detail ? p.Description : null,
+            Equipments = detail ? p.Equipments.OrderBy(e => e.Id).Select(e => new ItemView(e.EquipmentTypeId, EquipmentName(e.EquipmentType), e.Quantity, e.Note)).ToList() : null,
+            Containers = detail ? p.Containers.OrderBy(e => e.Id).Select(e => new ItemView(e.ContainerTypeId, e.ContainerType?.Name ?? "", e.Quantity, e.Note)).ToList() : null,
+            Activities = detail ? p.Activities.OrderByDescending(a => a.At).ThenByDescending(a => a.Id)
+                .Select(a => new ActivityView(a.Id, Key(a.Type), a.Text, a.Reason, a.User?.Name ?? "", a.At, a.StageId, a.WorkItemId)).ToList() : null,
+            Attachments = detail ? p.Attachments.OrderByDescending(a => a.UploadedAt).ThenByDescending(a => a.Id)
+                .Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Size, a.UploadedBy?.Name ?? "", a.UploadedAt, a.StageId,
+                    PreviewTypes.Contains(a.ContentType))).ToList() : null,
+            TargetChanges = detail ? p.Activities.Count(a => a.Type == ActivityType.TargetChanged) : 0,
+            CreatedBy = detail ? p.CreatedBy?.Name : null,
+            CreatedAt = detail ? p.CreatedAt : null,
+            UpdatedAt = detail ? p.UpdatedAt : null,
+        };
     }
 
     // "AGV · Belt" 처럼 대분류와 함께 표시

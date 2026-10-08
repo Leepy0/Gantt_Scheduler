@@ -1,0 +1,94 @@
+@page
+@model HistoryModel
+@{
+    ViewData["Title"] = "변경 이력";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "history";
+    var d = Model.Data;
+    Dictionary<string, string> Route(int page)
+    {
+        var route = new Dictionary<string, string>
+        {
+            ["from"] = d.From.ToString("yyyy-MM-dd"), ["to"] = d.To.ToString("yyyy-MM-dd"), ["p"] = page.ToString(),
+        };
+        if (!string.IsNullOrWhiteSpace(Model.ByUser)) route["user"] = Model.ByUser!;
+        if (!string.IsNullOrWhiteSpace(Model.Kind)) route["kind"] = Model.Kind!;
+        if (!string.IsNullOrWhiteSpace(Model.Q)) route["q"] = Model.Q!;
+        return route;
+    }
+    string KindLabel(string key) => Reporting.Kinds.FirstOrDefault(k => k.Key == key).Label ?? "";
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<form method="get" class="filters">
+    <div class="filter-row">
+        <input type="date" name="from" value="@d.From.ToString("yyyy-MM-dd")" aria-label="시작일" class="w-date" />
+        <span class="muted">~</span>
+        <input type="date" name="to" value="@d.To.ToString("yyyy-MM-dd")" aria-label="종료일" class="w-date" />
+        <select name="user" aria-label="사용자">
+            <option value="">사용자 전체</option>
+            @foreach (var u in d.Users)
+            {
+                <option value="@u" selected="@(Model.ByUser == u)">@u</option>
+            }
+        </select>
+        <select name="kind" aria-label="구분">
+            <option value="">구분 전체</option>
+            @foreach (var (key, label) in Reporting.Kinds)
+            {
+                <option value="@key" selected="@(Model.Kind == key)">@label</option>
+            }
+        </select>
+        <label class="search">
+            <svg class="ic"><use href="#i-search" /></svg>
+            <input type="search" name="q" value="@Model.Q" placeholder="과제명·내용·사유 검색" aria-label="검색" />
+        </label>
+        <button type="submit" class="btn">조회</button>
+    </div>
+</form>
+
+<section class="card flush">
+    <header class="card-head pad"><h2>변경 이력</h2><span class="count">@d.Total</span></header>
+    @if (d.Rows.Count == 0)
+    {
+        <p class="empty">조건에 맞는 이력이 없습니다. 기간을 넓혀 보세요.</p>
+    }
+    else
+    {
+        <ul class="history">
+            @foreach (var r in d.Rows)
+            {
+                <li>
+                    <span class="history-time num" data-utc="@r.At.ToString("o")">@KoreaClock.ToKst(r.At).ToString("MM-dd HH:mm")</span>
+                    <span class="history-user">@r.User</span>
+                    <span class="history-body">
+                        <a asp-page="/Projects/Detail" asp-route-id="@r.ProjectId">@r.Project</a>
+                        <span class="chip">@KindLabel(r.Kind)</span>
+                        <span class="history-text">@r.Text</span>
+                        @if (r.Reason != null)
+                        {
+                            <span class="feed-reason">@r.Reason</span>
+                        }
+                    </span>
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@if (d.Pages > 1)
+{
+    <nav class="pager" aria-label="쪽">
+        @if (d.Page > 1)
+        {
+            <a class="btn small" asp-page="/Insights/History" asp-all-route-data="Route(d.Page - 1)"><svg class="ic"><use href="#i-left" /></svg>이전</a>
+        }
+        <span class="num">@d.Page / @d.Pages</span>
+        @if (d.Page < d.Pages)
+        {
+            <a class="btn small" asp-page="/Insights/History" asp-all-route-data="Route(d.Page + 1)">다음<svg class="ic"><use href="#i-right" /></svg></a>
+        }
+    </nav>
+}

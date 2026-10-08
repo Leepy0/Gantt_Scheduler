@@ -58,43 +58,65 @@ public class ServiceTests : IClassFixture<TestDb>
     }
 
     [Fact]
-    public async Task 목표일_변경은_사유가_필요하고_이후_단계를_함께_옮길_수_있다()
+    public async Task 목표일_변경은_사유가_필요하고_이후_단계를_근무일_기준으로_함께_옮긴다()
     {
         var id = await NewProjectAsync();
         var stages = (await ViewAsync(id)).Stages;
+        DateOnly Day(int month, int day) => new(2026, month, day);
 
-        // 처음 정하는 목표일은 사유 없이 가능
+        // 처음 정하는 목표일은 사유 없이 가능 (모두 수요일)
         using (var s = _db.NewScope())
         {
-            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", D(5), null, null, false));
-            await s.Projects.SaveStageAsync(new StageInput(id, stages[1].Id, "품의", D(15), null, null, false));
-            await s.Projects.SaveStageAsync(new StageInput(id, stages[2].Id, "발주", D(25), null, null, false));
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", Day(10, 14), null, null, false));
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[1].Id, "품의", Day(10, 28), null, null, false));
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[2].Id, "발주", Day(11, 11), null, null, false));
         }
 
         // 바꿀 때는 사유 필수
         using (var s = _db.NewScope())
         {
             var ex = await Assert.ThrowsAsync<RuleException>(() =>
-                s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", D(8), null, " ", false)));
+                s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", Day(10, 21), null, " ", false)));
             Assert.Equal("reason", ex.Field);
         }
 
+        // 10-14 → 10-21 은 근무일 5일. 이후 단계도 근무일 5일씩 밀린다
         using (var s = _db.NewScope())
-            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", D(8), null, "자료 보완", true));
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", Day(10, 21), null, "자료 보완", true));
 
         var p = await ViewAsync(id);
-        Assert.Equal(D(8), p.Stages[0].TargetDate);
-        Assert.Equal(D(18), p.Stages[1].TargetDate);
-        Assert.Equal(D(28), p.Stages[2].TargetDate);
+        Assert.Equal(Day(10, 21), p.Stages[0].TargetDate);
+        Assert.Equal(Day(11, 4), p.Stages[1].TargetDate);
+        Assert.Equal(Day(11, 18), p.Stages[2].TargetDate);
         Assert.Null(p.Stages[3].TargetDate);
 
         var changes = p.Activities!.Where(a => a.Type == "targetChanged").ToList();
         Assert.Equal(3, changes.Count);
         Assert.All(changes, a => Assert.Equal("자료 보완", a.Reason));
+        Assert.Equal(3, p.TargetChanges);
 
         using var check = _db.NewScope();
         var batches = await check.Db.Activities.Where(a => a.ProjectId == id && a.Type == ActivityType.TargetChanged).Select(a => a.BatchId).ToListAsync();
         Assert.Single(batches.Distinct());
+    }
+
+    [Fact]
+    public async Task 연쇄_이동은_주말과_공휴일을_건너뛴다()
+    {
+        var id = await NewProjectAsync("테스트 근무일", "물류");
+        var stages = (await ViewAsync(id)).Stages;
+        DateOnly Day(int month, int day) => new(2026, month, day);
+
+        using (var s = _db.NewScope())
+        {
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", Day(12, 22), null, null, false));   // 화
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[1].Id, "보고", Day(12, 23), null, null, false));   // 수
+        }
+        // 12-22(화) → 12-24(목): 근무일 2일. 12-23(수)에서 2일 뒤는 12-24(목), 12-25 성탄절·주말을 건너 12-28(월)
+        using (var s = _db.NewScope())
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, "검토", Day(12, 24), null, "일정 조정", true));
+
+        Assert.Equal(Day(12, 28), (await ViewAsync(id)).Stages[1].TargetDate);
     }
 
     [Fact]
@@ -264,7 +286,7 @@ public class ServiceTests : IClassFixture<TestDb>
     {
         using (var s = _db.NewScope())
         {
-            var first = await s.Users.RegisterAsync("10.0.0.1", "김물류", "물류기술팀");
+            var first = await s.Users.RegisterAsync("10.0.0.1", "김물류", null);
             var again = await s.Users.RegisterAsync("10.0.0.2", "김물류", null);
             Assert.Equal(first.Id, again.Id);
         }

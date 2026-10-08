@@ -39,6 +39,7 @@ public class EditModel : PageModel
         public DateOnly? StartDate { get; set; }
         public string? Vendor { get; set; }
         public string? Description { get; set; }
+        public int? Version { get; set; }       // 화면을 연 시점의 과제 버전 (동시 수정 감지)
         public List<ItemRow> Items { get; set; } = new();
     }
 
@@ -74,6 +75,7 @@ public class EditModel : PageModel
                 StartDate = p.StartDate,
                 Vendor = p.Vendor,
                 Description = p.Description,
+                Version = p.Version,
                 Items = (p.Category?.Kind == CategoryKind.Container
                     ? p.Containers.Select(c => new ItemRow { TypeId = c.ContainerTypeId, Quantity = c.Quantity, Note = c.Note })
                     : p.Equipments.Select(e => new ItemRow { TypeId = e.EquipmentTypeId, Quantity = e.Quantity, Note = e.Note })).ToList(),
@@ -95,7 +97,7 @@ public class EditModel : PageModel
 
         var items = Form.Items.Select(i => new ItemInput(i.TypeId, i.Quantity, i.Note)).ToList();
         var input = new ProjectInput(Form.Title, Form.CategoryId, Form.LocationId, Form.Owner, Form.StartDate,
-            Form.Vendor, Form.Description, items, items);
+            Form.Vendor, Form.Description, items, items, Form.Version);
         try
         {
             var id = Id;

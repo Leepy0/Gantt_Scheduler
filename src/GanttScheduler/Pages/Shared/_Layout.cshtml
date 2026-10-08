@@ -21,10 +21,12 @@
             <a class="brand" asp-page="/Index">과제 스케줄러</a>
             <nav class="top-nav" aria-label="주 메뉴">
                 <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")" aria-current="@(nav == "dash" ? "page" : null)">대시보드</a>
+                <a asp-page="/My/Index" class="@(nav == "my" ? "on" : "")" aria-current="@(nav == "my" ? "page" : null)">내 할 일</a>
                 <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")" aria-current="@(nav == "projects" ? "page" : null)">과제</a>
+                <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")" aria-current="@(nav == "insights" ? "page" : null)">분석</a>
                 <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)">관리</a>
             </nav>
-            <div class="me" title="접속 IP @Me.Ip">
+            <div class="me" title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip">
                 <svg class="ic"><use href="#i-user" /></svg>
                 <span>@Me.Name</span>
             </div>
@@ -37,7 +39,9 @@
     {
         <nav class="bottom-nav" aria-label="주 메뉴">
             <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")"><svg class="ic"><use href="#i-dash" /></svg><span>대시보드</span></a>
+            <a asp-page="/My/Index" class="@(nav == "my" ? "on" : "")"><svg class="ic"><use href="#i-tasks" /></svg><span>내 할 일</span></a>
             <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")"><svg class="ic"><use href="#i-list" /></svg><span>과제</span></a>
+            <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")"><svg class="ic"><use href="#i-chart" /></svg><span>분석</span></a>
             <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")"><svg class="ic"><use href="#i-gear" /></svg><span>관리</span></a>
         </nav>
     }

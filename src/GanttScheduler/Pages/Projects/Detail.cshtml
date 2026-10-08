@@ -15,9 +15,10 @@
 
     <nav class="stepper" id="stepper" aria-label="단계 진행"></nav>
 
-    <div class="tabs" role="tablist">
+    <div class="tabs scroll" role="tablist">
         <button type="button" role="tab" class="on" data-tab="schedule" aria-selected="true">일정</button>
         <button type="button" role="tab" data-tab="info" aria-selected="false">정보</button>
+        <button type="button" role="tab" data-tab="files" aria-selected="false">자료 <span class="count" id="files-count"></span></button>
         <button type="button" role="tab" data-tab="activity" aria-selected="false">활동 <span class="count" id="activity-count"></span></button>
     </div>
 
@@ -33,6 +34,8 @@
                 <button type="button" data-zoom="month">월</button>
             </div>
             <button type="button" class="btn small" id="go-today">오늘</button>
+            <button type="button" class="btn small toggle" id="show-baseline" aria-pressed="false"><svg class="ic"><use href="#i-pin" /></svg>기준선</button>
+            <button type="button" class="btn small toggle" id="show-links" aria-pressed="false"><svg class="ic"><use href="#i-link" /></svg>의존선</button>
             <span class="spacer"></span>
             <button type="button" class="btn small" id="add-stage"><svg class="ic"><use href="#i-plus" /></svg>단계</button>
             <button type="button" class="btn small primary" id="add-work"><svg class="ic"><use href="#i-plus" /></svg>작업</button>
@@ -46,12 +49,33 @@
                 <span><i class="lg over"></i>목표 초과 완료</span>
                 <span><i class="lg late"></i>지연</span>
                 <span><i class="lg fc"></i>작업 기준 예상 종료</span>
+                <span><i class="lg base"></i>기준선</span>
+                <span><i class="lg crit"></i>임계(여유 없음)</span>
+                <span class="hide-sm">막대를 끌어 일정 변경</span>
             </div>
         </div>
         <div id="schedule-list" class="stage-list" hidden></div>
     </section>
 
     <section class="tab-panel" id="tab-info" hidden></section>
+
+    <section class="tab-panel" id="tab-files" hidden>
+        <form class="card form" id="upload-form">
+            <div class="field-row">
+                <label class="field" data-field="file">
+                    <span class="label">파일</span>
+                    <input type="file" id="file-input" />
+                </label>
+                <label class="field">
+                    <span class="label">관련 단계 <span class="opt">선택</span></span>
+                    <select id="file-stage"></select>
+                </label>
+            </div>
+            <span class="hint">이미지·PDF·Office·한글·zip 파일, 30MB 이하</span>
+            <div class="form-actions"><button type="submit" class="btn primary" id="upload-btn"><svg class="ic"><use href="#i-upload" /></svg>올리기</button></div>
+        </form>
+        <div class="card flush"><ul class="files" id="files"></ul></div>
+    </section>
 
     <section class="tab-panel" id="tab-activity" hidden>
         <form class="card comment-form" id="comment-form">

@@ -17,6 +17,11 @@ namespace Microsoft.EntityFrameworkCore
         public DbUpdateException(string message) : base(message) { }
     }
 
+    public class DbUpdateConcurrencyException : DbUpdateException
+    {
+        public DbUpdateConcurrencyException(string message) : base(message) { }
+    }
+
     public class DbContextOptions { }
     public class DbContextOptions<T> : DbContextOptions { }
 
@@ -42,6 +47,7 @@ namespace Microsoft.EntityFrameworkCore
     {
         public static bool IsSqlServer(this DatabaseFacade db) => false;
         public static bool IsSqlite(this DatabaseFacade db) => true;
+        public static string GenerateCreateScript(this DatabaseFacade db) => "fake";
     }
 
     public class DbContext : IDisposable, IAsyncDisposable
@@ -171,6 +177,7 @@ namespace Microsoft.EntityFrameworkCore
         public PropertyBuilder<P> HasMaxLength(int length) => this;
         public PropertyBuilder<P> IsRequired(bool required = true) => this;
         public PropertyBuilder<P> HasConversion<TProvider>() => this;
+        public PropertyBuilder<P> IsConcurrencyToken(bool token = true) => this;
     }
 
     public class IndexBuilder
@@ -263,7 +270,9 @@ namespace Microsoft.EntityFrameworkCore
         {
             lock (_gate)
             {
-                foreach (var e in removed) RemoveCascade(e);
+                // 지운 엔티티는 부모 컬렉션에 아직 매달려 있어도 다시 살리지 않는다
+                var gone = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                foreach (var e in removed) RemoveCascade(e, gone);
 
                 // 새 엔티티 수집: 명시적으로 Add 한 것 + 기존/새 엔티티의 내비게이션에 매달린 것
                 var stored = new HashSet<object>(_tables.Values.SelectMany(x => x), ReferenceEqualityComparer.Instance);
@@ -273,6 +282,7 @@ namespace Microsoft.EntityFrameworkCore
                 while (queue.Count > 0)
                 {
                     var e = queue.Dequeue();
+                    if (gone.Contains(e)) continue;
                     if (!stored.Add(e)) continue;
                     fresh.Add(e);
                     EnqueueRelated(e, queue);
@@ -340,12 +350,13 @@ namespace Microsoft.EntityFrameworkCore
                 if (nav.GetValue(e) is { } target) queue.Enqueue(target);
         }
 
-        private void RemoveCascade(object e)
+        private void RemoveCascade(object e, HashSet<object> gone)
         {
+            if (!gone.Add(e)) return;
             Table(e.GetType()).Remove(e);
             foreach (var (coll, _) in MetaOf(e.GetType()).Colls)
                 if (coll.GetValue(e) is IEnumerable children)
-                    foreach (var c in children.Cast<object>().ToList()) RemoveCascade(c);
+                    foreach (var c in children.Cast<object>().ToList()) RemoveCascade(c, gone);
         }
     }
 }

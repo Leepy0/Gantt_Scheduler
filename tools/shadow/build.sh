@@ -11,7 +11,7 @@ mkdir -p "$OUT"
 # 소스 복사 (빌드 산출물은 유지해 증분 빌드)
 find "$OUT" -mindepth 1 -maxdepth 1 ! -name bin ! -name obj -exec rm -rf {} +
 cp -r "$ROOT/src/GanttScheduler/." "$OUT/"
-rm -rf "$OUT/Data/Migrations" "$OUT/Data/DesignTimeFactory.cs" "$OUT/Services/ExcelExporter.cs" "$OUT/App_Data"
+rm -rf "$OUT/Data/Migrations" "$OUT/Data/DesignTimeFactory.cs" "$OUT/Services/ExcelExporter.cs" "$OUT/Services/PdfExporter.cs" "$OUT/App_Data"
 cp "$ROOT/tools/shadow/FakeEf.cs" "$ROOT/tools/shadow/FakeExcel.cs" "$OUT/"
 cp "$ROOT/tools/shadow/Shadow.csproj" "$OUT/GanttScheduler.csproj"
 

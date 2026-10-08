@@ -53,7 +53,9 @@ public class IndexModel : PageModel
     public async Task<IActionResult> OnGetExcelAsync()
     {
         var rows = await _dash.ListAsync(Filter());
-        return File(_excel.ProjectList(rows), ExcelExporter.ContentType, $"과제목록_{_clock.Today:yyyyMMdd}.xlsx");
+        var label = States.FirstOrDefault(x => x.Key == StateKey).Label ?? "전체";
+        var filter = "상태: " + label + (string.IsNullOrWhiteSpace(Q) ? "" : $" · 검색: {Q.Trim()}") + (Mine ? " · 내 과제" : "");
+        return File(_excel.ProjectList(rows, _clock.Today, filter), ExcelExporter.ContentType, $"과제목록_{_clock.Today:yyyyMMdd}.xlsx");
     }
 
     private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine);

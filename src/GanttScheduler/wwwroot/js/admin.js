@@ -12,10 +12,11 @@
     // 종류별 화면 구성. removable: 사용 중지 대신 바로 삭제하는 단계
     var KINDS = {
         location: { levels: ['법인', '제품군', '라인', '층'] },
-        category: { levels: ['유형', '기본 단계'], removable: [2] },
+        category: { levels: ['유형', '기본 단계', '체크 항목'], removable: [2, 3] },
         equipment: { levels: ['대분류', '하위 타입'] },
         container: { levels: ['용기 종류'] },
         vendor: { levels: ['협력사'] },
+        org: { levels: ['그룹', '파트'] },
         user: { levels: ['사용자'], fixedOrder: true },
         holiday: { levels: ['공휴일'], fixedOrder: true, removable: [1] }
     };
@@ -37,7 +38,7 @@
         if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일'].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 1) return n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '';
         if (kind === 'category' && n.level === 2) return n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '';
-        if (kind === 'user') return [n.dept, n.isAdmin ? '관리자' : '', n.ips && n.ips.length ? 'IP ' + n.ips.length : '미접속'].filter(Boolean).join(' · ');
+        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', n.ips && n.ips.length ? 'IP ' + n.ips.length : '미접속'].filter(Boolean).join(' · ');
         if (kind === 'holiday') return n.date;
         return '';
     }
@@ -121,9 +122,15 @@
         }).join('');
     }
 
-    function openEdit(level, id) {
+    async function openEdit(level, id) {
         var n = find(level, id);
         if (!n) return;
+        // 사용자 편집에는 소속(그룹 → 파트) 목록이 필요하다
+        var orgs = [];
+        if (kind === 'user') {
+            try { orgs = (await App.get(url('Data') + '&kind=org')).nodes.filter(function (o) { return o.active || o.id === n.orgUnitId; }); }
+            catch (err) { App.toast(err.message, 'error'); return; }
+        }
         var c = conf();
         var html = field('name', '이름', '<input name="name" maxlength="100" required value="' + esc(n.name) + '"' + (isAdmin ? '' : ' disabled') + ' />');
         if (kind === 'location' && level === 1) {
@@ -135,7 +142,10 @@
         if (kind === 'category' && level === 2) html += field('subKind', '단계 성격', '<select name="subKind">' + options(STAGE_KINDS, n.kind) + '</select>');
         if (kind === 'holiday') html += field('date', '날짜', '<input name="date" type="date" required value="' + n.date + '" />');
         if (kind === 'user') {
-            html += field('dept', '부서', '<input name="dept" maxlength="50" value="' + esc(n.dept || '') + '" />') +
+            html += '<div class="field" data-field="orgUnitId" data-org-field><span class="label">소속</span><div class="field-row">' +
+                '<select data-org-group aria-label="그룹"' + (isAdmin ? '' : ' disabled') + '></select>' +
+                '<select data-org-part aria-label="파트"' + (isAdmin ? '' : ' disabled') + '></select></div>' +
+                '<input type="hidden" name="orgUnitId" /></div>' +
                 '<label class="check"><input type="checkbox" name="isAdmin"' + (n.isAdmin ? ' checked' : '') + ' />관리자 (기준 정보 변경·과제 삭제)</label>' +
                 '<div class="field"><span class="label">접속 IP</span><div class="readonly">' + (n.ips && n.ips.length ? esc(n.ips.join(', ')) : '접속 이력 없음') + '</div></div>';
         }
@@ -159,6 +169,11 @@
                     } catch (err) { sheet.setError(err.message, err.field); }
                 }
             },
+            onOpen: function (form) {
+                if (kind !== 'user') return;
+                OrgPicker.bind(orgs, form.querySelector('[data-org-group]'), form.querySelector('[data-org-part]'),
+                    form.elements.orgUnitId, form.querySelector('[data-org-field]'), n.orgUnitId);
+            },
             onSubmit: async function (form) {
                 var f = form.elements;
                 await change('Save', {
@@ -167,7 +182,7 @@
                     country: f.country ? f.country.value : null,
                     oceanLeadDays: f.oceanLeadDays ? +f.oceanLeadDays.value : null,
                     subKind: f.subKind ? f.subKind.value : null,
-                    dept: f.dept ? f.dept.value : null,
+                    orgUnitId: f.orgUnitId && f.orgUnitId.value ? +f.orgUnitId.value : null,
                     isAdmin: f.isAdmin ? f.isAdmin.checked : null,
                     date: f.date ? f.date.value : null
                 });

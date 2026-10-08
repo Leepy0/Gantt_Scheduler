@@ -19,8 +19,7 @@ builder.Services.AddDbContext<AppDb>(options =>
     else
     {
         // 상대 경로는 앱 폴더 기준으로 풀고, 폴더가 없으면 만든다
-        var path = config["Database:SqlitePath"] ?? "App_Data/gantt.db";
-        if (!Path.IsPathRooted(path)) path = Path.Combine(builder.Environment.ContentRootPath, path);
+        var path = AppPaths.Sqlite(config, builder.Environment.ContentRootPath);
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         options.UseSqlite($"Data Source={path}");
@@ -33,7 +32,10 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<MasterService>();
+builder.Services.AddScoped<AttachmentService>();
+builder.Services.AddScoped<InsightService>();
 builder.Services.AddSingleton<ExcelExporter>();
+builder.Services.AddSingleton<PdfExporter>();
 
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddRazorPages()

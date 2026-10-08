@@ -71,8 +71,12 @@
         var body = null;
         try { body = await res.json(); } catch (err) { /* JSON 이 아닌 응답 */ }
         if (!res.ok || !body || body.ok === false) {
-            if (body && body.error) throw fail(body.error, body.field);
-            throw fail('요청을 처리하지 못했습니다(' + res.status + '). 잠시 후 다시 시도해 주세요.');
+            var err = body && body.error
+                ? fail(body.error, body.field)
+                : fail('요청을 처리하지 못했습니다(' + res.status + '). 잠시 후 다시 시도해 주세요.');
+            err.status = res.status;
+            err.data = body;          // 409(동시 수정) 처럼 화면이 후속 처리를 해야 하는 응답에 쓴다
+            throw err;
         }
         return body;
     }
@@ -89,6 +93,21 @@
         });
     };
 
+    // 파일 올리기 (multipart) — Content-Type 은 브라우저가 경계 문자열과 함께 붙인다
+    App.upload = function (url, formData) {
+        return send(url, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': token() },
+            body: formData
+        });
+    };
+
+    App.size = function (bytes) {
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+        if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+        return bytes + ' B';
+    };
+
     // ── 토스트 ───────────────────────────────────────────────────────
     App.toast = function (message, type) {
         var root = document.getElementById('toasts');
@@ -97,6 +116,8 @@
         el.className = 'toast' + (type === 'error' ? ' error' : '');
         el.innerHTML = App.icon(type === 'error' ? 'alert' : 'check') + '<span>' + App.esc(message) + '</span>';
         root.appendChild(el);
+        // 연달아 떠도 화면을 가리지 않게 최근 2개만 둔다
+        while (root.children.length > 2) root.firstChild.remove();
         setTimeout(function () { el.remove(); }, type === 'error' ? 6000 : 3000);
     };
 
@@ -104,7 +125,7 @@
     // opts: { title, html, primary, danger: {label, onClick}, onSubmit(form, sheet), onOpen(form, sheet) }
     App.sheet = function (opts) {
         var dlg = document.createElement('dialog');
-        dlg.className = 'sheet';
+        dlg.className = 'sheet' + (opts.wide ? ' wide' : '');
         dlg.innerHTML =
             '<form class="sheet-form" novalidate>' +
             '<div class="sheet-head"><h2>' + App.esc(opts.title) + '</h2>' +
@@ -146,7 +167,11 @@
         dlg.addEventListener('click', function (e) {
             if (e.target === dlg || e.target.closest('[data-close]')) dlg.close();
         });
-        dlg.addEventListener('close', function () { dlg.remove(); });
+        var saved = false;
+        dlg.addEventListener('close', function () {
+            dlg.remove();
+            if (opts.onClose) opts.onClose(saved);   // saved: 저장하고 닫혔는지
+        });
 
         if (opts.danger) {
             dlg.querySelector('[data-danger]').addEventListener('click', function () { opts.danger.onClick(sheet); });
@@ -161,7 +186,7 @@
             if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '저장 중…'; }
             try {
                 var done = await opts.onSubmit(form, sheet);
-                if (done !== false) dlg.close();
+                if (done !== false) { saved = true; dlg.close(); }
             } catch (err) {
                 sheet.setError(err.message, err.field);
             } finally {

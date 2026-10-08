@@ -69,6 +69,7 @@ public sealed class TestDb : IDisposable
         public DashboardService Dashboard { get; }
         public MasterService Masters { get; }
         public UserService Users { get; }
+        public InsightService Insights { get; }
 
         public Scope(TestDb owner)
         {
@@ -78,6 +79,7 @@ public sealed class TestDb : IDisposable
             Projects = new ProjectService(Db, owner.Clock, Me, Users);
             Dashboard = new DashboardService(Projects, owner.Clock, Me);
             Masters = new MasterService(Db, owner.Clock, Me);
+            Insights = new InsightService(Db, Projects, owner.Clock, Me);
         }
 
         public void Dispose() => Db.Dispose();

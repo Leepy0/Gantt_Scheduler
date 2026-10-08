@@ -1,0 +1,63 @@
+@page
+@model LeadTimeModel
+@{
+    ViewData["Title"] = "리드타임";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "lead";
+    string Pct(double v, int max) => (v * 100.0 / max).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    string Signed(double v) => (v > 0 ? "+" : "") + v.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<p class="muted">단계 소요일은 직전 단계 완료일(첫 단계는 착수일)부터 그 단계 완료일까지의 날 수입니다. 완료한 단계만 집계합니다.</p>
+
+@if (Model.Groups.All(g => g.Rows.Count == 0))
+{
+    <section class="card"><p class="empty">완료한 단계가 아직 없어 통계를 낼 수 없습니다.</p></section>
+}
+
+@foreach (var g in Model.Groups.Where(g => g.Rows.Count > 0))
+{
+    <section class="card">
+        <header class="card-head">
+            <h2>@g.Category</h2>
+            <span class="chip">과제 @g.Projects</span>
+            <span class="chip">완료 @g.DoneProjects</span>
+            <span class="spacer"></span>
+            @if (g.AvgTotalDays != null)
+            {
+                <span class="muted">착수~완료 평균 <b class="num">@g.AvgTotalDays</b>일</span>
+            }
+        </header>
+        <div class="table-scroll">
+            <table class="simple-table lead-table">
+                <thead>
+                    <tr>
+                        <th>단계</th><th class="r">표본</th><th class="r">평균(일)</th><th>최소 ~ 최대</th><th class="r">목표 대비 평균</th><th class="r">목표 초과</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in g.Rows)
+                    {
+                        <tr>
+                            <td><b>@r.Stage</b></td>
+                            <td class="r">@r.Count</td>
+                            <td class="r"><b>@r.AvgDays</b></td>
+                            <td class="lead-range">
+                                <span class="range-track" title="최소 @(r.MinDays)일 · 평균 @(r.AvgDays)일 · 최대 @(r.MaxDays)일">
+                                    <i class="range-bar" style="left:@Pct(r.MinDays, g.ScaleMax);width:@Pct(Math.Max(r.MaxDays - r.MinDays, 0), g.ScaleMax)"></i>
+                                    <i class="range-avg" style="left:@Pct(r.AvgDays, g.ScaleMax)"></i>
+                                </span>
+                                <span class="num muted">@r.MinDays ~ @r.MaxDays</span>
+                            </td>
+                            <td class="r @(r.AvgOver > 0 ? "t-alarm" : r.AvgOver < 0 ? "t-ok" : "")">@(r.AvgOver == null ? "-" : Signed(r.AvgOver.Value) + "일")</td>
+                            <td class="r @(r.LateCount > 0 ? "t-alarm" : "")">@r.LateCount / @r.Count</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}

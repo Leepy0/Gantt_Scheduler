@@ -1,0 +1,113 @@
+@page
+@model GanttScheduler.Pages.My.IndexModel
+@{
+    ViewData["Title"] = "내 할 일";
+    ViewData["Nav"] = "my";
+    var d = Model.Data;
+    var total = d.Late.Count + d.Soon.Count + d.Later.Count;
+}
+
+<div class="page-head">
+    <h1>내 할 일</h1>
+    <span class="count">@total</span>
+    <span class="muted">@Model.Name 님이 담당인 미완료 작업</span>
+</div>
+
+@functions {
+    // 작업 한 줄: 누르면 과제 상세에서 해당 작업 편집 창이 열린다
+    async Task WorkRows(List<MyWork> works)
+    {
+        <ul class="rows">
+            @foreach (var w in works)
+            {
+                <li>
+                    <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@w.ProjectId" asp-fragment="@("w" + w.WorkId)">
+                        <span class="row-main">
+                            <span class="row-title">@w.Title</span>
+                            <span class="row-sub">@w.Project · @w.Stage · @w.Role · 목표 @w.PlanStart.ToString("MM-dd")~@w.PlanEnd.ToString("MM-dd")</span>
+                            <span class="work-progress"><span class="progress" aria-hidden="true"><i style="width:@(w.Progress)%"></i></span><span class="num">@w.Progress%</span></span>
+                        </span>
+                        @if (w.Late)
+                        {
+                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@(-w.DDay)</span>
+                        }
+                        else if (w.DDay <= 7)
+                        {
+                            <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(w.DDay == 0 ? "오늘" : "D-" + w.DDay)</span>
+                        }
+                        else
+                        {
+                            <span class="chip">D-@w.DDay</span>
+                        }
+                    </a>
+                </li>
+            }
+        </ul>
+    }
+}
+
+@if (total == 0 && d.Stages.Count == 0)
+{
+    <section class="card">
+        <p class="empty"><svg class="ic"><use href="#i-check" /></svg>담당인 미완료 작업이 없습니다. <a asp-page="/Projects/Index">과제 보기</a></p>
+    </section>
+}
+else
+{
+    @if (d.Late.Count > 0)
+    {
+        <section class="card">
+            <header class="card-head"><h2>지연</h2><span class="count">@d.Late.Count</span></header>
+            @{ await WorkRows(d.Late); }
+        </section>
+    }
+    <section class="card">
+        <header class="card-head"><h2>이번 주</h2><span class="count">@d.Soon.Count</span><span class="muted">진행 중이거나 7일 안에 끝나야 하는 작업</span></header>
+        @if (d.Soon.Count == 0)
+        {
+            <p class="empty">이번 주에 챙길 작업이 없습니다.</p>
+        }
+        else
+        {
+            await WorkRows(d.Soon);
+        }
+    </section>
+    @if (d.Later.Count > 0)
+    {
+        <section class="card">
+            <header class="card-head"><h2>이후</h2><span class="count">@d.Later.Count</span></header>
+            @{ await WorkRows(d.Later); }
+        </section>
+    }
+    @if (d.Stages.Count > 0)
+    {
+        <section class="card">
+            <header class="card-head"><h2>담당 과제의 진행 단계</h2><span class="count">@d.Stages.Count</span></header>
+            <ul class="rows">
+                @foreach (var s in d.Stages)
+                {
+                    <li>
+                        <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@s.ProjectId">
+                            <span class="row-main">
+                                <span class="row-title">@s.Project</span>
+                                <span class="row-sub">@s.Stage 단계 · @(s.Target == null ? "목표일 미정" : "목표 " + s.Target.Value.ToString("MM-dd")) · 진행률 @s.Progress%</span>
+                            </span>
+                            @if (s.Late)
+                            {
+                                <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@(-s.DDay)</span>
+                            }
+                            else if (s.DDay != null && s.DDay <= 7)
+                            {
+                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(s.DDay == 0 ? "오늘" : "D-" + s.DDay)</span>
+                            }
+                            else if (s.DDay != null)
+                            {
+                                <span class="chip">D-@s.DDay</span>
+                            }
+                        </a>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+}

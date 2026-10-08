@@ -13,6 +13,7 @@
 <form method="post" class="card form edit-form" id="edit-form" novalidate>
     <input type="hidden" asp-for="Id" />
     <input type="hidden" asp-for="Form.LocationId" id="location-id" />
+    <input type="hidden" asp-for="Form.Version" />
 
     @if (Model.Error != null)
     {

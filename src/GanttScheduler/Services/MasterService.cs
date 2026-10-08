@@ -8,18 +8,19 @@ namespace GanttScheduler.Services;
 public record MasterNode(
     int Id, int? ParentId, int Level, string Name, bool Active, int Sort,
     string? Country = null, int? OceanLeadDays = null, string? Kind = null,
-    string? Dept = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null);
+    string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null);
 
 public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
-    string? Country, int? OceanLeadDays, string? SubKind, string? Dept, bool? IsAdmin, DateOnly? Date);
+    string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date);
 
 public record MasterRef(string Kind, int Level, int Id, int Dir);
 
-// 기준 정보(계층·유형·단계 템플릿·기기·용기·협력사·사용자·공휴일) 관리
+// 기준 정보(계층·유형·단계 템플릿·체크리스트·기기·용기·협력사·조직·사용자·공휴일) 관리
 public class MasterService
 {
     public const int LocationDepth = 4;
+    public const int OrgDepth = 2;
 
     private readonly AppDb _db;
     private readonly IClock _clock;
@@ -45,13 +46,17 @@ public class MasterService
 
             case "category":
             {
-                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ToListAsync();
+                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).ToListAsync();
                 var nodes = new List<MasterNode>();
                 foreach (var c in cats.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
                 {
                     nodes.Add(new MasterNode(c.Id, null, 1, c.Name, c.IsActive, c.SortOrder, Kind: Views.Key(c.Kind)));
                     foreach (var t in c.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id))
+                    {
                         nodes.Add(new MasterNode(t.Id, c.Id, 2, t.Name, true, t.SortOrder, Kind: Views.Key(t.Kind)));
+                        foreach (var k in t.CheckItems.OrderBy(k => k.SortOrder).ThenBy(k => k.Id))
+                            nodes.Add(new MasterNode(k.Id, t.Id, 3, k.Text, true, k.SortOrder));
+                    }
                 }
                 return nodes;
             }
@@ -77,11 +82,17 @@ public class MasterService
                     .OrderBy(h => h.Date)
                     .Select(h => new MasterNode(h.Id, null, 1, h.Name, true, 0, Date: h.Date)).ToList();
 
+            case "org":
+                return (await _db.OrgUnits.AsNoTracking().ToListAsync())
+                    .OrderBy(o => o.Level).ThenBy(o => o.SortOrder).ThenBy(o => o.Id)
+                    .Select(o => new MasterNode(o.Id, o.ParentId, o.Level, o.Name, o.IsActive, o.SortOrder))
+                    .ToList();
+
             case "user":
-                return (await _db.Users.AsNoTracking().Include(u => u.Addresses).ToListAsync())
+                return (await _db.Users.AsNoTracking().Include(u => u.Addresses).Include(u => u.OrgUnit).ThenInclude(o => o!.Parent).ToListAsync())
                     .OrderBy(u => u.Name)
-                    .Select(u => new MasterNode(u.Id, null, 1, u.Name, u.IsActive, 0, Dept: u.Dept, IsAdmin: u.IsAdmin,
-                        Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList()))
+                    .Select(u => new MasterNode(u.Id, null, 1, u.Name, u.IsActive, 0, Org: Views.OrgName(u.OrgUnit), OrgUnitId: u.OrgUnitId,
+                        IsAdmin: u.IsAdmin, Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList()))
                     .ToList();
 
             default:
@@ -142,6 +153,22 @@ public class MasterService
                 else e = await _db.Categories.FirstOrDefaultAsync(c => c.Id == input.Id.Value) ?? throw NotFound();
                 e.Name = name;
                 e.Kind = ParseEnum(input.SubKind, CategoryKind.General);
+                break;
+            }
+
+            case "category" when input.Level == 3:
+            {
+                if (name.Length > 200) throw new RuleException("체크 항목은 200자 이내로 입력해 주세요.", "name");
+                TemplateCheckItem e;
+                if (input.Id == null)
+                {
+                    if (input.ParentId == null) throw new RuleException("단계를 먼저 선택해 주세요.");
+                    var siblings = await _db.TemplateCheckItems.Where(t => t.StageTemplateId == input.ParentId.Value).ToListAsync();
+                    e = new TemplateCheckItem { StageTemplateId = input.ParentId.Value, SortOrder = NextSort(siblings.Select(s => s.SortOrder)) };
+                    _db.TemplateCheckItems.Add(e);
+                }
+                else e = await _db.TemplateCheckItems.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                e.Text = name;
                 break;
             }
 
@@ -221,6 +248,29 @@ public class MasterService
                 break;
             }
 
+            case "org":
+            {
+                if (name.Length > 50) throw new RuleException("이름은 50자 이내로 입력해 주세요.", "name");
+                OrgUnit e;
+                if (input.Id == null)
+                {
+                    var level = 1;
+                    if (input.ParentId != null)
+                    {
+                        var parent = await _db.OrgUnits.FirstOrDefaultAsync(o => o.Id == input.ParentId.Value)
+                            ?? throw new RuleException("상위 항목을 찾을 수 없습니다.");
+                        level = parent.Level + 1;
+                    }
+                    if (level > OrgDepth) throw new RuleException("파트 아래에는 항목을 추가할 수 없습니다.");
+                    var siblings = await _db.OrgUnits.Where(o => o.ParentId == input.ParentId).ToListAsync();
+                    e = new OrgUnit { ParentId = input.ParentId, Level = level, SortOrder = NextSort(siblings.Select(s => s.SortOrder)) };
+                    _db.OrgUnits.Add(e);
+                }
+                else e = await _db.OrgUnits.FirstOrDefaultAsync(o => o.Id == input.Id.Value) ?? throw NotFound();
+                e.Name = name;
+                break;
+            }
+
             case "user":
             {
                 if (name.Length > 50) throw new RuleException("이름은 50자 이내로 입력해 주세요.", "name");
@@ -234,7 +284,9 @@ public class MasterService
                 }
                 else e = await _db.Users.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
                 e.Name = name;
-                e.Dept = string.IsNullOrWhiteSpace(input.Dept) ? null : input.Dept.Trim();
+                if (input.OrgUnitId != null && !await _db.OrgUnits.AnyAsync(o => o.Id == input.OrgUnitId.Value))
+                    throw new RuleException("소속을 다시 선택해 주세요.", "orgUnitId");
+                e.OrgUnitId = input.OrgUnitId;
                 var admin = input.IsAdmin ?? e.IsAdmin;
                 if (e.Id == _me.Id && e.Id != 0 && !admin) throw new RuleException("자기 자신의 관리자 권한은 해제할 수 없습니다.", "isAdmin");
                 e.IsAdmin = admin;
@@ -266,10 +318,22 @@ public class MasterService
                 e.IsActive = !e.IsActive;
                 break;
             }
+            case "category" when r.Level == 3:
+            {
+                var e = await _db.TemplateCheckItems.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                _db.TemplateCheckItems.Remove(e);
+                break;
+            }
             case "category":
             {
-                var e = await _db.StageTemplates.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var e = await _db.StageTemplates.Include(x => x.CheckItems).FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 _db.StageTemplates.Remove(e);
+                break;
+            }
+            case "org":
+            {
+                var e = await _db.OrgUnits.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                e.IsActive = !e.IsActive;
                 break;
             }
             case "equipment":
@@ -329,10 +393,24 @@ public class MasterService
                 Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
                 break;
             }
+            case "category" when r.Level == 3:
+            {
+                var e = await _db.TemplateCheckItems.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var siblings = await _db.TemplateCheckItems.Where(x => x.StageTemplateId == e.StageTemplateId).ToListAsync();
+                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                break;
+            }
             case "category":
             {
                 var e = await _db.StageTemplates.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.StageTemplates.Where(x => x.CategoryId == e.CategoryId).ToListAsync();
+                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                break;
+            }
+            case "org":
+            {
+                var e = await _db.OrgUnits.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var siblings = await _db.OrgUnits.Where(x => x.ParentId == e.ParentId).ToListAsync();
                 Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
                 break;
             }

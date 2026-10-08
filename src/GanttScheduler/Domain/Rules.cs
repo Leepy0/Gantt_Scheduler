@@ -115,6 +115,90 @@ public static class Rules
         return baseDate?.AddDays(oceanLeadDays);
     }
 
+    // ── 기준선 ───────────────────────────────────────────────────────────
+
+    // 기준선 대비 밀린 일수 (당겨졌으면 음수). 기준선이나 목표일이 없으면 null
+    public static int? SlipDays(Stage s) =>
+        s.BaselineDate == null || s.TargetDate == null ? null : s.TargetDate.Value.DayNumber - s.BaselineDate.Value.DayNumber;
+
+    public static DateOnly? BaselineEnd(Project p)
+    {
+        DateOnly? max = null;
+        foreach (var s in p.Stages)
+            if (s.BaselineDate != null && (max == null || s.BaselineDate.Value > max.Value)) max = s.BaselineDate;
+        return max;
+    }
+
+    // ── 의존 관계 ────────────────────────────────────────────────────────
+
+    public static IEnumerable<WorkItem> AllWorks(Project p) => p.Stages.SelectMany(s => s.Works);
+
+    // 후행 작업이 선행 작업 종료(다음 근무일 + 간격)보다 먼저 시작하는가
+    public static bool Violates(WorkItem predecessor, WorkItem successor, int lagDays, WorkCalendar cal) =>
+        successor.PlanStart < cal.EarliestStartAfter(predecessor.PlanEnd, lagDays);
+
+    // 작업별 여유 일수: 이 작업이 며칠 밀려도 단계 목표일이 지켜지는가.
+    // 자기 단계 목표일까지 남은 날과, 후행 작업 시작까지의 틈 + 후행 작업의 여유 중 가장 작은 값.
+    // 목표일이 없는 단계처럼 제약이 없으면 결과에 넣지 않는다
+    public static Dictionary<int, int> Floats(Project p, WorkCalendar cal)
+    {
+        var works = new Dictionary<int, (WorkItem Work, Stage Stage)>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) works[w.Id] = (w, s);
+        var successors = p.Links.GroupBy(l => l.PredecessorId).ToDictionary(g => g.Key, g => g.ToList());
+        var memo = new Dictionary<int, int?>();
+        var visiting = new HashSet<int>();
+
+        int? Float(int id)
+        {
+            if (memo.TryGetValue(id, out var known)) return known;
+            if (!works.TryGetValue(id, out var x) || !visiting.Add(id)) return null;   // 순환은 저장 시 막지만 방어
+
+            int? best = null;
+            if (x.Stage.TargetDate != null && x.Stage.CompletedDate == null)
+                best = x.Stage.TargetDate.Value.DayNumber - x.Work.PlanEnd.DayNumber;
+
+            if (successors.TryGetValue(id, out var links))
+            {
+                foreach (var l in links)
+                {
+                    if (!works.TryGetValue(l.SuccessorId, out var next)) continue;
+                    var later = Float(l.SuccessorId);
+                    if (later == null) continue;
+                    var gap = next.Work.PlanStart.DayNumber - cal.EarliestStartAfter(x.Work.PlanEnd, l.LagDays).DayNumber;
+                    var total = gap + later.Value;
+                    if (best == null || total < best.Value) best = total;
+                }
+            }
+
+            visiting.Remove(id);
+            memo[id] = best;
+            return best;
+        }
+
+        var result = new Dictionary<int, int>();
+        foreach (var id in works.Keys)
+            if (Float(id) is int f) result[id] = f;
+        return result;
+    }
+
+    // from 에서 의존 관계를 따라가면 to 에 닿는가 (새 관계가 순환을 만드는지 검사)
+    public static bool Reaches(IEnumerable<(int From, int To)> links, int from, int to)
+    {
+        var next = links.GroupBy(l => l.From).ToDictionary(g => g.Key, g => g.Select(l => l.To).ToList());
+        var seen = new HashSet<int>();
+        var stack = new Stack<int>();
+        stack.Push(from);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (cur == to) return true;
+            if (!seen.Add(cur) || !next.TryGetValue(cur, out var list)) continue;
+            foreach (var n in list) stack.Push(n);
+        }
+        return false;
+    }
+
     public static void ValidateProgress(int progress)
     {
         if (progress < 0 || progress > 100 || progress % ProgressStep != 0)

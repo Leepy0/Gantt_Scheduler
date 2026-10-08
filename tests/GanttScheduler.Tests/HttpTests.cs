@@ -10,9 +10,12 @@ namespace GanttScheduler.Tests;
 public sealed class AppFactory : WebApplicationFactory<Program>
 {
     private readonly TestDb _db = new();
+    // 첨부 파일이 저장소(프로젝트 폴더)에 남지 않게 임시 폴더를 쓴다
+    private readonly string _uploads = Path.Combine(Path.GetTempPath(), "gantt-uploads-" + Guid.NewGuid().ToString("N"));
 
     public AppFactory()
     {
+        Environment.SetEnvironmentVariable("Storage__Path", _uploads);
         // Program.cs 가 시작하자마자 읽는 설정이라 환경 변수로 넘긴다
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("Seed__Demo", "true");
@@ -34,7 +37,9 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing) _db.Dispose();
+        if (!disposing) return;
+        _db.Dispose();
+        try { if (Directory.Exists(_uploads)) Directory.Delete(_uploads, true); } catch (IOException) { /* 정리 실패는 무시 */ }
     }
 }
 
@@ -56,7 +61,7 @@ public class HttpTests : IClassFixture<AppFactory>
             var token = TokenOf(await welcome.Content.ReadAsStringAsync());
             var res = await client.PostAsync("/Welcome", new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["Name"] = "통합테스터", ["Dept"] = "물류기술팀", ["ReturnUrl"] = "/", ["__RequestVerificationToken"] = token,
+                ["Name"] = "통합테스터", ["ReturnUrl"] = "/", ["__RequestVerificationToken"] = token,
             }));
             Assert.Equal(HttpStatusCode.Redirect, res.StatusCode);
         }
@@ -92,6 +97,12 @@ public class HttpTests : IClassFixture<AppFactory>
     [InlineData("/Projects/Detail?id=1")]
     [InlineData("/Projects/Detail?id=2")]
     [InlineData("/Admin")]
+    [InlineData("/My")]
+    [InlineData("/Insights/LeadTime")]
+    [InlineData("/Insights/Weekly")]
+    [InlineData("/Insights/Weekly?day=2026-09-28&mine=true")]
+    [InlineData("/Insights/History")]
+    [InlineData("/Insights/History?kind=schedule&q=AGV&p=1")]
     public async Task 화면이_정상_응답한다(string url)
     {
         var client = await RegisteredClientAsync();
@@ -107,6 +118,7 @@ public class HttpTests : IClassFixture<AppFactory>
     [InlineData("equipment")]
     [InlineData("container")]
     [InlineData("vendor")]
+    [InlineData("org")]
     [InlineData("user")]
     [InlineData("holiday")]
     public async Task 관리_데이터를_JSON_으로_돌려준다(string kind)
@@ -167,13 +179,123 @@ public class HttpTests : IClassFixture<AppFactory>
     public async Task Excel_내보내기()
     {
         var client = await RegisteredClientAsync();
-        foreach (var url in new[] { "/Projects?handler=Excel&state=all", "/Projects/Detail?handler=Excel&id=1" })
+        foreach (var url in new[]
+                 {
+                     "/Projects?handler=Excel&state=all", "/Projects/Detail?handler=Excel&id=1",
+                     "/Projects/Detail?handler=Excel&id=2", "/Insights/Weekly?handler=Excel",
+                 })
         {
             var res = await client.GetAsync(url);
-            Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+            Assert.True(res.StatusCode == HttpStatusCode.OK, $"{url} → {(int)res.StatusCode}");
             var bytes = await res.Content.ReadAsByteArrayAsync();
             // xlsx 는 zip 이므로 'PK' 로 시작한다
             Assert.True(bytes.Length > 1000 && bytes[0] == (byte)'P' && bytes[1] == (byte)'K', url + " 이 xlsx 가 아님");
         }
+    }
+
+    [Fact]
+    public async Task PDF_내보내기()
+    {
+        var client = await RegisteredClientAsync();
+        foreach (var url in new[] { "/Projects/Detail?handler=Pdf&id=1", "/Projects/Detail?handler=Pdf&id=2", "/Insights/Weekly?handler=Pdf" })
+        {
+            var res = await client.GetAsync(url);
+            var bytes = await res.Content.ReadAsByteArrayAsync();
+            Assert.True(res.StatusCode == HttpStatusCode.OK,
+                $"{url} → {(int)res.StatusCode}\n{System.Text.Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 1000))}");
+            Assert.Equal("application/pdf", res.Content.Headers.ContentType?.MediaType);
+            Assert.True(bytes.Length > 1000 && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "%PDF", url + " 이 PDF 가 아님");
+        }
+    }
+
+    private static async Task<(HttpClient Client, string Token)> DetailAsync(HttpClient client, int id)
+    {
+        var html = await client.GetStringAsync("/Projects/Detail?id=" + id);
+        return (client, TokenOf(html));
+    }
+
+    private static HttpRequestMessage Json(string token, string handler, object body)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, "/Projects/Detail?handler=" + handler) { Content = JsonContent.Create(body) };
+        req.Headers.Add("X-CSRF-TOKEN", token);
+        req.Headers.Add("Accept", "application/json");
+        return req;
+    }
+
+    private static HttpRequestMessage Upload(string token, int projectId, string fileName, byte[] bytes)
+    {
+        var form = new MultipartFormDataContent
+        {
+            { new StringContent(projectId.ToString()), "projectId" },
+            { new ByteArrayContent(bytes), "file", fileName },
+        };
+        var req = new HttpRequestMessage(HttpMethod.Post, "/Projects/Files?handler=Upload") { Content = form };
+        req.Headers.Add("X-CSRF-TOKEN", token);
+        req.Headers.Add("Accept", "application/json");
+        return req;
+    }
+
+    [Fact]
+    public async Task 첨부_파일을_올리고_내려받고_지운다()
+    {
+        var (client, token) = await DetailAsync(await RegisteredClientAsync(), 3);
+        var content = System.Text.Encoding.UTF8.GetBytes("검수 성적서 내용");
+
+        var up = await client.SendAsync(Upload(token, 3, "검수 성적서.txt", content));
+        var upBody = await up.Content.ReadAsStringAsync();
+        Assert.True(up.StatusCode == HttpStatusCode.OK, upBody);
+        var file = JsonDocument.Parse(upBody).RootElement.GetProperty("project").GetProperty("attachments")
+            .EnumerateArray().Single(a => a.GetProperty("fileName").GetString() == "검수 성적서.txt");
+        var id = file.GetProperty("id").GetInt32();
+        Assert.Equal(content.Length, file.GetProperty("size").GetInt64());
+        Assert.Equal("통합테스터", file.GetProperty("uploadedBy").GetString());
+
+        var down = await client.GetAsync("/Projects/Files?handler=Download&id=" + id);
+        Assert.Equal(HttpStatusCode.OK, down.StatusCode);
+        Assert.Equal(content, await down.Content.ReadAsByteArrayAsync());
+        // 원래 파일 이름으로 내려받는다
+        Assert.Contains("attachment", down.Content.Headers.ContentDisposition?.DispositionType);
+
+        // 실행 파일 같은 허용하지 않는 형식은 거절
+        var bad = await client.SendAsync(Upload(token, 3, "setup.exe", new byte[] { 1, 2, 3 }));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+
+        var del = await client.SendAsync(Json(token, "DeleteFile", new { id }));
+        Assert.Equal(HttpStatusCode.OK, del.StatusCode);
+        var left = (await del.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("project").GetProperty("attachments");
+        Assert.DoesNotContain(left.EnumerateArray(), a => a.GetProperty("id").GetInt32() == id);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/Projects/Files?handler=Download&id=" + id)).StatusCode);
+    }
+
+    [Fact]
+    public async Task 다른_사람이_먼저_고친_단계를_저장하면_409_로_알린다()
+    {
+        var (client, token) = await DetailAsync(await RegisteredClientAsync(), 4);
+        var data = await client.GetFromJsonAsync<JsonElement>("/Projects/Detail?handler=Data&id=4");
+        var stage = data.GetProperty("project").GetProperty("stages").EnumerateArray()
+            .First(s => s.GetProperty("completedDate").ValueKind == JsonValueKind.Null && s.GetProperty("targetDate").ValueKind != JsonValueKind.Null);
+        var version = stage.GetProperty("version").GetInt32();
+
+        object Body(int v, string name) => new
+        {
+            projectId = 4, id = stage.GetProperty("id").GetInt32(), name,
+            targetDate = stage.GetProperty("targetDate").GetString(), completedDate = (string?)null,
+            reason = (string?)null, cascade = false, version = v,
+        };
+
+        // 화면을 연 뒤 다른 사람이 먼저 저장한 상황: 같은 버전으로 두 번 보낸다
+        var first = await client.SendAsync(Json(token, "SaveStage", Body(version, stage.GetProperty("name").GetString() + " (수정)")));
+        Assert.True(first.StatusCode == HttpStatusCode.OK, await first.Content.ReadAsStringAsync());
+
+        var second = await client.SendAsync(Json(token, "SaveStage", Body(version, "늦게 도착한 수정")));
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        var json = await second.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("conflict").GetBoolean());
+        Assert.Equal(4, json.GetProperty("projectId").GetInt32());
+
+        // 늦은 수정은 반영되지 않았다
+        var after = await client.GetFromJsonAsync<JsonElement>("/Projects/Detail?handler=Data&id=4");
+        Assert.DoesNotContain(after.GetProperty("project").GetProperty("stages").EnumerateArray(),
+            s => s.GetProperty("name").GetString() == "늦게 도착한 수정");
     }
 }

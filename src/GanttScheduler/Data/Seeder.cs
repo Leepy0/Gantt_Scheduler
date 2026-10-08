@@ -11,14 +11,47 @@ public static class DbInitializer
         var db = sp.GetRequiredService<AppDb>();
         var cfg = sp.GetRequiredService<IConfiguration>();
         var clock = sp.GetRequiredService<IClock>();
+        var env = sp.GetRequiredService<IHostEnvironment>();
+        var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("DbInitializer");
 
         // SQL Server 는 마이그레이션으로 스키마를 올리고, SQLite(미리보기·테스트용)는 그때그때 새로 만든다
-        if (db.Database.IsSqlServer()) await db.Database.MigrateAsync();
-        else await db.Database.EnsureCreatedAsync();
+        if (db.Database.IsSqlServer())
+        {
+            await db.Database.MigrateAsync();
+        }
+        else
+        {
+            // SQLite 는 마이그레이션이 없으므로, 모델이 바뀌었으면 DB 를 버리고 새로 만든다(담긴 것은 샘플 데이터뿐이라는 전제)
+            var marker = AppPaths.Sqlite(cfg, env.ContentRootPath) + ".schema";
+            var schema = SchemaHash(db.Database.GenerateCreateScript());
+            if (File.Exists(marker) && await File.ReadAllTextAsync(marker) != schema)
+            {
+                log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다 (기존 미리보기 데이터는 지워집니다).");
+                await db.Database.EnsureDeletedAsync();
+            }
+            await db.Database.EnsureCreatedAsync();
+            await File.WriteAllTextAsync(marker, schema);
+        }
 
         await Seeder.SeedMastersAsync(db);
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
     }
+
+    private static string SchemaHash(string script) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));
+}
+
+// 설정에서 파일 경로를 푼다 (상대 경로는 앱 폴더 기준)
+public static class AppPaths
+{
+    public static string Sqlite(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Database:SqlitePath"] ?? "App_Data/gantt.db", contentRoot);
+
+    public static string Uploads(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Storage:Path"] ?? "App_Data/uploads", contentRoot);
+
+    private static string Resolve(string path, string contentRoot) =>
+        Path.IsPathRooted(path) ? path : Path.Combine(contentRoot, path);
 }
 
 public static class Seeder
@@ -28,10 +61,14 @@ public static class Seeder
     {
         if (!await db.Categories.AnyAsync())
         {
+            var automation = Cat("물류 자동화", CategoryKind.Automation, 1,
+                ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
+                ("검수", StageKind.Inspection), ("입고", StageKind.Inbound), ("설치", StageKind.Normal), ("안정화", StageKind.Normal));
+            Checks(automation, "검수", "FAT 성적서 확인", "주행 시험 결과 승인", "안전 점검 완료");
+            Checks(automation, "입고", "통관 서류 확인", "수량·외관 검수");
+
             db.Categories.AddRange(
-                Cat("물류 자동화", CategoryKind.Automation, 1,
-                    ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
-                    ("검수", StageKind.Inspection), ("입고", StageKind.Inbound), ("설치", StageKind.Normal), ("안정화", StageKind.Normal)),
+                automation,
                 Cat("물류", CategoryKind.General, 2,
                     ("검토", StageKind.Normal), ("보고", StageKind.Normal), ("적용", StageKind.Normal)),
                 Cat("용기", CategoryKind.Container, 3,
@@ -70,6 +107,14 @@ public static class Seeder
         }
 
         await db.SaveChangesAsync();
+    }
+
+    private static void Checks(Category category, string stage, params string[] items)
+    {
+        var template = category.StageTemplates.First(t => t.Name == stage);
+        var i = 0;
+        foreach (var text in items)
+            template.CheckItems.Add(new TemplateCheckItem { Text = text, SortOrder = ++i });
     }
 
     private static Category Cat(string name, CategoryKind kind, int order, params (string Name, StageKind Kind)[] stages)
@@ -113,11 +158,24 @@ public static class Seeder
         var now = clock.UtcNow;
         DateOnly D(int offset) => today.AddDays(offset);
 
+        // 조직: 그룹 → 파트
+        OrgUnit Org(string name, int order, OrgUnit? parent = null)
+        {
+            var u = new OrgUnit { Name = name, Level = parent == null ? 1 : 2, Parent = parent, SortOrder = order };
+            db.OrgUnits.Add(u);
+            return u;
+        }
+        var logistics = Org("물류기술그룹", 1);
+        var autoPart = Org("자동화파트", 1, logistics);
+        var innoPart = Org("물류혁신파트", 2, logistics);
+        var facility = Org("설비기술그룹", 2);
+        var facilityPart = Org("설비파트", 1, facility);
+
         // 사용자 (접속 IP 없이 담당자로만 등록)
-        var kim = new AppUser { Name = "김물류", Dept = "물류기술팀", CreatedAt = now };
-        var lee = new AppUser { Name = "이자동", Dept = "물류기술팀", CreatedAt = now };
-        var park = new AppUser { Name = "박설비", Dept = "설비기술팀", CreatedAt = now };
-        var choi = new AppUser { Name = "최모델", Dept = "물류기술팀", CreatedAt = now };
+        var kim = new AppUser { Name = "김물류", OrgUnit = autoPart, CreatedAt = now };
+        var lee = new AppUser { Name = "이자동", OrgUnit = autoPart, CreatedAt = now };
+        var park = new AppUser { Name = "박설비", OrgUnit = facilityPart, CreatedAt = now };
+        var choi = new AppUser { Name = "최모델", OrgUnit = innoPart, CreatedAt = now };
         db.Users.AddRange(kim, lee, park, choi);
 
         // 위치 계층
@@ -159,7 +217,8 @@ public static class Seeder
 
         await db.SaveChangesAsync();
 
-        var cats = await db.Categories.Include(c => c.StageTemplates).ToListAsync();
+        var cats = await db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).ToListAsync();
+        var cal = new WorkCalendar((await db.Holidays.ToListAsync()).Select(h => h.Date));
         var equip = await db.EquipmentTypes.Include(e => e.Parent).ToListAsync();
         var cont = await db.ContainerTypes.ToListAsync();
         Category CatOf(string name) => cats.First(c => c.Name == name);
@@ -181,12 +240,23 @@ public static class Seeder
             foreach (var t in cat.StageTemplates.OrderBy(t => t.SortOrder))
             {
                 var d = i < dates.Length ? dates[i] : (null, null);
-                p.Stages.Add(new Stage
+                var stage = new Stage
                 {
                     Name = t.Name, Kind = t.Kind, SortOrder = t.SortOrder,
                     TargetDate = d.Target == null ? null : D(d.Target.Value),
                     CompletedDate = d.Done == null ? null : D(d.Done.Value),
-                });
+                };
+                // 체크리스트 복사 — 완료한 단계는 모두 체크된 상태로
+                foreach (var c in t.CheckItems.OrderBy(c => c.SortOrder))
+                {
+                    stage.Checks.Add(new CheckItem
+                    {
+                        Text = c.Text, SortOrder = c.SortOrder, IsDone = d.Done != null,
+                        DoneById = d.Done != null ? owner.Id : null,
+                        DoneAt = d.Done != null ? now.AddDays(d.Done.Value) : null,
+                    });
+                }
+                p.Stages.Add(stage);
                 i++;
             }
             p.Activities.Add(new Activity { Type = ActivityType.Created, Text = "과제 등록", UserId = owner.Id, At = now.AddDays(startOffset) });
@@ -209,6 +279,37 @@ public static class Seeder
             return w;
         }
 
+        // 기준선: 단계별 최초 목표일 오프셋을 순서대로 지정. 작업 기준선은 단계가 밀린 만큼 앞당겨 잡는다
+        void Baseline(Project p, params int?[] offsets)
+        {
+            p.BaselineAt = p.CreatedAt.AddDays(1);
+            var i = 0;
+            foreach (var s in p.Stages.OrderBy(s => s.SortOrder))
+            {
+                s.BaselineDate = i < offsets.Length && offsets[i] != null ? D(offsets[i]!.Value) : s.TargetDate;
+                var slip = s.BaselineDate != null && s.TargetDate != null ? s.TargetDate.Value.DayNumber - s.BaselineDate.Value.DayNumber : 0;
+                foreach (var w in s.Works)
+                {
+                    w.BaselineStart = w.PlanStart.AddDays(-slip);
+                    w.BaselineEnd = w.PlanEnd.AddDays(-slip);
+                }
+                i++;
+            }
+        }
+
+        // 의존 관계: 아직 시작하지 않은 후행 작업이 선행 종료보다 이르면 기간을 유지한 채 뒤로 민다
+        void Link(Project p, WorkItem from, WorkItem to)
+        {
+            var earliest = cal.EarliestStartAfter(from.PlanEnd, 0);
+            if (to.ActualStart == null && to.PlanStart < earliest)
+            {
+                var days = Math.Max(1, cal.WorkingDays(to.PlanStart, to.PlanEnd));
+                to.PlanStart = earliest;
+                to.PlanEnd = cal.AddWorkingDays(earliest, days - 1);
+            }
+            p.Links.Add(new WorkLink { Predecessor = from, Successor = to });
+        }
+
         void Note(Project p, ActivityType type, string text, AppUser user, int dayOffset, string? reason = null)
             => p.Activities.Add(new Activity { Type = type, Text = text, Reason = reason, UserId = user.Id, At = now.AddDays(dayOffset) });
 
@@ -218,9 +319,15 @@ public static class Seeder
         p1.Vendor = "한성로보틱스";
         p1.Description = "냉장고 3라인 1층 자재 공급을 AGV 12대로 전환";
         p1.Equipments.Add(new ProjectEquipment { EquipmentTypeId = Eq("AGV", "ANT").Id, Quantity = 12 });
-        Work(p1, "검수", "FAT 준비", lee, -7, -3, -6, -3);
-        Work(p1, "검수", "주행 시험", lee, -2, 3, -1, null, 40, park);
+        var fat = Work(p1, "검수", "FAT 준비", lee, -7, -3, -6, -3);
+        var drive = Work(p1, "검수", "주행 시험", lee, -2, 3, -1, null, 40, park);
         Work(p1, "검수", "검수 문서 검토", kim, 1, 5);
+        Link(p1, fat, drive);
+        Baseline(p1);
+        var firstCheck = p1.Stages.First(s => s.Name == "검수").Checks.First();
+        firstCheck.IsDone = true;
+        firstCheck.DoneById = lee.Id;
+        firstCheck.DoneAt = now.AddDays(-3);
         Note(p1, ActivityType.Comment, "주행 시험 1차 결과 양호. 곡선 구간 속도만 재확인 예정", lee, -1);
 
         // 2) 지연 — 제작 단계가 목표일을 넘김, 세부 작업도 지연
@@ -229,9 +336,12 @@ public static class Seeder
         p2.Vendor = "대명오토메이션";
         p2.Equipments.Add(new ProjectEquipment { EquipmentTypeId = Eq("AMR", "Belt").Id, Quantity = 8 });
         p2.Equipments.Add(new ProjectEquipment { EquipmentTypeId = Eq("AMR", "Roller").Id, Quantity = 4 });
-        Work(p2, "제작", "프레임 제작", park, -38, -24, -38, -21);
-        Work(p2, "제작", "제어기 조립", park, -22, -9, -19, null, 70);
-        Work(p2, "제작", "출하 검사", lee, -8, -6);
+        var frame = Work(p2, "제작", "프레임 제작", park, -38, -24, -38, -21);
+        var controller = Work(p2, "제작", "제어기 조립", park, -22, -9, -19, null, 70);
+        var shipping = Work(p2, "제작", "출하 검사", lee, -8, -6);
+        Link(p2, frame, controller);
+        Link(p2, controller, shipping);
+        Baseline(p2, -75, -60, -45, -20, -4, 11, 26, 46);   // 제작부터 2주씩 밀린 상태
         Note(p2, ActivityType.TargetChanged, "제작 목표일 변경", lee, -30, "협력사 부품 수급 지연으로 2주 순연");
         Note(p2, ActivityType.Comment, "제어기 보드 입고 완료, 조립 재개", park, -12);
 
@@ -245,9 +355,12 @@ public static class Seeder
         // 4) Simulation — 모델링 진행 중
         var p4 = Make("광주 2공장 물류 동선 Simulation", "Simulation", kr, krRef5, choi, -30, ProjectState.Active,
             (-14, -15), (7, null), (20, null), (28, null));
-        Work(p4, "모델링", "레이아웃 반영", choi, -14, -8, -14, -9);
-        Work(p4, "모델링", "AGV 로직 구현", choi, -8, 4, -8, null, 55);
-        Work(p4, "모델링", "시나리오 정의", kim, 2, 7);
+        var layout = Work(p4, "모델링", "레이아웃 반영", choi, -14, -8, -14, -9);
+        var logic = Work(p4, "모델링", "AGV 로직 구현", choi, -8, 4, -8, null, 55);
+        var scenario = Work(p4, "모델링", "시나리오 정의", kim, 2, 7);
+        Baseline(p4, -14, 4, 17, 25);
+        Link(p4, layout, logic);
+        Link(p4, logic, scenario);
 
         // 5) 지연 — 첫 단계부터 밀림
         Make("폴란드 세탁기 창고 입출고 개선", "물류", pl, plWash, kim, -20, ProjectState.Active,

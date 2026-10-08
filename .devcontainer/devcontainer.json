@@ -17,6 +17,7 @@
   "portsAttributes": {
     "5080": { "label": "과제 스케줄러", "onAutoForward": "openBrowser" }
   },
-  "postCreateCommand": "dotnet build src/GanttScheduler",
+  // fonts-nanum: PDF 내보내기에 쓰는 한글 글꼴
+  "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends fonts-nanum && dotnet build src/GanttScheduler",
   "postStartCommand": "tools/preview.sh start"
 }

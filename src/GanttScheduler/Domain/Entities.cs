@@ -24,6 +24,24 @@ public enum ActivityType
     WorkEdited = 10,
     WorkPlanChanged = 11,
     WorkRemoved = 12,
+    BaselineSet = 13,
+    AttachmentAdded = 14,
+    AttachmentRemoved = 15,
+    Cloned = 16,
+    CheckChanged = 17,
+    LinkChanged = 18,
+}
+
+// 조직: 1 그룹 → 2 파트. 사용자는 파트(없으면 그룹)에 속한다
+public class OrgUnit
+{
+    public int Id { get; set; }
+    public int? ParentId { get; set; }
+    public OrgUnit? Parent { get; set; }
+    public int Level { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 // 사용자 — 로그인 없이 접속 IP 로 식별. 주소가 없는 사용자는 담당자로만 등록된 상태
@@ -31,7 +49,8 @@ public class AppUser
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";
-    public string? Dept { get; set; }
+    public int? OrgUnitId { get; set; }
+    public OrgUnit? OrgUnit { get; set; }
     public bool IsAdmin { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
@@ -80,6 +99,17 @@ public class StageTemplate
     public Category? Category { get; set; }
     public string Name { get; set; } = "";
     public StageKind Kind { get; set; }
+    public int SortOrder { get; set; }
+    public List<TemplateCheckItem> CheckItems { get; set; } = new();
+}
+
+// 단계 템플릿의 기본 체크리스트 — 과제 생성 시 CheckItem 으로 복사된다
+public class TemplateCheckItem
+{
+    public int Id { get; set; }
+    public int StageTemplateId { get; set; }
+    public StageTemplate? StageTemplate { get; set; }
+    public string Text { get; set; } = "";
     public int SortOrder { get; set; }
 }
 
@@ -138,8 +168,12 @@ public class Project
     public int CreatedById { get; set; }
     public AppUser? CreatedBy { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public int Version { get; set; }                // 동시 수정 감지용 — 과제 정보·상태가 바뀔 때마다 증가
+    public DateTime? BaselineAt { get; set; }       // 기준선을 확정한 시각 (없으면 미확정)
 
     public List<Stage> Stages { get; set; } = new();
+    public List<WorkLink> Links { get; set; } = new();
+    public List<Attachment> Attachments { get; set; } = new();
     public List<ProjectEquipment> Equipments { get; set; } = new();
     public List<ProjectContainer> Containers { get; set; } = new();
     public List<Activity> Activities { get; set; } = new();
@@ -178,7 +212,24 @@ public class Stage
     public int SortOrder { get; set; }
     public DateOnly? TargetDate { get; set; }
     public DateOnly? CompletedDate { get; set; }
+    public DateOnly? BaselineDate { get; set; }     // 기준선 확정 당시의 목표일
+    public int Version { get; set; }
     public List<WorkItem> Works { get; set; } = new();
+    public List<CheckItem> Checks { get; set; } = new();
+}
+
+// 단계 완료 조건 — 모두 체크해야 단계를 완료할 수 있다
+public class CheckItem
+{
+    public int Id { get; set; }
+    public int StageId { get; set; }
+    public Stage? Stage { get; set; }
+    public string Text { get; set; } = "";
+    public bool IsDone { get; set; }
+    public int? DoneById { get; set; }
+    public AppUser? DoneBy { get; set; }
+    public DateTime? DoneAt { get; set; }
+    public int SortOrder { get; set; }
 }
 
 // 작업 — 단계 아래 세부 일정. 상태는 저장하지 않고 실적 일자에서 계산한다
@@ -197,8 +248,40 @@ public class WorkItem
     public DateOnly PlanEnd { get; set; }
     public DateOnly? ActualStart { get; set; }
     public DateOnly? ActualEnd { get; set; }
+    public DateOnly? BaselineStart { get; set; }    // 기준선 확정 당시의 목표 일정
+    public DateOnly? BaselineEnd { get; set; }
     public string? Note { get; set; }
     public DateTime CreatedAt { get; set; }
+    public int Version { get; set; }
+}
+
+// 작업 의존 관계 (종료 → 시작): 선행 작업이 끝난 다음 근무일 + LagDays 이후에 후행 작업을 시작한다
+public class WorkLink
+{
+    public int Id { get; set; }
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public int PredecessorId { get; set; }
+    public WorkItem? Predecessor { get; set; }
+    public int SuccessorId { get; set; }
+    public WorkItem? Successor { get; set; }
+    public int LagDays { get; set; }                // 근무일 기준 간격
+}
+
+// 첨부 파일 — 실제 파일은 디스크(Storage:Path)에 StoredName 으로 저장한다
+public class Attachment
+{
+    public int Id { get; set; }
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public int? StageId { get; set; }               // 느슨한 참조(FK 없음)
+    public string FileName { get; set; } = "";
+    public string StoredName { get; set; } = "";
+    public string ContentType { get; set; } = "";
+    public long Size { get; set; }
+    public int UploadedById { get; set; }
+    public AppUser? UploadedBy { get; set; }
+    public DateTime UploadedAt { get; set; }
 }
 
 // 활동 — 댓글과 변경 이력을 한 스트림으로 저장

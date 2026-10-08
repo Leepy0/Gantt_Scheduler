@@ -25,6 +25,11 @@ public class AppDb : DbContext
     public DbSet<Stage> Stages => Set<Stage>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Activity> Activities => Set<Activity>();
+    public DbSet<OrgUnit> OrgUnits => Set<OrgUnit>();
+    public DbSet<TemplateCheckItem> TemplateCheckItems => Set<TemplateCheckItem>();
+    public DbSet<CheckItem> CheckItems => Set<CheckItem>();
+    public DbSet<WorkLink> WorkLinks => Set<WorkLink>();
+    public DbSet<Attachment> Attachments => Set<Attachment>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -41,8 +46,14 @@ public class AppDb : DbContext
         {
             e.ToTable("Users");
             e.Property(x => x.Name).HasMaxLength(50).IsRequired();
-            e.Property(x => x.Dept).HasMaxLength(50);
             e.HasIndex(x => x.Name).IsUnique();
+            e.HasOne(x => x.OrgUnit).WithMany().HasForeignKey(x => x.OrgUnitId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<OrgUnit>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.HasOne(x => x.Parent).WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<UserAddress>(e =>
@@ -72,6 +83,12 @@ public class AppDb : DbContext
             e.HasOne(x => x.Category).WithMany(c => c.StageTemplates).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Cascade);
         });
 
+        b.Entity<TemplateCheckItem>(e =>
+        {
+            e.Property(x => x.Text).HasMaxLength(200).IsRequired();
+            e.HasOne(x => x.StageTemplate).WithMany(t => t.CheckItems).HasForeignKey(x => x.StageTemplateId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         b.Entity<EquipmentType>(e =>
         {
             e.Property(x => x.Name).HasMaxLength(50).IsRequired();
@@ -93,6 +110,8 @@ public class AppDb : DbContext
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Vendor).HasMaxLength(100);
             e.Property(x => x.Description).HasMaxLength(2000);
+            // 버전은 동시 수정 감지에 쓴다 — 읽은 뒤 다른 사람이 먼저 저장했으면 저장이 실패한다
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Category).WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Corporation).WithMany().HasForeignKey(x => x.CorporationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
@@ -118,16 +137,44 @@ public class AppDb : DbContext
         {
             e.Property(x => x.Name).HasMaxLength(50).IsRequired();
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Project).WithMany(p => p.Stages).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CheckItem>(e =>
+        {
+            e.Property(x => x.Text).HasMaxLength(200).IsRequired();
+            e.HasOne(x => x.Stage).WithMany(s => s.Checks).HasForeignKey(x => x.StageId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.DoneBy).WithMany().HasForeignKey(x => x.DoneById).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<WorkItem>(e =>
         {
             e.Property(x => x.Title).HasMaxLength(200).IsRequired();
             e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Stage).WithMany(s => s.Works).HasForeignKey(x => x.StageId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Owner).WithMany().HasForeignKey(x => x.OwnerId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.CoOwner).WithMany().HasForeignKey(x => x.CoOwnerId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<WorkLink>(e =>
+        {
+            // 작업 쪽 FK 는 Restrict — SQL Server 가 한 테이블로 가는 cascade 경로를 둘 이상 허용하지 않는다.
+            // 작업·단계를 지울 때는 서비스에서 관련 의존 관계를 먼저 지운다
+            e.HasOne(x => x.Project).WithMany(p => p.Links).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Predecessor).WithMany().HasForeignKey(x => x.PredecessorId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Successor).WithMany().HasForeignKey(x => x.SuccessorId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.PredecessorId, x.SuccessorId }).IsUnique();
+        });
+
+        b.Entity<Attachment>(e =>
+        {
+            e.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+            e.Property(x => x.StoredName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.Project).WithMany(p => p.Attachments).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.UploadedBy).WithMany().HasForeignKey(x => x.UploadedById).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<Activity>(e =>
