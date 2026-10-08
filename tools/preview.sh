@@ -16,7 +16,9 @@ stop() {
 start() {
   stop
   cd "$ROOT/src/GanttScheduler"
-  ASPNETCORE_ENVIRONMENT=Development nohup dotnet run --no-launch-profile --urls http://0.0.0.0:5080 > "$LOG" 2>&1 &
+  # dotnet run 대신 빌드한 DLL 을 직접 띄운다 — 기록한 PID 가 앱 자신이어야 stop 이 확실히 멈춘다
+  dotnet build -v q --nologo > "$LOG" 2>&1 || { cat "$LOG"; exit 1; }
+  ASPNETCORE_ENVIRONMENT=Development nohup dotnet bin/Debug/net10.0/GanttScheduler.dll --urls http://0.0.0.0:5080 >> "$LOG" 2>&1 &
   echo $! > "$PID"
   echo "실행 중: http://localhost:5080 (로그: $LOG)"
 }

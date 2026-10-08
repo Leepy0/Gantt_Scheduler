@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // 같은 포트를 쓰는 미리보기 앱을 먼저 멈춘다
+      "label": "디버그 준비",
+      "type": "shell",
+      "command": "tools/preview.sh stop && dotnet build src/GanttScheduler",
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    }
+  ]
+}

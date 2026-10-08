@@ -20,3 +20,8 @@ jobs:
             curl -sf http://localhost:5080/health
             curl -s -o /dev/null -w 'welcome %{http_code}\n' http://localhost:5080/Welcome
             tail -n 5 /tmp/gantt-preview.log
+            # stop 이 포트를 실제로 비우는지 (디버그 실행 전에 필요)
+            tools/preview.sh stop
+            sleep 2
+            if curl -sf http://localhost:5080/health > /dev/null; then echo "stop 후에도 앱이 떠 있음"; exit 1; fi
+            echo "stop ok"
