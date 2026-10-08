@@ -32,14 +32,14 @@ async function step(name, fn) {
 }
 
 function watch(page, label) {
+    // 리소스 로드 실패는 아래 response 에서 주소와 함께 잡으므로 콘솔의 같은 메시지는 건너뛴다
     page.on('console', (m) => {
-        // 규칙 위반(400)을 일부러 유발하는 단계가 있어, 그때 브라우저가 남기는 로그는 제외한다
-        if (m.type() === 'error' && !m.text().includes('status of 400')) problems.push(`[${label}] console: ${m.text()}`);
+        if (m.type() === 'error' && !m.text().includes('Failed to load resource')) problems.push(`[${label}] console: ${m.text()}`);
     });
     page.on('pageerror', (e) => problems.push(`[${label}] pageerror: ${e.message}`));
     page.on('response', (r) => {
-        // 400 은 규칙 위반 응답으로 일부러 유발하는 경우가 있어 500 대만 문제로 본다
-        if (r.status() >= 500) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
+        // 400 은 규칙 위반 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
+        if (r.status() >= 500 || r.status() === 404) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
     });
 }
 
