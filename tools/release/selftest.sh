@@ -99,8 +99,11 @@ if [ "${MODE:-}" = service ]; then
   tr -d '\r' < "$WORK/install.log"
   [ "$rc" = 0 ] || die "서비스 등록 실패"
   running || die "서비스가 실행 중이 아님"
+  # SYSTEM 이 아니라 전용 계정으로 돌아야 한다 (업데이트 뒤 재시작도 이 계정의 권한으로 한다)
+  sc.exe qc "$SVC" | tr -d '\r' | grep -i "SERVICE_START_NAME" | grep -qi "NT SERVICE.$SVC" || fail "서비스가 전용 계정으로 등록되지 않음: $(sc.exe qc "$SVC" | tr -d '\r' | grep -i START_NAME)"
   # 설치 명령을 다시 실행해도(설정 변경) 문제없이 다시 떠야 한다
-  "$APP/GanttScheduler.exe" install --name "$SVC" --port "$PORT" > /dev/null || die "서비스 다시 등록 실패"
+  "$APP/GanttScheduler.exe" install --name "$SVC" --port "$PORT" > "$WORK/install.log" 2>&1 || die "서비스 다시 등록 실패"
+  sc.exe qc "$SVC" | tr -d '\r' | grep -i "SERVICE_START_NAME" | grep -qi "NT SERVICE.$SVC" || fail "다시 등록한 뒤 계정이 바뀜"
 else
   say "서버 시작 (v0.0.1)"
   if [ -n "${RID:-}" ]; then (cd "$APP" && nohup ./GanttScheduler --urls "$URL" > "$LOG" 2>&1 &)
@@ -122,6 +125,7 @@ TOKEN=$(token /Admin/Update)
 
 say "확인 → 받기"
 r=$(post Check);   has "$r" '"latest":{"version":"0.0.2"' || die "새 버전을 찾지 못함: $r"
+if [ "${MODE:-}" = service ]; then has "$r" "Windows 서비스 ($SVC)" || fail "실행 방식이 서비스로 표시되지 않음"; fi
 r=$(post Download); has "$r" '"ok":true' || die "받기 시작 실패: $r"
 for _ in $(seq 1 60); do r=$(status); has "$r" '"staged":{"version":"0.0.2"' && break; sleep 1; done
 has "$r" '"staged":{"version":"0.0.2"' || die "받아 두지 못함: $r"
