@@ -31,29 +31,49 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 1. **화면 캡처** — main 에 push 할 때마다 CI 가 데스크톱·모바일 크기로 주요 화면을 캡처해 [`preview` 브랜치](../../tree/preview)에 올린다. 빌드·테스트 결과와 내보내기 파일(Excel·PDF) 견본도 같이 올라간다.
 2. **직접 조작** — GitHub Codespaces. 레포 화면에서 Code → Codespaces → Create codespace on main. 앱이 자동으로 뜨고 5080 포트 주소가 열린다(샘플 데이터, SQLite). 다시 띄우거나 데이터를 초기화하려면 터미널에서 `tools/preview.sh start` / `tools/preview.sh reset`.
 
-## 운영 배포 (IIS + SQL Server)
+## 운영 배포 (Windows 서비스 + SQL Server)
 
-처음 한 번만 직접 설치하고, 그 뒤로는 서버가 스스로 업데이트한다.
+처음 한 번만 직접 설치하고, 그 뒤로는 서버가 스스로 업데이트한다. IIS 나 .NET 을 따로 설치하지 않는다.
 
-1. [Releases](../../releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 사이트 폴더에 푼다. .NET 런타임이 들어 있어 따로 설치하지 않는다.
-2. 그 폴더를 IIS 사이트(또는 응용 프로그램)로 등록한다. IIS 가 ASP.NET Core 앱을 띄우려면 ASP.NET Core Hosting Bundle(.NET 10)의 IIS 모듈이 필요하다.
-3. `appsettings.Production.json` 에 SQL Server 연결 문자열을 넣는다.
+1. [Releases](../../releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 폴더(예: `D:\GanttScheduler`)에 푼다.
+2. `appsettings.Production.json` 에 SQL Server 연결 문자열을 넣는다. DB 는 미리 만들어 둔다(테이블은 앱이 만든다).
    ```json
    {
      "Database": { "Provider": "SqlServer" },
-     "ConnectionStrings": { "SqlServer": "Server=...;Database=...;Trusted_Connection=True;TrustServerCertificate=True" }
+     "ConnectionStrings": { "SqlServer": "Server=...;Database=GanttScheduler;User Id=...;Password=...;TrustServerCertificate=True" }
    }
    ```
-4. 앱 풀 계정에 사이트 폴더 **수정 권한**을 준다. 자동 업데이트가 파일을 바꾸고, `App_Data`(첨부·업데이트 파일·암호화 키)에 쓰기 때문이다.
-   ```
-   icacls "D:\Sites\GanttScheduler" /grant "IIS AppPool\<앱 풀 이름>:(OI)(CI)M"
-   ```
-5. 앱이 시작하면서 `pm` 스키마에 테이블을 만들고(마이그레이션 자동 적용) 기준 정보 기본값을 넣는다. DB 자체는 미리 있어야 하고, 앱 풀 계정에 테이블 생성 권한이 필요하다.
-6. 처음 접속해 이름을 등록한 사람이 관리자가 된다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다.
-7. 첨부 파일은 `Storage:Path` 폴더(기본 `App_Data/uploads`)에 저장된다. 백업 대상에 넣는다. 업데이트는 `App_Data` 를 건드리지 않는다.
-8. PDF 내보내기는 서버의 한글 글꼴 파일(TTF)을 쓴다. Windows 는 맑은 고딕(`malgun.ttf`)을 자동으로 찾는다. 없으면 `Pdf:Font` 에 경로를 지정한다.
+3. `install-service.cmd` 를 실행한다(권한 확인 창에서 "예"). 서비스 등록 → 권한 설정 → 방화벽 허용 → 시작까지 하고, 시작에 실패하면 원인을 보여 준다.
+   - 기본 포트는 80. 다른 프로그램이 쓰고 있으면 `install-service.cmd --port 8080` 처럼 지정한다.
+   - 포트를 바꾸거나 폴더를 옮겼을 때도 같은 명령을 다시 실행하면 된다.
+4. `http://<서버 이름>/` 으로 접속한다. 처음 이름을 등록한 사람이 관리자가 된다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다.
 
-IIS 없이 `GanttScheduler.exe --urls http://0.0.0.0:5080` 으로 직접 띄워도 되고, 이때도 자동 업데이트가 동작한다(서버를 같은 명령으로 다시 띄운다). Windows 서비스로 등록해 돌리는 방식은 자동 적용을 지원하지 않는다.
+알아둘 것:
+
+- **서비스 계정**: 서비스는 전용 계정 `NT SERVICE\GanttScheduler` 로 돈다(SYSTEM 권한을 쓰지 않는다). 설치 명령이 이 계정에 프로그램 폴더 수정 권한과 자기 서비스를 시작할 권한을 준다. 둘 다 자동 업데이트에 필요하다.
+- **SQL Server 를 Windows 인증으로** 쓰려면(`Trusted_Connection=True`) 그 계정의 로그인을 만들어야 한다. 같은 서버의 SQL Server 면 아래처럼, 다른 서버면 `도메인\서버이름$`(컴퓨터 계정)으로 만든다.
+  ```sql
+  CREATE LOGIN [NT SERVICE\GanttScheduler] FROM WINDOWS;
+  USE GanttScheduler;
+  CREATE USER [NT SERVICE\GanttScheduler] FOR LOGIN [NT SERVICE\GanttScheduler];
+  ALTER ROLE db_owner ADD MEMBER [NT SERVICE\GanttScheduler];
+  ```
+- **데이터**는 프로그램 폴더의 `App_Data` 에 있다(첨부 파일, 업데이트 파일, 암호화 키). 백업 대상에 넣는다. 업데이트는 `App_Data` 를 건드리지 않는다. `Storage:Path` 등을 폴더 밖으로 옮기면 서비스 계정에 그 폴더의 수정 권한을 따로 준다.
+- **PDF 내보내기**는 서버의 한글 글꼴 파일(TTF)을 쓴다. Windows 는 맑은 고딕(`malgun.ttf`)을 자동으로 찾는다. 없으면 `Pdf:Font` 에 경로를 지정한다.
+- **문제가 생기면**: 시작 실패 원인은 `App_Data/startup-error.log`, 실행 중 경고·오류는 Windows 이벤트 뷰어(응용 프로그램 로그), 업데이트 교체 기록은 `App_Data/updates/apply.log`.
+- **제거**: `uninstall-service.cmd`. 서비스와 방화벽 규칙만 지우고 폴더와 데이터는 그대로 둔다.
+- HTTPS 가 필요하면 `appsettings.Production.json` 의 `Kestrel:Endpoints` 에 인증서와 주소를 설정한다(이 경우 `--port` 대신 그 설정이 쓰인다).
+
+<details>
+<summary>IIS 로 운영하는 경우</summary>
+
+같은 zip 을 IIS 사이트 폴더에 풀어 등록해도 동작한다(ASP.NET Core Hosting Bundle 의 IIS 모듈 필요). 다만 서비스 방식과 달리 실제 IIS 에서 업데이트 교체를 시험하지 못했다.
+
+- 앱 풀을 **항상 실행**으로 바꿔야 한다: 시작 모드 `AlwaysRunning`, 유휴 시간 제한 `0`. 기본 설정은 20분간 요청이 없으면 앱을 내리는데, 그러면 야간 자동 확인·자동 적용이 돌지 않는다.
+- 앱 풀 계정에 사이트 폴더 수정 권한을 준다: `icacls "D:\Sites\GanttScheduler" /grant "IIS AppPool\<앱 풀 이름>:(OI)(CI)M"`
+- 교체하는 동안 IIS 가 "업데이트 중" 화면을 대신 보여 주고, 다음 요청 때 새 버전을 띄운다.
+
+</details>
 
 ## 업데이트
 
@@ -65,7 +85,7 @@ IIS 없이 `GanttScheduler.exe --urls http://0.0.0.0:5080` 으로 직접 띄워�
 | 직접 | "지금 확인" → "받기" → "지금 적용" | 위와 같음 |
 | 파일로 | 릴리스의 zip 을 브라우저로 받아 업데이트 화면에 올린 뒤 "지금 적용" | 없음 (서버가 인터넷에 못 나가도 된다) |
 
-- **적용**하면 서버가 잠깐(보통 1분 이내) 멈춘다. IIS 는 그동안 "업데이트 중" 화면을 대신 보여 주고, 열려 있던 화면은 자동으로 다시 연결된 뒤 **새로 고침 안내**를 띄운다. 입력 중인 내용을 지우지 않도록 자동으로 새로 고치지는 않는다.
+- **적용**하면 서버가 잠깐(보통 1분 이내) 멈췄다가 서비스가 새 버전으로 다시 시작된다. 열려 있던 화면은 다음 확인 때(1분 이내) **새로 고침 안내**를 띄운다. 입력 중인 내용을 지우지 않도록 자동으로 새로 고치지는 않는다. 멈춘 사이에 저장을 누르면 "연결하지 못했습니다"가 뜨고 입력한 내용은 그대로 남는다.
 - **DB 구조가 바뀌는 업데이트**는 자동으로 적용하지 않는다. 화면에 표시되며, DB 를 백업한 뒤 관리자가 직접 누른다.
 - **되돌리기**: 직전 버전 파일을 한 세대 보관한다. DB 구조가 바뀌지 않은 업데이트만 프로그램을 되돌릴 수 있다. 되돌린 버전은 자동으로 다시 적용하지 않는다.
 - 바뀌는 것은 배포 패키지에 든 파일뿐이다. `App_Data`, 서버에서 고친 `appsettings.Production.json`·`web.config`, 폴더에 직접 넣어 둔 파일은 그대로 둔다.

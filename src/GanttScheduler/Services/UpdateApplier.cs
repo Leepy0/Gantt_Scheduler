@@ -69,7 +69,15 @@ public static class UpdateApplier
         try { File.Delete(offline); }
         catch (Exception ex) { Log("안내 파일 삭제 실패: " + ex.Message); }
 
-        // 직접 실행(IIS 아님)이면 서버를 다시 띄운다. 실패했어도 원래 버전이 다시 떠야 한다
+        // 서버를 다시 띄운다. 교체에 실패했어도 원래 버전이 다시 떠야 한다
+        var service = opt.Get("--start-service", "");
+        if (service.Length > 0)
+        {
+            var failed = ServiceInstaller.StartService(service, TimeSpan.FromSeconds(90));
+            Log(failed == null ? "서비스 다시 시작: " + service : "서비스 다시 시작 실패: " + failed);
+        }
+
+        // 직접 실행(서비스·IIS 아님)한 서버는 같은 명령으로 다시 띄운다
         var restart = opt.Get("--restart", "");
         if (restart.Length > 0)
         {

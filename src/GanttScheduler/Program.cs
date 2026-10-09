@@ -7,8 +7,33 @@ using Microsoft.EntityFrameworkCore;
 
 // 업데이트 교체 도우미로 불린 경우: 웹 서버를 띄우지 않고 파일만 바꾸고 끝낸다 (Services/UpdateApplier.cs)
 if (args.Length > 0 && args[0] == UpdateApplier.Flag) return UpdateApplier.Run(args);
+// Windows 서비스 등록·제거 명령: GanttScheduler.exe install / uninstall (Services/ServiceInstaller.cs)
+if (ServiceInstaller.IsCommand(args)) return ServiceInstaller.Run(args);
 
-var builder = WebApplication.CreateBuilder(args);
+// 서비스로 시작되면 SCM 이 "--service <이름>" 을 넘긴다
+var serviceName = ServiceInstaller.ServiceNameFrom(args);
+if (serviceName != null)
+{
+    // 서비스는 화면(콘솔)이 없다. 시작하다 죽으면(대개 DB 연결) 원인을 파일에 남겨 설치 명령이 보여 줄 수 있게 한다
+    AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    {
+        try
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "App_Data");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, ServiceInstaller.StartupErrorFile), $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{e.ExceptionObject}");
+        }
+        catch (Exception) { /* 기록 실패는 무시 */ }
+    };
+}
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    // 서비스는 System32 폴더에서 시작되므로 프로그램 폴더를 기준으로 삼는다 (설정 파일·wwwroot·App_Data)
+    ContentRootPath = serviceName != null ? AppContext.BaseDirectory : null,
+});
+if (serviceName != null) WindowsServiceSupport.Use(builder, serviceName);
 var config = builder.Configuration;
 
 // DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택)
@@ -48,10 +73,13 @@ builder.Services.AddSingleton(new UpdatePaths
 {
     AppDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
     DataDir = AppPaths.Updates(config, builder.Environment.ContentRootPath),
+    ServiceName = serviceName,
 });
 builder.Services.AddSingleton(new UpdateSource(config["Update:Source"], build));
 builder.Services.AddSingleton<ActivityTracker>();
 builder.Services.AddSingleton<UpdateService>();
+// 시작 작업(DB 준비 → 직전 교체 결과 정리)을 먼저 등록한다. 등록 순서대로 실행되고, 끝나야 요청을 받기 시작한다
+builder.Services.AddHostedService<StartupWork>();
 builder.Services.AddHostedService<UpdateWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
@@ -65,14 +93,7 @@ builder.Services.AddRazorPages()
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
-{
-    await DbInitializer.InitAsync(scope.ServiceProvider);
-}
-
-// 직전에 파일 교체(업데이트·되돌리기)가 있었으면 결과를 기록하고 남은 파일을 정리한다
 var updates = app.Services.GetRequiredService<UpdateService>();
-updates.Startup();
 
 // 리버스 프록시(Codespaces, nginx 등) 뒤에서 실제 접속 IP 를 쓰려면 켠다
 if (config.GetValue<bool>("TrustForwardedHeaders"))

@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - 'src/GanttScheduler/Services/Update*.cs'
+      - 'src/GanttScheduler/Services/*Service*.cs'
       - 'src/GanttScheduler/Program.cs'
       - 'src/GanttScheduler/Pages/Admin/Update*'
       - 'tools/release/**'
@@ -27,10 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 운영 형태: Windows 서비스 (전용 계정, sc start 로 재시작)
           - os: windows-latest
             rid: win-x64
+            mode: service
+          - os: windows-latest
+            rid: win-x64
+            mode: direct
           - os: ubuntu-24.04
             rid: linux-x64
+            mode: direct
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -44,4 +51,5 @@ jobs:
       - name: 확인 → 받기 → 적용 → 되돌리기
         env:
           RID: ${{ matrix.rid }}
+          MODE: ${{ matrix.mode }}
         run: WORK="$RUNNER_TEMP/selftest" tools/release/selftest.sh

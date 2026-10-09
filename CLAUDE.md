@@ -22,7 +22,8 @@ src/GanttScheduler/
   Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
   Services/    ProjectService, Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
                MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
-               Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateApplier(파일 교체 도우미 모드)
+               Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateApplier(파일 교체 도우미 모드),
+               ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅)
   Pages/       Index(대시보드), My/Index, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
                Admin/{Index,Update}, Welcome
   wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,edit,admin,org,update}.js
@@ -50,6 +51,7 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
    - .NET SDK 가 없으면 `apt-get install -y dotnet-sdk-10.0`
    - 화면 점검: `NODE_PATH=/opt/npm-tools/node_modules OUT_DIR=<폴더> node e2e/run.cjs`
    - 화면 점검에 `FAKE_EXPORT=1` 을 붙인다(섀도 빌드의 Excel·PDF 는 `FakeExcel.cs` 의 빈 껍데기라 형식 검사를 건너뛴다). `ExcelExporter.cs`·`PdfExporter.cs` 는 섀도 빌드에서 컴파일되지 않으므로 고친 뒤에는 CI 로 확인하고, 공개 메서드를 바꾸면 `FakeExcel.cs` 도 맞춘다.
+   - 서비스 호스팅 패키지를 쓰는 코드는 `Services/WindowsServiceSupport.cs` 한 파일에만 둔다(섀도 빌드는 `FakeService.cs` 로 바꾼다). `ServiceInstaller.cs` 는 기본 라이브러리만 써서 섀도에서도 컴파일된다.
    - 가짜 EF 는 실제 SQL 을 만들지 않는다. 쿼리 번역·제약 조건 문제는 여기서 안 잡힌다. EF API 를 새로 쓰면 FakeEf.cs 에도 같은 시그니처를 추가해야 한다.
 2. **CI** — push 하면 GitHub Actions 가 진짜 EF 로 빌드·테스트(SQLite + SQL Server)·화면 점검을 돌리고 결과를 `preview` 브랜치에 올린다. Actions 로그·아티팩트는 이 환경에서 내려받을 수 없으므로 결과는 브랜치로 확인한다.
    ```
@@ -70,7 +72,9 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 
 ## 배포와 자동 업데이트
 
-설계는 `docs/DESIGN.md` 8장. 서버는 릴리스의 `GanttScheduler.json`(매니페스트)으로 새 버전을 알고 zip 을 받아 스스로 바뀐다.
+설계는 `docs/DESIGN.md` 8장. 운영 형태는 Windows 서비스(`GanttScheduler.exe install`, 전용 계정 `NT SERVICE\<이름>`). 서버는 릴리스의 `GanttScheduler.json`(매니페스트)으로 새 버전을 알고 zip 을 받아 스스로 바뀐다.
+
+- 요청을 받기 전에 해야 하는 일은 `Program.cs` 본문이 아니라 `StartupWork`(호스트 시작 단계)에 넣는다. 본문에서 오래 걸리면 서비스 시작이 30초 제한에 걸린다.
 
 - 정식 배포: `GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋 → `gh workflow run release.yml -R Leepy0/Gantt_Scheduler --ref main -f release=true`. 이 환경에서 태그 push 는 막혀 있으므로(403) 워크플로가 태그를 만들게 한다. 버전을 올리지 않으면 서버가 새 버전으로 보지 않는다.
 - main push 는 `dev` prerelease 만 덮어쓴다(자동 업데이트 대상 아님). 시험용 빌드를 Latest 로 올리지 않는다.
@@ -79,5 +83,5 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 - `state.json`(App_Data/updates)은 옛 버전이 쓴 것을 새 버전이 읽는다. 항목은 추가만 하고 뜻을 바꾸지 않는다. 도우미 인자(`--apply-update …`)도 마찬가지 — 되돌리기는 이전 버전의 도우미가 실행한다.
 - 교체 로직을 고치면 자체 시험을 돌린다.
   - 로컬(섀도): `tools/shadow/build.sh && PROJECT=/tmp/gantt-shadow MEMORY_DB=1 tools/release/selftest.sh`
-  - CI: `update-selftest.yml` 이 Windows·Linux 에서 런타임 포함 빌드로 돌린다. 실패 원인은 주석(annotation)으로 남는다: `gh api repos/Leepy0/Gantt_Scheduler/check-runs/<jobId>/annotations`
+  - CI: `update-selftest.yml` 이 런타임 포함 빌드로 세 가지(Windows 서비스 등록 = 운영 형태, Windows 직접 실행, Linux 직접 실행)를 돌린다. 서비스 등록 명령(`install`)·계정 권한·`sc start` 재시작은 여기서만 실제로 확인된다. 실패 원인은 주석(annotation)으로 남는다: `gh api repos/Leepy0/Gantt_Scheduler/check-runs/<jobId>/annotations`
 - 업데이트 화면을 여러 상태로 보려면 `-p:BuildChannel=release -p:Version=…` 로 게시한 빌드를 `Update__Source=<폴더>` 와 함께 띄운다(로컬 빌드 채널은 적용 단추가 막혀 있다).

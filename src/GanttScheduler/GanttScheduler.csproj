@@ -7,7 +7,7 @@
     <RootNamespace>GanttScheduler</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- 정식 배포할 때 올린다. 서버의 자동 업데이트가 이 값으로 새 버전인지 판단한다 -->
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <!-- release = 정식 배포, dev = main 테스트 빌드, local = 로컬 빌드(자동 적용 안 함). CI 가 지정한다 -->
     <BuildChannel Condition="'$(BuildChannel)' == ''">local</BuildChannel>
   </PropertyGroup>
@@ -25,12 +25,18 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.*" />
     <PackageReference Include="ClosedXML" Version="0.105.*" />
     <PackageReference Include="PDFsharp-MigraDoc" Version="6.*" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="GanttScheduler.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 서비스 등록·제거를 더블클릭으로 할 수 있게 배포 패키지에 넣는다 -->
+    <None Update="install-service.cmd;uninstall-service.cmd" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

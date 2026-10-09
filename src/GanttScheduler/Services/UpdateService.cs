@@ -31,6 +31,7 @@ public class ActivityTracker
 public class UpdatePaths
 {
     public string AppDir { get; init; } = "";      // 실행 파일이 있는 폴더 (교체 대상)
+    public string? ServiceName { get; init; }      // Windows 서비스로 돌고 있으면 그 이름
     public string DataDir { get; init; } = "";     // 받은 파일·이전 버전·상태 (App_Data/updates)
     public string StatePath => Path.Combine(DataDir, "state.json");
     public string ResultPath => Path.Combine(DataDir, "result.json");
@@ -99,7 +100,8 @@ public class UpdateService
             }
             return new UpdateStatus(
                 _build.VersionText, _build.Id, _build.Channel, _build.ChannelName, _build.Commit,
-                UnderIis ? "IIS" : "직접 실행", _source.Describe, _source.BrowserPage,
+                _paths.ServiceName != null ? $"Windows 서비스 ({_paths.ServiceName})" : UnderIis ? "IIS" : "직접 실행",
+                _source.Describe, _source.BrowserPage,
                 ok, reason, fix, _phase, _progress, _error, _errorFix,
                 newer ? new ReleaseView(s.Latest!.Version, s.Latest.Size, s.Latest.Published, s.Latest.Page, s.Latest.Notes, SchemaChanged(s.Latest.Schema)) : null,
                 s.CheckedAt, s.CheckError, s.CheckFix,
@@ -133,7 +135,8 @@ public class UpdateService
         if (!CanWrite(_paths.AppDir))
         {
             var pool = Environment.GetEnvironmentVariable("APP_POOL_ID");
-            var account = string.IsNullOrEmpty(pool) ? "서버를 실행하는 계정" : $"IIS AppPool\\{pool}";
+            var account = _paths.ServiceName != null ? $"NT SERVICE\\{_paths.ServiceName}"
+                : string.IsNullOrEmpty(pool) ? "서버를 실행하는 계정" : $"IIS AppPool\\{pool}";
             return (false, "서버 계정이 프로그램 폴더에 쓸 수 없어 파일을 바꿀 수 없습니다.",
                 $"{account} 에 폴더 수정 권한을 주세요: icacls \"{_paths.AppDir}\" /grant \"{account}:(OI)(CI)M\"");
         }
@@ -388,8 +391,14 @@ public class UpdateService
                  })
             psi.ArgumentList.Add(a);
 
-        // IIS 는 다음 요청 때 앱을 알아서 다시 띄운다. 직접 실행한 서버는 도우미가 같은 명령으로 다시 띄운다
-        if (!UnderIis)
+        // 다시 띄우는 방법: 서비스는 도우미가 서비스를 시작시키고, IIS 는 다음 요청 때 알아서 띄우며,
+        // 직접 실행한 서버는 도우미가 같은 명령으로 다시 띄운다
+        if (_paths.ServiceName != null)
+        {
+            psi.ArgumentList.Add("--start-service");
+            psi.ArgumentList.Add(_paths.ServiceName);
+        }
+        else if (!UnderIis)
         {
             var (exe, args) = RestartCommand();
             psi.ArgumentList.Add("--restart");
@@ -634,6 +643,32 @@ public class UpdateService
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch (Exception) { /* 다음 정리 때 다시 */ }
     }
+}
+
+// 서버가 요청을 받기 전에 끝내야 하는 일: DB 준비(마이그레이션·기준 정보), 직전 파일 교체의 결과 정리.
+// 호스트 시작 단계에서 돌리는 이유 — Windows 서비스는 프로세스가 뜬 뒤 30초 안에 서비스 관리자에 연결해야 하는데,
+// 그 연결이 호스트 시작 때 이뤄진다. 그 전에 DB 작업을 하면 마이그레이션이 길어질 때 서비스 시작이 실패한다
+public class StartupWork : IHostedService
+{
+    private readonly IServiceProvider _services;
+    private readonly UpdateService _updates;
+
+    public StartupWork(IServiceProvider services, UpdateService updates)
+    {
+        _services = services;
+        _updates = updates;
+    }
+
+    public async Task StartAsync(CancellationToken ct)
+    {
+        using (var scope = _services.CreateScope())
+        {
+            await GanttScheduler.Data.DbInitializer.InitAsync(scope.ServiceProvider);
+        }
+        _updates.Startup();
+    }
+
+    public Task StopAsync(CancellationToken ct) => Task.CompletedTask;
 }
 
 // 주기 확인(기본 6시간)과 자동 적용 판단을 돌리는 백그라운드 작업
