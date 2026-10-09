@@ -241,7 +241,9 @@
     // 서버는 한 번 바뀌면 끝이지만 브라우저에는 옛 화면이 남는다. 열려 있는 화면이 주기적으로 서버 버전을 물어
     // 바뀌었으면 새로 고침을 권한다. 입력 중일 수 있으므로 자동으로 새로 고치지는 않는다
     (function () {
-        var build = window.APP_BUILD;
+        // 이 화면을 내려 준 서버의 빌드. 스크립트 안에 직접 쓰면 '+' 같은 글자가 HTML 인코딩된 채로 남아
+        // 서버 값과 달라지므로 속성으로 받는다
+        var build = document.documentElement.getAttribute('data-build');
         if (!build || !window.fetch) return;
         var el = null, state = '', fails = 0, timer = null;
 

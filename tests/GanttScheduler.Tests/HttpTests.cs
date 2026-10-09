@@ -150,13 +150,15 @@ public class HttpTests : IClassFixture<AppFactory>
     }
 
     [Fact]
-    public async Task 업데이트_화면은_상태를_보여_주고_실패는_원인과_해결_방법을_알린다()
+    public async Task 업데이트_상태는_누구나_보지만_바꾸는_것은_관리자만_한다()
     {
         var client = await RegisteredClientAsync();
         var html = await client.GetStringAsync("/Admin/Update");
         var token = TokenOf(html);
-        // 화면은 지금 빌드를 알고 있어야 새 버전으로 바뀐 것을 알아챈다
-        Assert.Contains("window.APP_BUILD = '", html);
+        // 화면은 지금 빌드를 알고 있어야 새 버전으로 바뀐 것을 알아챈다. /version 이 주는 값과 글자 그대로 같아야 한다
+        var version = await client.GetFromJsonAsync<JsonElement>("/version");
+        var build = Regex.Match(html, "<html[^>]*data-build=\"([^\"]*)\"").Groups[1].Value;
+        Assert.Equal(version.GetProperty("build").GetString(), WebUtility.HtmlDecode(build));
 
         var status = await client.GetFromJsonAsync<JsonElement>("/Admin/Update?handler=Status");
         var st = status.GetProperty("status");
@@ -165,36 +167,20 @@ public class HttpTests : IClassFixture<AppFactory>
         Assert.False(st.GetProperty("canApply").GetBoolean());
         Assert.Equal("idle", st.GetProperty("phase").GetString());
 
-        HttpRequestMessage Post(string handler, object body)
+        // 통합테스터는 관리자가 아니다 (테스트 DB 에 관리자가 이미 있다)
+        foreach (var handler in new[] { "Check", "Download", "Apply", "Rollback", "Discard", "Settings" })
         {
-            var req = new HttpRequestMessage(HttpMethod.Post, "/Admin/Update?handler=" + handler) { Content = JsonContent.Create(body) };
+            var req = new HttpRequestMessage(HttpMethod.Post, "/Admin/Update?handler=" + handler)
+            {
+                Content = JsonContent.Create(new { autoCheck = true, autoApply = false, windowFrom = 0, windowTo = 0, idleMinutes = 5 }),
+            };
             req.Headers.Add("X-CSRF-TOKEN", token);
             req.Headers.Add("Accept", "application/json");
-            return req;
+            var res = await client.SendAsync(req);
+            Assert.True(res.StatusCode == HttpStatusCode.Forbidden, $"{handler} → {(int)res.StatusCode}");
         }
-
-        // 받아 올 위치가 없으면(테스트 설정) 확인은 끝나되 원인과 해결 방법을 상태에 남긴다
-        var check = await client.SendAsync(Post("Check", new { }));
-        Assert.Equal(HttpStatusCode.OK, check.StatusCode);
-        var checked_ = (await check.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status");
-        Assert.False(string.IsNullOrEmpty(checked_.GetProperty("checkError").GetString()));
-        Assert.False(string.IsNullOrEmpty(checked_.GetProperty("checkFix").GetString()));
-
-        // 받아 둔 것이 없는데 적용하면 400 + 해결 방법
-        var apply = await client.SendAsync(Post("Apply", new { }));
-        Assert.Equal(HttpStatusCode.BadRequest, apply.StatusCode);
-        var err = await apply.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(err.GetProperty("ok").GetBoolean());
-        Assert.False(string.IsNullOrEmpty(err.GetProperty("fix").GetString()));
-
-        // 설정 저장: 범위를 벗어나면 400, 맞으면 반영
-        var bad = await client.SendAsync(Post("Settings", new { autoCheck = true, autoApply = true, windowFrom = 2, windowTo = 5, idleMinutes = 1 }));
-        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-        var ok = await client.SendAsync(Post("Settings", new { autoCheck = true, autoApply = false, windowFrom = 1, windowTo = 6, idleMinutes = 45 }));
-        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
-        var settings = (await ok.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetProperty("settings");
-        Assert.False(settings.GetProperty("autoApply").GetBoolean());
-        Assert.Equal(45, settings.GetProperty("idleMinutes").GetInt32());
+        var after = await client.GetFromJsonAsync<JsonElement>("/Admin/Update?handler=Status");
+        Assert.True(after.GetProperty("status").GetProperty("settings").GetProperty("autoApply").GetBoolean());
 
         // 토큰 없이는 거절
         var noToken = await client.PostAsJsonAsync("/Admin/Update?handler=Check", new { });

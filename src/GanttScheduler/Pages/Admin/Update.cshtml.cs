@@ -5,7 +5,10 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace GanttScheduler.Pages.Admin;
 
-// 서버 업데이트 — 확인·받기·적용·되돌리기. 보는 것은 누구나, 바꾸는 것은 관리자만
+// 서버 업데이트 — 확인·받기·적용·되돌리기. 보는 것은 누구나, 바꾸는 것은 관리자만.
+// 요청 크기 한도는 핸들러 메서드가 아니라 페이지 클래스에 붙여야 적용된다 (Razor Pages 의 필터 규칙)
+[RequestSizeLimit(MaxPackageBytes)]
+[RequestFormLimits(MultipartBodyLengthLimit = MaxPackageBytes)]
 public class UpdateModel : PageModel
 {
     // 배포 파일(zip)은 런타임이 들어 있어 수십 MB 다
@@ -42,8 +45,6 @@ public class UpdateModel : PageModel
     public Task<IActionResult> OnPostSettingsAsync([FromBody] SettingsInput input) =>
         Run(() => _updates.SaveSettings(new UpdateSettings(input.AutoCheck, input.AutoApply, input.WindowFrom, input.WindowTo, input.IdleMinutes)));
 
-    [RequestSizeLimit(MaxPackageBytes)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxPackageBytes)]
     public Task<IActionResult> OnPostUploadAsync(IFormFile? file) => Run(async () =>
     {
         if (file == null || file.Length == 0) throw new RuleException("배포 파일(zip)을 선택해 주세요.", "file");

@@ -16,7 +16,8 @@ cp "$ROOT/tools/shadow/FakeEf.cs" "$ROOT/tools/shadow/FakeExcel.cs" "$OUT/"
 cp "$ROOT/tools/shadow/Shadow.csproj" "$OUT/GanttScheduler.csproj"
 
 cd "$OUT"
-dotnet build -v q --nologo 2>&1 | grep -E "error|warning CS|Build succeeded|Error\(s\)|Warning\(s\)" | sort -u || true
+# 커밋 번호를 넣어 실제 빌드처럼 "버전+커밋" 형태의 빌드 값이 되게 한다 (화면의 새 버전 감지와 같은 조건)
+dotnet build -v q --nologo -p:SourceRevisionId="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo 0000000)" 2>&1 | grep -E "error|warning CS|Build succeeded|Error\(s\)|Warning\(s\)" | sort -u || true
 if [ "${1:-}" = "run" ]; then
   ASPNETCORE_ENVIRONMENT=Development exec dotnet bin/Debug/net10.0/GanttScheduler.dll --urls "http://localhost:${PORT:-5080}"
 fi

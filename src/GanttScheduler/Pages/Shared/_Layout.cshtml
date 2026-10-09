@@ -7,7 +7,7 @@
     var bare = ViewData["Bare"] as bool? ?? false;
 }
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-build="@Updates.Build.Id">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -56,7 +56,7 @@
     }
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
     @Html.AntiForgeryToken()
-    <script>window.APP_BASE = '@Url.Content("~/")'; window.APP_BUILD = '@Updates.Build.Id';</script>
+    <script>window.APP_BASE = '@Url.Content("~/")';</script>
     <script src="~/js/app.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>

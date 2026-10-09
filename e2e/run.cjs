@@ -507,7 +507,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
 
     await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
         await page.goto(BASE + '/Projects');
-        const build = await page.evaluate(() => window.APP_BUILD);
+        const build = await page.evaluate(() => document.documentElement.getAttribute('data-build'));
         assert(build, '화면에 빌드 정보가 없음');
         await page.evaluate(() => App.checkVersion());
         await page.waitForTimeout(300);
