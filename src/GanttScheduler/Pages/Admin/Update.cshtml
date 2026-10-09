@@ -1,0 +1,25 @@
+@page
+@model GanttScheduler.Pages.Admin.UpdateModel
+@{
+    ViewData["Title"] = "업데이트";
+    ViewData["Nav"] = "admin";
+}
+
+<div class="page-head">
+    <a class="btn icon ghost" asp-page="/Admin/Index" aria-label="관리로 돌아가기"><svg class="ic"><use href="#i-left" /></svg></a>
+    <h1>업데이트</h1>
+    @if (!Model.IsAdmin)
+    {
+        <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>조회 전용</span>
+    }
+</div>
+
+<section id="update-body" class="update-body" aria-live="polite">
+    <div class="loading"><span class="spinner"></span>불러오는 중…</div>
+</section>
+
+<script type="application/json" id="page-data">@Html.Raw(Model.DataJson)</script>
+
+@section Scripts {
+    <script src="~/js/update.js" asp-append-version="true"></script>
+}

@@ -71,9 +71,12 @@
         var body = null;
         try { body = await res.json(); } catch (err) { /* JSON 이 아닌 응답 */ }
         if (!res.ok || !body || body.ok === false) {
+            // 503: 서버가 새 버전으로 바뀌는 중 (IIS 가 점검 안내 화면을 대신 내보낸다)
             var err = body && body.error
                 ? fail(body.error, body.field)
-                : fail('요청을 처리하지 못했습니다(' + res.status + '). 잠시 후 다시 시도해 주세요.');
+                : res.status === 503
+                    ? fail('서버를 업데이트하는 중입니다. 잠시 후 다시 시도해 주세요. 입력한 내용은 그대로 있습니다.')
+                    : fail('요청을 처리하지 못했습니다(' + res.status + '). 잠시 후 다시 시도해 주세요.');
             err.status = res.status;
             err.data = body;          // 409(동시 수정) 처럼 화면이 후속 처리를 해야 하는 응답에 쓴다
             throw err;
@@ -233,6 +236,63 @@
     };
 
     App.isMobile = function () { return window.matchMedia('(max-width: 767px)').matches; };
+
+    // ── 서버 버전 감시 ───────────────────────────────────────────────
+    // 서버는 한 번 바뀌면 끝이지만 브라우저에는 옛 화면이 남는다. 열려 있는 화면이 주기적으로 서버 버전을 물어
+    // 바뀌었으면 새로 고침을 권한다. 입력 중일 수 있으므로 자동으로 새로 고치지는 않는다
+    (function () {
+        var build = window.APP_BUILD;
+        if (!build || !window.fetch) return;
+        var el = null, state = '', fails = 0, timer = null;
+
+        function show(kind, version) {
+            if (kind === state) return;
+            state = kind;
+            if (el) { el.remove(); el = null; }
+            if (!kind) return;
+            el = document.createElement('div');
+            el.className = 'notice' + (kind === 'offline' ? ' alarm' : '');
+            el.setAttribute('role', kind === 'offline' ? 'alert' : 'status');
+            if (kind === 'new') {
+                el.innerHTML = App.icon('refresh') + '<span>새 버전(v' + App.esc(version) + ')이 적용되었습니다. 새로 고치면 반영됩니다.</span>' +
+                    '<button type="button" class="btn small">새로 고침</button>';
+                el.querySelector('button').addEventListener('click', function () { location.reload(); });
+            } else if (kind === 'updating') {
+                el.innerHTML = '<span class="spinner"></span><span>서버를 업데이트하는 중입니다. 끝나면 자동으로 다시 연결됩니다.</span>';
+            } else {
+                el.innerHTML = App.icon('alert') + '<span>서버에 연결할 수 없습니다. 다시 연결하는 중입니다.</span>';
+            }
+            document.body.appendChild(el);
+        }
+
+        function next() {
+            clearTimeout(timer);
+            if (document.hidden) return;   // 보이지 않는 탭은 묻지 않는다 (다시 보일 때 바로 확인)
+            timer = setTimeout(check, state === 'updating' || state === 'offline' ? 5000 : 60000);
+        }
+
+        function check() {
+            fetch(App.url('/version'), { cache: 'no-store', headers: { 'Accept': 'application/json' } })
+                .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+                .then(function (v) {
+                    fails = 0;
+                    if (v.updating) show('updating');
+                    else if (v.build !== build) show('new', v.version);
+                    else show('');
+                })
+                .catch(function () {
+                    fails++;
+                    // 업데이트 중이라고 들은 뒤의 끊김은 예정된 것이고, 그 밖에는 두 번 연속 실패해야 끊김으로 본다
+                    if (state === 'updating') return;
+                    if (fails >= 2) show('offline');
+                })
+                .then(next);
+        }
+
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+        timer = setTimeout(check, 3000);   // 캐시에서 열린 옛 화면도 곧바로 알아채도록
+        App.checkVersion = check;
+    })();
 
     window.App = App;
 })();

@@ -21,13 +21,15 @@ src/GanttScheduler/
   Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
   Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
   Services/    ProjectService, Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
-               MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter
+               MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
+               Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateApplier(파일 교체 도우미 모드)
   Pages/       Index(대시보드), My/Index, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
-               Admin/Index, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,edit,admin,org}.js
+               Admin/{Index,Update}, Welcome
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,edit,admin,org,update}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)
+tools/release/                pack.py(zip·SHA-256·매니페스트), selftest.sh(실제 서버로 업데이트 적용·되돌리기 시험)
 ```
 
 ## 검증 방법
@@ -64,3 +66,18 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 - PC: `dotnet ef migrations add <이름> --project src/GanttScheduler --output-dir Data/Migrations`
 - 클라우드 세션: `gh workflow run migration.yml -R Leepy0/Gantt_Scheduler --ref main -f name=<이름>` → 워크플로가 main 에 커밋하므로 `git pull` 후 이어서 작업. 이 커밋은 CI 를 자동으로 돌리지 않으니 `gh workflow run ci.yml -R Leepy0/Gantt_Scheduler --ref main` 으로 따로 실행한다.
 - SQLite(미리보기) DB 는 마이그레이션을 쓰지 않는다. 모델이 바뀌면 시작할 때 자동으로 새로 만든다(스키마 해시 비교). 직접 지우려면 `App_Data/gantt.db`.
+
+
+## 배포와 자동 업데이트
+
+설계는 `docs/DESIGN.md` 8장. 서버는 릴리스의 `GanttScheduler.json`(매니페스트)으로 새 버전을 알고 zip 을 받아 스스로 바뀐다.
+
+- 정식 배포: `GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋 → `gh workflow run release.yml -R Leepy0/Gantt_Scheduler --ref main -f release=true`. 이 환경에서 태그 push 는 막혀 있으므로(403) 워크플로가 태그를 만들게 한다. 버전을 올리지 않으면 서버가 새 버전으로 보지 않는다.
+- main push 는 `dev` prerelease 만 덮어쓴다(자동 업데이트 대상 아님). 시험용 빌드를 Latest 로 올리지 않는다.
+- 확인: `gh release view v<버전> -R Leepy0/Gantt_Scheduler --json assets` 에 zip · `.sha256` · `GanttScheduler.json` 세 개가 있어야 한다.
+- 매니페스트·패키지 형식은 `tools/release/pack.py` 한 곳에서 만든다. 항목을 바꾸면 `Services/Updates.cs` 의 `ParseManifest` 와 `UpdateService.Stage` 를 같이 본다.
+- `state.json`(App_Data/updates)은 옛 버전이 쓴 것을 새 버전이 읽는다. 항목은 추가만 하고 뜻을 바꾸지 않는다. 도우미 인자(`--apply-update …`)도 마찬가지 — 되돌리기는 이전 버전의 도우미가 실행한다.
+- 교체 로직을 고치면 자체 시험을 돌린다.
+  - 로컬(섀도): `tools/shadow/build.sh && PROJECT=/tmp/gantt-shadow MEMORY_DB=1 tools/release/selftest.sh`
+  - CI: `update-selftest.yml` 이 Windows·Linux 에서 런타임 포함 빌드로 돌린다. 실패 원인은 주석(annotation)으로 남는다: `gh api repos/Leepy0/Gantt_Scheduler/check-runs/<jobId>/annotations`
+- 업데이트 화면을 여러 상태로 보려면 `-p:BuildChannel=release -p:Version=…` 로 게시한 빌드를 `Update__Source=<폴더>` 와 함께 띄운다(로컬 빌드 채널은 적용 단추가 막혀 있다).

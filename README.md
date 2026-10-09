@@ -9,6 +9,7 @@
 - **내 할 일** — 내가 담당인 작업·단계를 지연/이번 주/예정으로 모아 보기
 - **분석** — 단계별 리드타임 통계, 주간 보고 자동 생성(Excel·PDF), 전체 변경 이력 조회
 - **이력** — 목표일 변경 사유, 댓글, 상태 변경을 과제별로 한곳에 기록
+- **자동 업데이트** — 서버가 새 버전을 확인해 받아 두고, 아무도 쓰지 않는 시간에 스스로 바꾼다. 열려 있는 화면에는 새로 고침 안내가 뜬다
 - **관리** — 법인·제품군·라인·층, 유형·단계·체크 항목 템플릿, 기기·용기 종류, 협력사, 조직(그룹 → 파트), 사용자, 공휴일
 
 ASP.NET Core Razor Pages (.NET 10) · EF Core · SQL Server(운영) / SQLite(미리보기·테스트)
@@ -32,8 +33,10 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 ## 운영 배포 (IIS + SQL Server)
 
-1. `dotnet publish src/GanttScheduler -c Release -o publish`
-2. `publish` 폴더를 IIS 사이트(또는 응용 프로그램)로 등록. ASP.NET Core Hosting Bundle(.NET 10) 필요.
+처음 한 번만 직접 설치하고, 그 뒤로는 서버가 스스로 업데이트한다.
+
+1. [Releases](../../releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 사이트 폴더에 푼다. .NET 런타임이 들어 있어 따로 설치하지 않는다.
+2. 그 폴더를 IIS 사이트(또는 응용 프로그램)로 등록한다. IIS 가 ASP.NET Core 앱을 띄우려면 ASP.NET Core Hosting Bundle(.NET 10)의 IIS 모듈이 필요하다.
 3. `appsettings.Production.json` 에 SQL Server 연결 문자열을 넣는다.
    ```json
    {
@@ -41,10 +44,47 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
      "ConnectionStrings": { "SqlServer": "Server=...;Database=...;Trusted_Connection=True;TrustServerCertificate=True" }
    }
    ```
-4. 앱이 시작하면서 `pm` 스키마에 테이블을 만들고(마이그레이션 자동 적용) 기준 정보 기본값을 넣는다. DB 자체는 미리 있어야 하고, 앱 풀 계정에 테이블 생성 권한이 필요하다.
-5. 처음 접속해 이름을 등록한 사람이 관리자가 된다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다.
-6. 첨부 파일은 `Storage:Path` 폴더에 저장된다. 배포할 때 덮어쓰이지 않도록 사이트 폴더 밖의 경로를 지정하고, 앱 풀 계정에 쓰기 권한을 준다. 백업 대상에도 넣는다.
-7. PDF 내보내기는 서버의 한글 글꼴 파일(TTF)을 쓴다. Windows 는 맑은 고딕(`malgun.ttf`)을 자동으로 찾는다. 없으면 `Pdf:Font` 에 경로를 지정한다.
+4. 앱 풀 계정에 사이트 폴더 **수정 권한**을 준다. 자동 업데이트가 파일을 바꾸고, `App_Data`(첨부·업데이트 파일·암호화 키)에 쓰기 때문이다.
+   ```
+   icacls "D:\Sites\GanttScheduler" /grant "IIS AppPool\<앱 풀 이름>:(OI)(CI)M"
+   ```
+5. 앱이 시작하면서 `pm` 스키마에 테이블을 만들고(마이그레이션 자동 적용) 기준 정보 기본값을 넣는다. DB 자체는 미리 있어야 하고, 앱 풀 계정에 테이블 생성 권한이 필요하다.
+6. 처음 접속해 이름을 등록한 사람이 관리자가 된다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다.
+7. 첨부 파일은 `Storage:Path` 폴더(기본 `App_Data/uploads`)에 저장된다. 백업 대상에 넣는다. 업데이트는 `App_Data` 를 건드리지 않는다.
+8. PDF 내보내기는 서버의 한글 글꼴 파일(TTF)을 쓴다. Windows 는 맑은 고딕(`malgun.ttf`)을 자동으로 찾는다. 없으면 `Pdf:Font` 에 경로를 지정한다.
+
+IIS 없이 `GanttScheduler.exe --urls http://0.0.0.0:5080` 으로 직접 띄워도 되고, 이때도 자동 업데이트가 동작한다(서버를 같은 명령으로 다시 띄운다). Windows 서비스로 등록해 돌리는 방식은 자동 적용을 지원하지 않는다.
+
+## 업데이트
+
+관리 > **업데이트** 화면에서 한다. 관리자만 바꿀 수 있다.
+
+| 방법 | 동작 | 필요한 것 |
+|---|---|---|
+| 자동 | 6시간마다 새 버전을 확인해 받아 두고(SHA-256 검증), 설정한 시간대(기본 02~05시, 한국 시간)에 30분 동안 요청이 없으면 적용 | 서버가 `Update:Source` 를 읽을 수 있어야 한다 |
+| 직접 | "지금 확인" → "받기" → "지금 적용" | 위와 같음 |
+| 파일로 | 릴리스의 zip 을 브라우저로 받아 업데이트 화면에 올린 뒤 "지금 적용" | 없음 (서버가 인터넷에 못 나가도 된다) |
+
+- **적용**하면 서버가 잠깐(보통 1분 이내) 멈춘다. IIS 는 그동안 "업데이트 중" 화면을 대신 보여 주고, 열려 있던 화면은 자동으로 다시 연결된 뒤 **새로 고침 안내**를 띄운다. 입력 중인 내용을 지우지 않도록 자동으로 새로 고치지는 않는다.
+- **DB 구조가 바뀌는 업데이트**는 자동으로 적용하지 않는다. 화면에 표시되며, DB 를 백업한 뒤 관리자가 직접 누른다.
+- **되돌리기**: 직전 버전 파일을 한 세대 보관한다. DB 구조가 바뀌지 않은 업데이트만 프로그램을 되돌릴 수 있다. 되돌린 버전은 자동으로 다시 적용하지 않는다.
+- 바뀌는 것은 배포 패키지에 든 파일뿐이다. `App_Data`, 서버에서 고친 `appsettings.Production.json`·`web.config`, 폴더에 직접 넣어 둔 파일은 그대로 둔다.
+- 문제가 생기면 서버의 `App_Data/updates/apply.log` 를 본다.
+
+`Update:Source` 에 쓸 수 있는 값:
+
+| 값 | 뜻 |
+|---|---|
+| `github:Leepy0/Gantt_Scheduler` (기본) | GitHub 릴리스. 사내망에서 막힌 `api.github.com` 대신 `github.com` 주소(`releases/latest/download/GanttScheduler.json`)로 확인한다. **레포가 공개여야** 서버가 읽을 수 있다 |
+| `https://사내서버/경로` | 그 주소 아래의 `GanttScheduler.json` 과 zip |
+| `\\서버\공유\폴더` 또는 `D:\updates` | 그 폴더의 `GanttScheduler.json` 과 zip. 릴리스의 두 파일을 그대로 복사해 넣으면 된다 |
+
+### 새 버전 내보내기
+
+1. `src/GanttScheduler/GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋한다. 올리지 않으면 서버가 새 버전으로 보지 않는다.
+2. GitHub › Actions › **배포 패키지** › Run workflow › "정식 배포" 체크. 테스트를 통과하면 `vX.Y.Z` 릴리스(zip, `.sha256`, `GanttScheduler.json`)가 만들어진다.
+
+main 에 push 할 때마다 만들어지는 `dev` 릴리스는 시험용이며 자동 업데이트 대상이 아니다.
 
 ## 설정 (`appsettings.json`)
 
@@ -56,6 +96,10 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 | `Seed:Demo` | `false` (Development 는 `true`) | 과제가 하나도 없을 때 샘플 과제를 넣는다 |
 | `Storage:Path` | `App_Data/uploads` | 첨부 파일 저장 폴더 (파일당 30MB, 문서·이미지·압축 파일만) |
 | `Pdf:Font`, `Pdf:FontBold` | 맑은 고딕 / 나눔고딕 자동 탐색 | PDF 에 쓸 한글 TTF 글꼴 파일 경로 |
+| `Storage:KeyPath` | `App_Data/keys` | 위조 방지 토큰의 암호화 키. 지우지 않으면 서버가 다시 시작돼도 열려 있던 화면의 저장이 그대로 된다 |
+| `Update:Source` | `github:Leepy0/Gantt_Scheduler` | 새 버전을 받아 올 곳 (위 "업데이트" 참고). 비우면 파일로 올리는 방식만 쓴다 |
+| `Update:Path` | `App_Data/updates` | 받아 둔 새 버전, 되돌리기용 이전 버전, 상태·기록 |
+| `Update:CheckHours` | `6` | 새 버전 확인 주기(시간) |
 | `TrustForwardedHeaders` | `false` | 리버스 프록시 뒤에서 실제 접속 IP 사용 |
 
 ## 테스트

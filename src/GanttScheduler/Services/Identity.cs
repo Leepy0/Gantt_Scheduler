@@ -74,7 +74,8 @@ public class UserGateMiddleware
         }
 
         var path = ctx.Request.Path;
-        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/health") || path.StartsWithSegments("/Error");
+        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/health") || path.StartsWithSegments("/version")
+            || path.StartsWithSegments("/Error");
         if (!me.IsKnown && !open)
         {
             var wantsJson = ctx.Request.Headers.Accept.ToString().Contains("application/json");

@@ -662,6 +662,43 @@ input[type=file] { width: 100%; min-height: var(--tap); padding: 8px; border: 1p
 
 .row-main .work-progress { max-width: 320px; margin-top: 4px; }
 
+/* ── 업데이트 ──────────────────────────────────────────────── */
+.top-update { margin-left: auto; }
+.top-update:hover { text-decoration: none; background: var(--accent); color: #fff; }
+.top-update + .me { margin-left: 0; }
+.update-body { display: flex; flex-direction: column; gap: 16px; }
+.update-body .card { display: flex; flex-direction: column; gap: 12px; }
+.update-body .card-head { margin-bottom: 0; }
+.update-body .card.danger-zone { flex-direction: row; }
+.update-now { display: flex; align-items: center; gap: 12px; }
+.update-version { font-size: var(--fs-xl); font-weight: 600; line-height: 1.2; }
+.update-state { display: flex; align-items: flex-start; gap: 12px; }
+.update-state > .ic, .update-state > .spinner { margin-top: 4px; }
+.update-state > .ic { color: var(--accent); }
+.update-title { font-size: var(--fs-md); font-weight: 600; }
+.grow { flex: 1; min-width: 0; }
+.update-state .progress { margin-top: 8px; }
+.notes { margin: 0; padding: 12px; max-height: 240px; overflow: auto; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fix { margin-top: 4px; font-weight: 400; overflow-wrap: anywhere; user-select: all; }
+.form-note > div, .form-error > div { min-width: 0; }
+.form-note:has(> div) { align-items: flex-start; flex-wrap: nowrap; }
+.form-note:has(> div) > .ic { margin-top: 2px; }
+.upload-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.upload-row input[type=file] { flex: 1; min-width: 0; min-height: var(--tap); padding: 8px 0; }
+
+/* 서버 버전·연결 알림 (모든 화면 공통) */
+.notice {
+    position: fixed; z-index: 90; top: calc(var(--top-h) + 8px); left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 32px);
+    padding: 8px 8px 8px 16px; min-height: 48px; border-radius: var(--r-sm);
+    background: #1F2430; color: #fff; font-weight: 600; box-shadow: var(--shadow-2);
+}
+.notice.alarm { background: var(--alarm); padding-right: 16px; }
+.notice > span:not(.spinner) { min-width: 0; }
+.notice .spinner { border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
+.notice .btn { border-color: transparent; }
+body.bare .notice { top: 8px; }
+
 @media (max-width: 767px) {
     .history > li { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 12px 16px; }
     .history-time { grid-column: 2; grid-row: 1; }
@@ -671,4 +708,10 @@ input[type=file] { width: 100%; min-height: var(--tap); padding: 8px; border: 1p
     .weekly-dl dd { margin-bottom: 8px; }
     .files > li { padding: 8px 12px; gap: 8px; }
     .filter-row input[type=date] { flex: 1; min-width: 0; }
+    .top-update span { display: none; }
+    .top-update { width: 32px; height: 32px; justify-content: center; padding: 0; border-radius: 16px; }
+    .top-update .ic { width: 16px; height: 16px; }
+    .update-body .card.danger-zone { flex-direction: column; align-items: stretch; }
+    .upload-row input[type=file] { flex: 1 1 100%; }
+    .upload-row .btn { flex: 1; }
 }

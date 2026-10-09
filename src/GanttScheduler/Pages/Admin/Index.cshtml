@@ -1,5 +1,6 @@
 @page
 @model GanttScheduler.Pages.Admin.IndexModel
+@inject UpdateService Updates
 @{
     ViewData["Title"] = "관리";
     ViewData["Nav"] = "admin";
@@ -11,6 +12,8 @@
     {
         <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>조회 전용</span>
     }
+    <span class="spacer"></span>
+    <a class="btn small" asp-page="/Admin/Update"><svg class="ic"><use href="#i-download" /></svg>업데이트 <span class="num muted">v@(Updates.Build.VersionText)</span></a>
 </div>
 
 <div class="tabs scroll" role="tablist" id="admin-tabs">

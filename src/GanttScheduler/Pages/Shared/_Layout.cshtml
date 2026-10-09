@@ -1,5 +1,8 @@
 @inject CurrentUser Me
+@inject UpdateService Updates
 @{
+    // 관리자에게만 새 버전·적용 대기를 알린다
+    var badge = Me.IsAdmin ? Updates.Badge() : null;
     var nav = ViewData["Nav"] as string ?? "";
     var bare = ViewData["Bare"] as bool? ?? false;
 }
@@ -26,6 +29,12 @@
                 <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")" aria-current="@(nav == "insights" ? "page" : null)">분석</a>
                 <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)">관리</a>
             </nav>
+            @if (badge != null)
+            {
+                <a class="chip accent top-update" asp-page="/Admin/Update" title="서버 업데이트">
+                    <svg class="ic"><use href="#i-download" /></svg><span>@badge.Value.Text</span>
+                </a>
+            }
             <div class="me" title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip">
                 <svg class="ic"><use href="#i-user" /></svg>
                 <span>@Me.Name</span>
@@ -47,7 +56,7 @@
     }
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
     @Html.AntiForgeryToken()
-    <script>window.APP_BASE = '@Url.Content("~/")';</script>
+    <script>window.APP_BASE = '@Url.Content("~/")'; window.APP_BUILD = '@Updates.Build.Id';</script>
     <script src="~/js/app.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>

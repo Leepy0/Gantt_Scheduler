@@ -16,6 +16,10 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     public AppFactory()
     {
         Environment.SetEnvironmentVariable("Storage__Path", _uploads);
+        // 업데이트 상태·암호화 키도 임시 폴더에 두고, 테스트 중에는 외부(GitHub)에 묻지 않는다
+        Environment.SetEnvironmentVariable("Storage__KeyPath", Path.Combine(_uploads, "keys"));
+        Environment.SetEnvironmentVariable("Update__Path", Path.Combine(_uploads, "updates"));
+        Environment.SetEnvironmentVariable("Update__Source", "");
         // Program.cs 가 시작하자마자 읽는 설정이라 환경 변수로 넘긴다
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("Seed__Demo", "true");
@@ -97,6 +101,7 @@ public class HttpTests : IClassFixture<AppFactory>
     [InlineData("/Projects/Detail?id=1")]
     [InlineData("/Projects/Detail?id=2")]
     [InlineData("/Admin")]
+    [InlineData("/Admin/Update")]
     [InlineData("/My")]
     [InlineData("/Insights/LeadTime")]
     [InlineData("/Insights/Weekly")]
@@ -127,6 +132,73 @@ public class HttpTests : IClassFixture<AppFactory>
         var json = await client.GetFromJsonAsync<JsonElement>($"/Admin?handler=Data&kind={kind}");
         Assert.True(json.GetProperty("ok").GetBoolean());
         Assert.True(json.GetProperty("nodes").GetArrayLength() > 0);
+    }
+
+    [Fact]
+    public async Task 서버_버전은_등록하지_않아도_물어볼_수_있다()
+    {
+        // 열려 있는 화면이 주기적으로 묻는 주소라 이름 등록 관문을 거치지 않는다
+        using var fresh = new AppFactory();
+        var client = fresh.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        var res = await client.GetAsync("/version");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Contains("no-store", res.Headers.CacheControl?.ToString());
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Matches(@"^\d+\.\d+\.\d+", json.GetProperty("build").GetString()!);
+        Assert.StartsWith(json.GetProperty("version").GetString()!, json.GetProperty("build").GetString()!);
+        Assert.False(json.GetProperty("updating").GetBoolean());
+    }
+
+    [Fact]
+    public async Task 업데이트_화면은_상태를_보여_주고_실패는_원인과_해결_방법을_알린다()
+    {
+        var client = await RegisteredClientAsync();
+        var html = await client.GetStringAsync("/Admin/Update");
+        var token = TokenOf(html);
+        // 화면은 지금 빌드를 알고 있어야 새 버전으로 바뀐 것을 알아챈다
+        Assert.Contains("window.APP_BUILD = '", html);
+
+        var status = await client.GetFromJsonAsync<JsonElement>("/Admin/Update?handler=Status");
+        var st = status.GetProperty("status");
+        Assert.Equal("local", st.GetProperty("channel").GetString());
+        // 테스트 실행은 로컬 빌드라 스스로 교체하지 않는다
+        Assert.False(st.GetProperty("canApply").GetBoolean());
+        Assert.Equal("idle", st.GetProperty("phase").GetString());
+
+        HttpRequestMessage Post(string handler, object body)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, "/Admin/Update?handler=" + handler) { Content = JsonContent.Create(body) };
+            req.Headers.Add("X-CSRF-TOKEN", token);
+            req.Headers.Add("Accept", "application/json");
+            return req;
+        }
+
+        // 받아 올 위치가 없으면(테스트 설정) 확인은 끝나되 원인과 해결 방법을 상태에 남긴다
+        var check = await client.SendAsync(Post("Check", new { }));
+        Assert.Equal(HttpStatusCode.OK, check.StatusCode);
+        var checked_ = (await check.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status");
+        Assert.False(string.IsNullOrEmpty(checked_.GetProperty("checkError").GetString()));
+        Assert.False(string.IsNullOrEmpty(checked_.GetProperty("checkFix").GetString()));
+
+        // 받아 둔 것이 없는데 적용하면 400 + 해결 방법
+        var apply = await client.SendAsync(Post("Apply", new { }));
+        Assert.Equal(HttpStatusCode.BadRequest, apply.StatusCode);
+        var err = await apply.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(err.GetProperty("ok").GetBoolean());
+        Assert.False(string.IsNullOrEmpty(err.GetProperty("fix").GetString()));
+
+        // 설정 저장: 범위를 벗어나면 400, 맞으면 반영
+        var bad = await client.SendAsync(Post("Settings", new { autoCheck = true, autoApply = true, windowFrom = 2, windowTo = 5, idleMinutes = 1 }));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        var ok = await client.SendAsync(Post("Settings", new { autoCheck = true, autoApply = false, windowFrom = 1, windowTo = 6, idleMinutes = 45 }));
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        var settings = (await ok.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetProperty("settings");
+        Assert.False(settings.GetProperty("autoApply").GetBoolean());
+        Assert.Equal(45, settings.GetProperty("idleMinutes").GetInt32());
+
+        // 토큰 없이는 거절
+        var noToken = await client.PostAsJsonAsync("/Admin/Update?handler=Check", new { });
+        Assert.Equal(HttpStatusCode.BadRequest, noToken.StatusCode);
     }
 
     [Fact]

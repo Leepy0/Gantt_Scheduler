@@ -50,6 +50,12 @@ public static class AppPaths
     public static string Uploads(IConfiguration cfg, string contentRoot) =>
         Resolve(cfg["Storage:Path"] ?? "App_Data/uploads", contentRoot);
 
+    public static string Keys(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Storage:KeyPath"] ?? "App_Data/keys", contentRoot);
+
+    public static string Updates(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Update:Path"] ?? "App_Data/updates", contentRoot);
+
     private static string Resolve(string path, string contentRoot) =>
         Path.IsPathRooted(path) ? path : Path.Combine(contentRoot, path);
 }

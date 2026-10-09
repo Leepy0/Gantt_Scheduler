@@ -1,0 +1,139 @@
+# 배포 패키지: Windows x64, .NET 런타임 포함(zip). 서버의 자동 업데이트(관리 > 업데이트)가 받는 파일이다.
+#   main push  → 테스트 빌드: Release "dev"(prerelease) 덮어쓰기. 자동 업데이트 대상 아님
+#   정식 배포  → Release "vX.Y.Z"(Latest). 서버는 이것만 새 버전으로 본다
+#     1) 태그 vX.Y.Z push, 또는
+#     2) Actions 탭 › 배포 패키지 › Run workflow › '정식 배포' 체크 (csproj <Version> 으로 태그·릴리스 생성)
+name: 배포 패키지
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '정식 배포 (csproj <Version> 으로 vX.Y.Z 태그·릴리스 생성)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # 변경 내용용 이전 태그 조회
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 버전·채널 결정
+        id: ver
+        run: |
+          BASE=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/GanttScheduler/GanttScheduler.csproj | head -1)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+            if [ "$VER" != "$BASE" ]; then
+              echo "::error::태그($GITHUB_REF_NAME)와 csproj <Version>($BASE)이 다릅니다. csproj 버전을 올려 커밋한 뒤 그 커밋에 태그를 붙이세요."
+              exit 1
+            fi
+            CH=release
+          elif [ "${{ inputs.release }}" = "true" ]; then
+            VER="$BASE"
+            TAGGED=$(git rev-parse -q --verify "refs/tags/v$VER^{commit}" || true)
+            if [ -n "$TAGGED" ] && [ "$TAGGED" != "$GITHUB_SHA" ]; then
+              echo "::error::v$VER 태그가 이미 다른 커밋에 있습니다. csproj <Version> 을 올려 커밋한 뒤 다시 실행하세요."
+              exit 1
+            fi
+            CH=release
+          else
+            VER="$BASE"
+            CH=dev
+          fi
+          # 이 빌드에 든 마지막 DB 마이그레이션 — 서버가 "DB 구조가 바뀌는 업데이트"인지 판단하는 값
+          SCHEMA=$(ls src/GanttScheduler/Data/Migrations | grep -E '^[0-9]{14}_.+\.cs$' | grep -v '\.Designer\.cs$' | sort | tail -1 | sed 's/\.cs$//')
+          if [ "$CH" = release ]; then ZIP=GanttScheduler-win-x64.zip; else ZIP=GanttScheduler-dev-win-x64.zip; fi
+          { echo "ver=$VER"; echo "channel=$CH"; echo "schema=$SCHEMA"; echo "zip=$ZIP"; } >> "$GITHUB_OUTPUT"
+          echo "v$VER ($CH), schema=$SCHEMA"
+
+      # 정식 배포는 테스트를 통과한 것만 내보낸다
+      - name: 테스트 (정식)
+        if: steps.ver.outputs.channel == 'release'
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends fonts-nanum > /dev/null && fc-cache -f
+          dotnet test GanttScheduler.slnx -c Release
+
+      - name: 게시 (win-x64, 런타임 포함)
+        run: |
+          dotnet publish src/GanttScheduler/GanttScheduler.csproj \
+            -c Release -r win-x64 --self-contained true \
+            -p:DebugType=None -p:DebugSymbols=false \
+            -p:Version=${{ steps.ver.outputs.ver }} -p:SourceRevisionId=$GITHUB_SHA \
+            -p:BuildChannel=${{ steps.ver.outputs.channel }} -p:SchemaId=${{ steps.ver.outputs.schema }} \
+            -o publish
+          echo "--- web.config"; cat publish/web.config
+
+      # 이전 정식 태그 이후의 커밋 메시지가 변경 내용이 된다 (업데이트 화면에 그대로 보인다)
+      - name: 변경 내용
+        env:
+          VER: ${{ steps.ver.outputs.ver }}
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}^" 2>/dev/null || true)
+          RANGE="${PREV:+$PREV..}$GITHUB_SHA"
+          git log --no-merges --pretty='tformat:%s%n%n%b' $RANGE | sed -E '/^(Co-Authored-By|Claude-Session):/d' | cat -s > changes.md
+          {
+            echo "Windows x64 · .NET 런타임 포함"
+            echo
+            echo "- 이미 설치된 서버: 관리 > 업데이트에서 받거나, 아래 zip 을 그 화면에 올리면 됩니다."
+            echo "- 처음 설치: zip 을 풀어 IIS 사이트 폴더에 둡니다 (README 의 운영 배포 참고)."
+            echo
+            cat changes.md
+            if [ -n "$PREV" ]; then
+              echo
+              echo "전체 변경: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...v$VER"
+            fi
+          } > notes.md
+
+      - name: 패키지 (zip · SHA-256 · 매니페스트)
+        run: |
+          python3 tools/release/pack.py --dir publish --out dist \
+            --version "${{ steps.ver.outputs.ver }}" --schema "${{ steps.ver.outputs.schema }}" --rid win-x64 \
+            --name "${{ steps.ver.outputs.zip }}" --notes changes.md \
+            --page "https://github.com/$GITHUB_REPOSITORY/releases/tag/v${{ steps.ver.outputs.ver }}"
+          ls -la dist
+
+      - name: Release (정식 vX.Y.Z)
+        if: steps.ver.outputs.channel == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.ver.outputs.ver }}
+        run: |
+          gh release delete "v$VER" -y 2>/dev/null || true   # 같은 태그로 다시 실행한 경우 (태그는 유지)
+          # 태그 push 면 그 태그로, 수동 실행이면 이 커밋에 태그를 만든다
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAGOPT=(--verify-tag); else TAGOPT=(--target "$GITHUB_SHA"); fi
+          gh release create "v$VER" dist/GanttScheduler-win-x64.zip dist/GanttScheduler-win-x64.zip.sha256 dist/GanttScheduler.json \
+            "${TAGOPT[@]}" --latest --title "v$VER" --notes-file notes.md
+
+      # 테스트 빌드는 항상 같은 주소(dev)로 덮어쓴다
+      - name: Release (테스트 dev)
+        if: steps.ver.outputs.channel == 'dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev --cleanup-tag -y 2>/dev/null || true
+          gh release create dev dist/GanttScheduler-dev-win-x64.zip dist/GanttScheduler-dev-win-x64.zip.sha256 \
+            --target "$GITHUB_SHA" --prerelease --title "테스트 빌드 (main)" \
+            --notes "commit: ${GITHUB_SHA::7} / run #${GITHUB_RUN_NUMBER} · 자동 업데이트 대상이 아닙니다. 정식 배포는 Latest 릴리스."

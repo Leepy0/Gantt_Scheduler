@@ -477,6 +477,72 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('한글날'));
     });
 
+    await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('a[href$="/Admin/Update"]');
+        await page.waitForSelector('.update-version');
+        assert(/^v\d+\.\d+\.\d+$/.test((await page.locator('.update-version').innerText()).trim()), '버전 표시가 없음');
+        // 화면 점검은 로컬 빌드로 돌므로 스스로 교체하지 않는다는 안내가 보여야 한다
+        await page.waitForSelector('.update-body .form-note');
+        assert((await page.locator('.update-body').innerText()).includes('로컬 빌드'), '로컬 빌드 안내가 없음');
+        assert((await page.locator('[data-act=apply]').count()) === 0, '받아 둔 것이 없는데 적용 단추가 있음');
+        await page.click('[data-act=check]');
+        await page.waitForFunction(() => !document.querySelector('[data-act=check]').disabled
+            && !document.querySelector('.update-body dl').innerText.includes('아직 확인하지 않음'), null, { timeout: 45000 });
+        await page.selectOption('#settings-form select[name=windowFrom]', '22');
+        await page.selectOption('#settings-form select[name=windowTo]', '4');
+        await page.fill('#settings-form input[name=idleMinutes]', '45');
+        await page.click('#settings-form button[type=submit]');
+        await page.waitForSelector('.toast');
+        await page.reload();
+        await page.waitForSelector('#settings-form');
+        assert((await page.inputValue('#settings-form input[name=idleMinutes]')) === '45', '설정이 저장되지 않음');
+        assert((await page.inputValue('#settings-form select[name=windowFrom]')) === '22', '시간대가 저장되지 않음');
+        // 잘못된 파일을 올리면 원인과 해결 방법을 보여 준다
+        await page.setInputFiles('#upload-form input[type=file]', { name: 'wrong.zip', mimeType: 'application/zip', buffer: Buffer.from('zip 이 아님') });
+        await page.click('#upload-form button[type=submit]');
+        await page.waitForSelector('.update-body .form-error .fix');
+        await shot(page, 'd24-update');
+    });
+
+    await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
+        await page.goto(BASE + '/Projects');
+        const build = await page.evaluate(() => window.APP_BUILD);
+        assert(build, '화면에 빌드 정보가 없음');
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForTimeout(300);
+        assert((await page.locator('.notice').count()) === 0, '서버가 그대로인데 알림이 뜸');
+        // 서버가 새 버전으로 바뀐 상황
+        await page.route('**/version', r => r.fulfill({ json: { ok: true, build: '99.0.0+fffffff', version: '99.0.0', updating: false } }));
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForSelector('.notice');
+        assert((await page.locator('.notice').innerText()).includes('v99.0.0'), '새 버전 번호가 알림에 없음');
+        await shot(page, 'd25-new-version', false);
+        // 업데이트 중 → 끊김은 예정된 것이라 경고로 바꾸지 않는다
+        await page.unroute('**/version');
+        await page.route('**/version', r => r.fulfill({ json: { ok: true, build, version: '0.0.0', updating: true } }));
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForFunction(() => document.querySelector('.notice') && document.querySelector('.notice').innerText.includes('업데이트하는 중'));
+        await page.unroute('**/version');
+        await page.route('**/version', r => r.abort());
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForTimeout(300);
+        assert((await page.locator('.notice.alarm').count()) === 0, '업데이트 중의 끊김을 경고로 표시함');
+        // 서버가 돌아오면 알림이 사라진다
+        await page.unroute('**/version');
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForFunction(() => !document.querySelector('.notice'));
+        // 예고 없이 끊긴 경우: 두 번 연속 실패하면 연결 안내
+        await page.route('**/version', r => r.abort());
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForTimeout(300);
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForSelector('.notice.alarm');
+        await page.unroute('**/version');
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForFunction(() => !document.querySelector('.notice'));
+    });
+
     await step('과제 삭제', async () => {
         await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
         await page.click('.tabs [data-tab=info]');
@@ -578,6 +644,10 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.goto(BASE + '/Admin');
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
+        await m.goto(BASE + '/Admin/Update');
+        await m.waitForSelector('.update-version');
+        await noOverflow('업데이트');
+        await shot(m, 'm11-update');
         await shot(m, 'm11-admin');
     });
 

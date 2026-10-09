@@ -6,7 +6,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>GanttScheduler</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- 정식 배포할 때 올린다. 서버의 자동 업데이트가 이 값으로 새 버전인지 판단한다 -->
+    <Version>0.3.0</Version>
+    <!-- release = 정식 배포, dev = main 테스트 빌드, local = 로컬 빌드(자동 적용 안 함). CI 가 지정한다 -->
+    <BuildChannel Condition="'$(BuildChannel)' == ''">local</BuildChannel>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildChannel" Value="$(BuildChannel)" />
+    <!-- 이 빌드에 들어 있는 마지막 DB 마이그레이션. 업데이트가 DB 구조를 바꾸는지 판단하는 데 쓴다 (CI 가 지정) -->
+    <AssemblyMetadata Include="SchemaId" Value="$(SchemaId)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.*" />
