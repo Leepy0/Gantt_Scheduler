@@ -125,7 +125,8 @@ TOKEN=$(token /Admin/Update)
 
 say "확인 → 받기"
 r=$(post Check);   has "$r" '"latest":{"version":"0.0.2"' || die "새 버전을 찾지 못함: $r"
-if [ "${MODE:-}" = service ]; then has "$r" "Windows 서비스 ($SVC)" || fail "실행 방식이 서비스로 표시되지 않음"; fi
+# 응답 JSON 은 한글을 \uXXXX 로 내보내므로 영문 부분으로 확인한다: "host":"Windows 서비스 (이름)"
+if [ "${MODE:-}" = service ]; then { has "$r" '"host":"Windows ' && has "$r" "($SVC)\""; } || fail "실행 방식이 서비스로 표시되지 않음"; fi
 r=$(post Download); has "$r" '"ok":true' || die "받기 시작 실패: $r"
 for _ in $(seq 1 60); do r=$(status); has "$r" '"staged":{"version":"0.0.2"' && break; sleep 1; done
 has "$r" '"staged":{"version":"0.0.2"' || die "받아 두지 못함: $r"
