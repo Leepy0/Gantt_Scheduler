@@ -115,7 +115,7 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 2. 이 레포 › Settings › Secrets and variables › Actions › New repository secret
    - Name: `RELEASE_REPO_TOKEN`, Secret: 복사한 토큰
 
-토큰이 없거나 만료되면 워크플로의 "공개 배포 레포에 올리기" 단계가 실패하고 이유를 알려 준다(서버에는 새 버전이 보이지 않는다). 토큰을 다시 등록한 뒤 워크플로를 다시 실행하면 된다. 두 레포에 쓸 수 있는 `gh` 로그인이 있으면 `tools/release/mirror.sh <버전>` 으로 직접 옮길 수도 있다.
+토큰이 없거나 만료되면 워크플로의 "공개 배포 레포에 올리기" 단계가 실패하고 이유를 알려 준다(서버에는 새 버전이 보이지 않는다). 토큰을 다시 등록한 뒤 Actions 에서 실패한 실행을 열어 **Re-run failed jobs** 를 누르면 같은 버전을 다시 만들어 올린다.
 
 공개되는 것은 배포 파일(실행 파일)과 릴리스의 변경 내용(커밋 메시지)이다. .NET 실행 파일은 도구로 소스에 가깝게 되돌려 볼 수 있으므로, 비밀 값(연결 문자열·토큰)은 코드나 `appsettings.json` 에 넣지 않고 서버의 `appsettings.Production.json` 에만 둔다.
 

@@ -78,7 +78,8 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 
 - 서버가 보는 곳은 공개 레포 `Leepy0/Gantt_Scheduler_Release` 의 릴리스다(이 레포는 비공개라 서버가 읽지 못한다). `appsettings.json` 의 `Update:Source` 와 `release.yml` 의 `RELEASE_REPO` 가 같은 레포를 가리켜야 한다.
 - 정식 배포: `GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋 → `gh workflow run release.yml -R Leepy0/Gantt_Scheduler --ref main -f release=true`. 이 환경에서 태그 push 는 막혀 있으므로(403) 워크플로가 태그를 만들게 한다. 버전을 올리지 않으면 서버가 새 버전으로 보지 않는다.
-- 워크플로는 이 레포에 릴리스를 만든 뒤 시크릿 `RELEASE_REPO_TOKEN` 으로 공개 레포에도 만든다. 그 단계가 실패했으면(시크릿 없음·만료) 이 세션에서 직접 옮긴다: 공개 레포를 세션에 붙이고(`add_repo`, push) `tools/release/mirror.sh <버전>`. 시크릿은 이 환경에서 읽거나 쓸 수 없다(Actions secrets API 차단) — 사용자가 GitHub 화면에서 등록한다(README "새 버전 내보내기").
+- 워크플로는 이 레포에 릴리스를 만든 뒤 시크릿 `RELEASE_REPO_TOKEN` 으로 공개 레포에도 만든다. 공개 레포의 릴리스는 이 방법으로만 만들 수 있다 — 이 환경에서는 릴리스를 직접 만들 수 없고(API 403: "not permitted for this session type") 시크릿도 읽거나 쓸 수 없다(Actions secrets API 차단). 돌아가는 길을 만들지 않는다.
+- "공개 배포 레포에 올리기" 단계가 실패했으면(시크릿 없음·만료) 주석(annotation)에 이유가 있다. 사용자가 GitHub 화면에서 토큰을 등록한 뒤(README "새 버전 내보내기") 실패한 실행을 다시 돌린다: `gh run rerun <runId> --failed -R Leepy0/Gantt_Scheduler` 또는 Actions 화면의 Re-run failed jobs. main 이 그 뒤로 움직였어도 다시 실행은 원래 커밋으로 돈다(새로 dispatch 하면 "태그가 다른 커밋에 있다"로 막힌다).
 - main push 는 이 레포의 `dev` prerelease 만 덮어쓴다(자동 업데이트 대상 아님). 시험용 빌드를 Latest 로 올리지 않는다.
 - 확인: 서버와 같은 방법으로 — `curl -sL https://github.com/Leepy0/Gantt_Scheduler_Release/releases/latest/download/GanttScheduler.json` 의 버전·sha256·size 가 새 릴리스와 같아야 한다.
 - 공개 레포에는 배포 파일과 변경 내용(커밋 메시지)이 그대로 나간다. 비밀 값이나 사내 고유 정보를 코드·샘플 데이터·커밋 메시지에 넣지 않는다.
