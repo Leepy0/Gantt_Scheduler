@@ -151,9 +151,13 @@ jobs:
             exit 1
           fi
           gh release delete "v$VER" -R "$RELEASE_REPO" --cleanup-tag -y 2>/dev/null || true
-          gh release create "v$VER" -R "$RELEASE_REPO" \
+          # 실패 이유를 주석으로 남긴다 (토큰에 쓰기 권한이 없으면 여기서 403 이 난다)
+          if ! gh release create "v$VER" -R "$RELEASE_REPO" \
             dist/GanttScheduler-win-x64.zip dist/GanttScheduler-win-x64.zip.sha256 dist/GanttScheduler.json \
-            --latest --title "v$VER" --notes-file notes-public.md
+            --latest --title "v$VER" --notes-file notes-public.md 2> create-error.txt; then
+            echo "::error::공개 배포 레포($RELEASE_REPO)에 릴리스를 만들지 못했습니다. RELEASE_REPO_TOKEN 에 그 레포의 'Contents: Read and write' 권한이 있는지 확인하세요. 오류: $(head -c 400 create-error.txt | tr '\n' ' ')"
+            exit 1
+          fi
           # 서버가 읽는 주소로 실제로 받아지는지 확인 (로그인 없이)
           sleep 5
           GOT=$(curl -sfL "https://github.com/$RELEASE_REPO/releases/latest/download/GanttScheduler.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])" || true)
