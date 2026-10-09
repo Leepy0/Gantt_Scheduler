@@ -150,10 +150,21 @@ public static class ServiceInstaller
         var bin = BinPath(exe, name, port);
         Step(exists ? "서비스 설정 변경" : "서비스 등록", () =>
         {
-            if (exists) Must(Sc("config", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName));
-            else Must(Sc("create", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName));
-            // 전용 계정은 서비스가 만들어진 뒤에야 지정할 수 있다
-            Must(system ? Sc("config", name, "obj=", "LocalSystem") : Sc("config", name, "obj=", account, "password=", ""));
+            if (exists)
+            {
+                Must(Sc("config", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName));
+                SetAccount(name, account);
+            }
+            else if (system)
+            {
+                Must(Sc("create", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName));
+            }
+            else if (Sc("create", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName, "obj=", account).Code != 0)
+            {
+                // 만들면서 계정을 지정하지 못하는 Windows 가 있으면, 만든 뒤에 계정을 바꾼다
+                if (Sc("query", name).Code != 0) Must(Sc("create", name, "binPath=", bin, "start=", "delayed-auto", "DisplayName=", DisplayName));
+                SetAccount(name, account);
+            }
             Sc("description", name, "과제 진척 대시보드·간트 일정 관리 웹 서버");
             // 비정상 종료하면 다시 띄운다 (5초, 5초, 그 뒤로는 1분 간격)
             Must(Sc("failure", name, "reset=", "86400", "actions=", "restart/5000/restart/5000/restart/60000"));
@@ -224,6 +235,16 @@ public static class ServiceInstaller
         Console.WriteLine();
         Console.WriteLine("완료. 프로그램 폴더와 데이터(App_Data)는 그대로 두었습니다.");
         return 0;
+    }
+
+    // 서비스 실행 계정 지정. 전용 계정은 암호가 없는데, sc 가 암호 인자를 받는 방식이 Windows 판마다 달라 두 가지로 해 본다
+    private static void SetAccount(string name, string account)
+    {
+        var first = Sc("config", name, "obj=", account);
+        if (first.Code == 0) return;
+        if (account == "LocalSystem") Must(first);
+        var second = Sc("config", name, "obj=", account, "password=", "");
+        if (second.Code != 0) Must(first);
     }
 
     private static void Stop(string name)
