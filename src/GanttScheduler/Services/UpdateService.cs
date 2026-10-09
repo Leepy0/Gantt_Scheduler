@@ -173,7 +173,7 @@ public class UpdateService
                     s.CheckedAt = DateTime.UtcNow;
                     s.CheckError = latest == null ? "배포된 버전 정보를 찾지 못했습니다." : null;
                     s.CheckFix = latest == null
-                        ? "GitHub 레포가 비공개이면 서버가 릴리스를 읽을 수 없습니다. 배포 파일(zip)을 직접 올려 적용하거나, 설정 Update:Source 에 서버가 읽을 수 있는 주소·폴더를 지정하세요."
+                        ? "받아 오는 곳에 정식 릴리스가 없거나, 로그인해야 볼 수 있는 곳(비공개 레포)입니다. 배포 파일(zip)을 직접 올려 적용하거나, 설정 Update:Source 를 확인하세요."
                         : null;
                 });
             }

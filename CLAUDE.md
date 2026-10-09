@@ -76,9 +76,12 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 
 - 요청을 받기 전에 해야 하는 일은 `Program.cs` 본문이 아니라 `StartupWork`(호스트 시작 단계)에 넣는다. 본문에서 오래 걸리면 서비스 시작이 30초 제한에 걸린다.
 
+- 서버가 보는 곳은 공개 레포 `Leepy0/Gantt_Scheduler_Release` 의 릴리스다(이 레포는 비공개라 서버가 읽지 못한다). `appsettings.json` 의 `Update:Source` 와 `release.yml` 의 `RELEASE_REPO` 가 같은 레포를 가리켜야 한다.
 - 정식 배포: `GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋 → `gh workflow run release.yml -R Leepy0/Gantt_Scheduler --ref main -f release=true`. 이 환경에서 태그 push 는 막혀 있으므로(403) 워크플로가 태그를 만들게 한다. 버전을 올리지 않으면 서버가 새 버전으로 보지 않는다.
-- main push 는 `dev` prerelease 만 덮어쓴다(자동 업데이트 대상 아님). 시험용 빌드를 Latest 로 올리지 않는다.
-- 확인: `gh release view v<버전> -R Leepy0/Gantt_Scheduler --json assets` 에 zip · `.sha256` · `GanttScheduler.json` 세 개가 있어야 한다.
+- 워크플로는 이 레포에 릴리스를 만든 뒤 시크릿 `RELEASE_REPO_TOKEN` 으로 공개 레포에도 만든다. 그 단계가 실패했으면(시크릿 없음·만료) 이 세션에서 직접 옮긴다: 공개 레포를 세션에 붙이고(`add_repo`, push) `tools/release/mirror.sh <버전>`. 시크릿은 이 환경에서 읽거나 쓸 수 없다(Actions secrets API 차단) — 사용자가 GitHub 화면에서 등록한다(README "새 버전 내보내기").
+- main push 는 이 레포의 `dev` prerelease 만 덮어쓴다(자동 업데이트 대상 아님). 시험용 빌드를 Latest 로 올리지 않는다.
+- 확인: 서버와 같은 방법으로 — `curl -sL https://github.com/Leepy0/Gantt_Scheduler_Release/releases/latest/download/GanttScheduler.json` 의 버전·sha256·size 가 새 릴리스와 같아야 한다.
+- 공개 레포에는 배포 파일과 변경 내용(커밋 메시지)이 그대로 나간다. 비밀 값이나 사내 고유 정보를 코드·샘플 데이터·커밋 메시지에 넣지 않는다.
 - 매니페스트·패키지 형식은 `tools/release/pack.py` 한 곳에서 만든다. 항목을 바꾸면 `Services/Updates.cs` 의 `ParseManifest` 와 `UpdateService.Stage` 를 같이 본다.
 - `state.json`(App_Data/updates)은 옛 버전이 쓴 것을 새 버전이 읽는다. 항목은 추가만 하고 뜻을 바꾸지 않는다. 도우미 인자(`--apply-update …`)도 마찬가지 — 되돌리기는 이전 버전의 도우미가 실행한다.
 - 교체 로직을 고치면 자체 시험을 돌린다.

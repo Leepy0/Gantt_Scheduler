@@ -35,7 +35,7 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 처음 한 번만 직접 설치하고, 그 뒤로는 서버가 스스로 업데이트한다. IIS 나 .NET 을 따로 설치하지 않는다.
 
-1. [Releases](../../releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 폴더(예: `D:\GanttScheduler`)에 푼다.
+1. [배포 레포의 Releases](https://github.com/Leepy0/Gantt_Scheduler_Release/releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 폴더(예: `D:\GanttScheduler`)에 푼다.
 2. `appsettings.Production.json` 에 SQL Server 연결 문자열을 넣는다. DB 는 미리 만들어 둔다(테이블은 앱이 만든다).
    ```json
    {
@@ -95,16 +95,31 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 | 값 | 뜻 |
 |---|---|
-| `github:Leepy0/Gantt_Scheduler` (기본) | GitHub 릴리스. 사내망에서 막힌 `api.github.com` 대신 `github.com` 주소(`releases/latest/download/GanttScheduler.json`)로 확인한다. **레포가 공개여야** 서버가 읽을 수 있다 |
+| `github:Leepy0/Gantt_Scheduler_Release` (기본) | 공개 배포 레포의 GitHub 릴리스. 사내망에서 막힌 `api.github.com` 대신 `github.com` 주소(`releases/latest/download/GanttScheduler.json`)로 확인한다 |
 | `https://사내서버/경로` | 그 주소 아래의 `GanttScheduler.json` 과 zip |
 | `\\서버\공유\폴더` 또는 `D:\updates` | 그 폴더의 `GanttScheduler.json` 과 zip. 릴리스의 두 파일을 그대로 복사해 넣으면 된다 |
 
 ### 새 버전 내보내기
 
-1. `src/GanttScheduler/GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋한다. 올리지 않으면 서버가 새 버전으로 보지 않는다.
-2. GitHub › Actions › **배포 패키지** › Run workflow › "정식 배포" 체크. 테스트를 통과하면 `vX.Y.Z` 릴리스(zip, `.sha256`, `GanttScheduler.json`)가 만들어진다.
+소스는 이 레포(비공개)에, 배포 파일은 공개 레포 [Gantt_Scheduler_Release](https://github.com/Leepy0/Gantt_Scheduler_Release) 에 둔다. 서버는 로그인 없이 읽을 수 있는 공개 레포의 릴리스만 본다.
 
-main 에 push 할 때마다 만들어지는 `dev` 릴리스는 시험용이며 자동 업데이트 대상이 아니다.
+1. `src/GanttScheduler/GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋한다. 올리지 않으면 서버가 새 버전으로 보지 않는다.
+2. GitHub › Actions › **배포 패키지** › Run workflow › "정식 배포" 체크. 테스트를 통과하면 `vX.Y.Z` 릴리스(zip, `.sha256`, `GanttScheduler.json`)를 두 레포에 만들고, 공개 주소에서 실제로 받아지는지 확인한다.
+
+워크플로가 공개 레포에 쓰려면 토큰이 필요하다. **처음 한 번** 등록한다.
+
+1. GitHub 오른쪽 위 프로필 › Settings › Developer settings › Personal access tokens › **Fine-grained tokens** › Generate new token
+   - Repository access: *Only select repositories* → `Gantt_Scheduler_Release`
+   - Permissions › Repository permissions › **Contents: Read and write**
+   - 만들어진 토큰(`github_pat_…`)을 복사한다.
+2. 이 레포 › Settings › Secrets and variables › Actions › New repository secret
+   - Name: `RELEASE_REPO_TOKEN`, Secret: 복사한 토큰
+
+토큰이 없거나 만료되면 워크플로의 "공개 배포 레포에 올리기" 단계가 실패하고 이유를 알려 준다(서버에는 새 버전이 보이지 않는다). 토큰을 다시 등록한 뒤 워크플로를 다시 실행하면 된다. 두 레포에 쓸 수 있는 `gh` 로그인이 있으면 `tools/release/mirror.sh <버전>` 으로 직접 옮길 수도 있다.
+
+공개되는 것은 배포 파일(실행 파일)과 릴리스의 변경 내용(커밋 메시지)이다. .NET 실행 파일은 도구로 소스에 가깝게 되돌려 볼 수 있으므로, 비밀 값(연결 문자열·토큰)은 코드나 `appsettings.json` 에 넣지 않고 서버의 `appsettings.Production.json` 에만 둔다.
+
+main 에 push 할 때마다 만들어지는 `dev` 릴리스는 이 레포에만 올라가는 시험용이며 자동 업데이트 대상이 아니다.
 
 ## 설정 (`appsettings.json`)
 
@@ -117,7 +132,7 @@ main 에 push 할 때마다 만들어지는 `dev` 릴리스는 시험용이며 �
 | `Storage:Path` | `App_Data/uploads` | 첨부 파일 저장 폴더 (파일당 30MB, 문서·이미지·압축 파일만) |
 | `Pdf:Font`, `Pdf:FontBold` | 맑은 고딕 / 나눔고딕 자동 탐색 | PDF 에 쓸 한글 TTF 글꼴 파일 경로 |
 | `Storage:KeyPath` | `App_Data/keys` | 위조 방지 토큰의 암호화 키. 지우지 않으면 서버가 다시 시작돼도 열려 있던 화면의 저장이 그대로 된다 |
-| `Update:Source` | `github:Leepy0/Gantt_Scheduler` | 새 버전을 받아 올 곳 (위 "업데이트" 참고). 비우면 파일로 올리는 방식만 쓴다 |
+| `Update:Source` | `github:Leepy0/Gantt_Scheduler_Release` | 새 버전을 받아 올 곳 (위 "업데이트" 참고). 비우면 파일로 올리는 방식만 쓴다 |
 | `Update:Path` | `App_Data/updates` | 받아 둔 새 버전, 되돌리기용 이전 버전, 상태·기록 |
 | `Update:CheckHours` | `6` | 새 버전 확인 주기(시간) |
 | `TrustForwardedHeaders` | `false` | 리버스 프록시 뒤에서 실제 접속 IP 사용 |

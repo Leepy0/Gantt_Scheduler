@@ -103,7 +103,7 @@
     function uploadCard() {
         if (!admin) return '';
         var h = '<section class="card"><div class="card-head"><h2>파일로 업데이트</h2></div>' +
-            '<p class="muted">서버가 인터넷에 나갈 수 없거나 레포가 비공개일 때 씁니다. 릴리스의 <b>GanttScheduler-win-x64.zip</b> 을 받아 그대로 올리면, 서버가 내용을 확인한 뒤 적용 준비 상태로 둡니다.' +
+            '<p class="muted">서버가 인터넷에 나갈 수 없을 때 씁니다. 릴리스의 <b>GanttScheduler-win-x64.zip</b> 을 받아 그대로 올리면, 서버가 내용을 확인한 뒤 적용 준비 상태로 둡니다.' +
             (st.browserPage ? ' <a href="' + esc(st.browserPage) + '" target="_blank" rel="noopener">릴리스 페이지 열기</a>' : '') + '</p>' +
             '<form class="upload-row" id="upload-form"><input type="file" name="file" accept=".zip" aria-label="배포 파일(zip)" required />' +
             '<button type="submit" class="btn"' + (st.phase !== 'idle' || uploading != null ? ' disabled' : '') + '>' + icon('upload') + '올리기</button></form>';

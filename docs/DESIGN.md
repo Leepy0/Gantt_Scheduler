@@ -132,6 +132,7 @@ Excel 은 ClosedXML, PDF 는 PDFsharp-MigraDoc(MIT) 로 만든다. PDF 는 한�
 | 서비스 계정 | 전용 계정 `NT SERVICE\<이름>`. 폴더 수정 권한과 자기 서비스 시작 권한만 준다 | 사내망에 열린 웹 서버를 SYSTEM 으로 돌리지 않는다. 두 권한은 파일 교체와 교체 뒤 재시작에 필요하다 |
 | 설치 | `GanttScheduler.exe install` (`install-service.cmd`) — 실행 파일이 직접 `sc`·`icacls`·`netsh` 를 부른다 | PowerShell 스크립트는 사내 실행 정책에 막힐 수 있다 |
 | 버전 확인 | `github.com/<레포>/releases/latest/download/GanttScheduler.json` → `releases/latest` 리다이렉트 → `api.github.com` | 사내망은 api.github.com 이 막혀 있다. 주소·폴더로도 바꿀 수 있다(`Update:Source`) |
+| 배포 위치 | 소스는 비공개 레포, 배포 파일은 공개 레포 `Gantt_Scheduler_Release` 의 릴리스 | 비공개 레포의 릴리스는 서버가 로그인 없이 읽을 수 없다. 서버에 토큰을 두지 않으려고 배포 파일만 공개한다 |
 | 검증 | 매니페스트의 SHA-256 과 대조. `.partial` 로 받고 맞을 때만 풀어 둔다 | 손상·중단 파일 방지 |
 | 교체 시점 | 관리자가 누를 때, 또는 설정한 시간대에 한동안 요청이 없을 때 | 서버는 "닫을 때"가 없다. 해외 법인의 근무 시간일 수 있어 시간대만으로 정하지 않는다 |
 | 교체 방법 | 받아 둔 새 버전 폴더의 실행 파일을 `--apply-update` 로 따로 띄워 맡긴다 | 실행 중인 서버는 자기 파일을 바꿀 수 없다. 스크립트(PowerShell 등)는 사내 실행 정책에 막힐 수 있다 |

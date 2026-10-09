@@ -1,6 +1,8 @@
 # 배포 패키지: Windows x64, .NET 런타임 포함(zip). 서버의 자동 업데이트(관리 > 업데이트)가 받는 파일이다.
-#   main push  → 테스트 빌드: Release "dev"(prerelease) 덮어쓰기. 자동 업데이트 대상 아님
-#   정식 배포  → Release "vX.Y.Z"(Latest). 서버는 이것만 새 버전으로 본다
+#   main push  → 테스트 빌드: 이 레포의 Release "dev"(prerelease) 덮어쓰기. 자동 업데이트 대상 아님
+#   정식 배포  → Release "vX.Y.Z"(Latest) 를 이 레포와 공개 배포 레포(RELEASE_REPO) 두 곳에 만든다.
+#                이 레포는 비공개라 서버가 읽을 수 없다. 서버는 공개 배포 레포의 릴리스만 본다.
+#                공개 레포에 쓰려면 시크릿 RELEASE_REPO_TOKEN 이 필요하다 (README "새 버전 내보내기" 참고)
 #     1) 태그 vX.Y.Z push, 또는
 #     2) Actions 탭 › 배포 패키지 › Run workflow › '정식 배포' 체크 (csproj <Version> 으로 태그·릴리스 생성)
 name: 배포 패키지
@@ -26,6 +28,8 @@ permissions:
 env:
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  # 서버가 새 버전을 확인하는 공개 레포 (appsettings.json 의 Update:Source 와 같아야 한다)
+  RELEASE_REPO: Leepy0/Gantt_Scheduler_Release
 
 jobs:
   package:
@@ -94,13 +98,17 @@ jobs:
           PREV=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}^" 2>/dev/null || true)
           RANGE="${PREV:+$PREV..}$GITHUB_SHA"
           git log --no-merges --pretty='tformat:%s%n%n%b' $RANGE | sed -E '/^(Co-Authored-By|Claude-Session):/d' | cat -s > changes.md
+          # 공개 레포용 (소스 레포 주소는 넣지 않는다)
           {
             echo "Windows x64 · .NET 런타임 포함"
             echo
-            echo "- 이미 설치된 서버: 관리 > 업데이트에서 받거나, 아래 zip 을 그 화면에 올리면 됩니다."
-            echo "- 처음 설치: zip 을 풀어 IIS 사이트 폴더에 둡니다 (README 의 운영 배포 참고)."
+            echo "- 이미 설치된 서버: 스스로 업데이트합니다. 바로 바꾸려면 관리 > 업데이트에서 적용하거나, 아래 zip 을 그 화면에 올립니다."
+            echo "- 처음 설치: zip 을 풀고 install-service.cmd 를 실행합니다 (README 참고)."
             echo
             cat changes.md
+          } > notes-public.md
+          {
+            cat notes-public.md
             if [ -n "$PREV" ]; then
               echo
               echo "전체 변경: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...v$VER"
@@ -112,7 +120,7 @@ jobs:
           python3 tools/release/pack.py --dir publish --out dist \
             --version "${{ steps.ver.outputs.ver }}" --schema "${{ steps.ver.outputs.schema }}" --rid win-x64 \
             --name "${{ steps.ver.outputs.zip }}" --notes changes.md \
-            --page "https://github.com/$GITHUB_REPOSITORY/releases/tag/v${{ steps.ver.outputs.ver }}"
+            --page "https://github.com/$RELEASE_REPO/releases/tag/v${{ steps.ver.outputs.ver }}"
           ls -la dist
 
       - name: Release (정식 vX.Y.Z)
@@ -126,6 +134,34 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAGOPT=(--verify-tag); else TAGOPT=(--target "$GITHUB_SHA"); fi
           gh release create "v$VER" dist/GanttScheduler-win-x64.zip dist/GanttScheduler-win-x64.zip.sha256 dist/GanttScheduler.json \
             "${TAGOPT[@]}" --latest --title "v$VER" --notes-file notes.md
+
+      # 서버가 실제로 보는 곳. 이 단계가 실패하면 서버에는 새 버전이 보이지 않는다
+      - name: 공개 배포 레포에 올리기 (정식)
+        if: steps.ver.outputs.channel == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          VER: ${{ steps.ver.outputs.ver }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::시크릿 RELEASE_REPO_TOKEN 이 없어 공개 배포 레포($RELEASE_REPO)에 올리지 못했습니다. 서버에는 v$VER 이 아직 보이지 않습니다. README 의 '새 버전 내보내기'대로 토큰을 등록한 뒤 이 워크플로를 다시 실행하세요."
+            exit 1
+          fi
+          if ! gh api "repos/$RELEASE_REPO" --silent 2> token-error.txt; then
+            echo "::error::RELEASE_REPO_TOKEN 으로 $RELEASE_REPO 에 접근하지 못했습니다(만료됐거나 권한 부족). 토큰을 다시 만들어 시크릿을 바꾼 뒤 다시 실행하세요. $(head -c 300 token-error.txt)"
+            exit 1
+          fi
+          gh release delete "v$VER" -R "$RELEASE_REPO" --cleanup-tag -y 2>/dev/null || true
+          gh release create "v$VER" -R "$RELEASE_REPO" \
+            dist/GanttScheduler-win-x64.zip dist/GanttScheduler-win-x64.zip.sha256 dist/GanttScheduler.json \
+            --latest --title "v$VER" --notes-file notes-public.md
+          # 서버가 읽는 주소로 실제로 받아지는지 확인 (로그인 없이)
+          sleep 5
+          GOT=$(curl -sfL "https://github.com/$RELEASE_REPO/releases/latest/download/GanttScheduler.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])" || true)
+          if [ "$GOT" != "$VER" ]; then
+            echo "::error::공개 주소의 매니페스트 버전이 '$GOT' 입니다 (기대: $VER)."
+            exit 1
+          fi
+          echo "공개 배포 확인: v$GOT"
 
       # 테스트 빌드는 항상 같은 주소(dev)로 덮어쓴다
       - name: Release (테스트 dev)
