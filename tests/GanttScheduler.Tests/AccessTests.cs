@@ -297,6 +297,19 @@ public class AccessTests : IClassFixture<TestDb>
         using (var s = _db.NewScope())
             await Assert.ThrowsAsync<ConflictException>(() => s.Projects.UpdateAsync(id,
                 new ProjectInput(view.Title, view.CategoryId, view.LocationId, "유령과제담당", null, null, null, null, null, view.Version - 1)));
+        // 허용 범위 밖 날짜(규칙 16). 작업 날짜 범위는 담당자 확인 뒤에 검사하므로, 새 사용자가 저장 전이어야 남지 않는다
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.SaveWorkAsync(
+                new WorkInput(null, stage.Id, "새 작업", "유령담당", "유령부담당", Today.AddYears(20), Today.AddYears(20), null, null, 0, null, null)));
+            Assert.Equal("planStart", ex.Field);
+        }
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.UpdateAsync(id,
+                new ProjectInput(view.Title, view.CategoryId, view.LocationId, "유령과제담당", Today.AddYears(20), null, null, null, null, view.Version)));
+            Assert.Equal("startDate", ex.Field);
+        }
 
         Assert.False(await UserExistsAsync("유령담당"));
         Assert.False(await UserExistsAsync("유령부담당"));
