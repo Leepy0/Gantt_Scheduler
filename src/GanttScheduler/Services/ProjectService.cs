@@ -134,6 +134,8 @@ public class ProjectService
             CreatedById = _me.Id,
             UpdatedAt = now,
         };
+        // 아직 저장 전인 새 담당자(Id 0)는 내비게이션으로 연결해 과제와 함께 저장한다
+        if (owner.Id == 0) p.Owner = owner;
 
         // 단계 템플릿(체크리스트 포함)을 그 시점 그대로 복사 — 이후 템플릿이 바뀌어도 기존 과제는 영향 없음
         foreach (var t in category.StageTemplates.OrderBy(t => t.SortOrder))
@@ -156,7 +158,6 @@ public class ProjectService
     {
         var title = Text(input.Title, 200, "과제명", "title", required: true)!;
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
-        var owner = await _users.ResolveAsync(input.Owner);
         var p = await RequireAsync(id);
         CheckVersion(input.Version, p.Version, p.Id);
         if (input.StartDate != null && p.StartDate != input.StartDate.Value)
@@ -169,11 +170,12 @@ public class ProjectService
                 throw new RuleException($"착수일을 {Fmt(input.StartDate)}(으)로 바꾸면 기존 일정 {Fmt(outside)} 이(가) 허용 범위({Fmt(min)} ~ {Fmt(max)})를 벗어납니다.", "startDate");
             }
         }
+        var owner = await _users.ResolveAsync(input.Owner, keepId: p.OwnerId);
 
         var changed = new List<string>();
         if (p.Title != title) { changed.Add("과제명"); p.Title = title; }
         if (p.LocationId != loc.Id) { changed.Add("위치"); p.CorporationId = corp.Id; p.LocationId = loc.Id; }
-        if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.OwnerId = owner.Id; }
+        if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.Owner = owner; if (owner.Id != 0) p.OwnerId = owner.Id; }
         if (input.StartDate != null && p.StartDate != input.StartDate.Value) { changed.Add($"착수일 → {Fmt(input.StartDate)}"); p.StartDate = input.StartDate.Value; }
         var vendor = Text(input.Vendor, 100, "협력사", "vendor");
         if (p.Vendor != vendor) { changed.Add("협력사"); p.Vendor = vendor; }
@@ -616,15 +618,16 @@ public class ProjectService
             throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
         Rules.ValidateProgress(input.Progress);
 
-        // 사용자 확인(필요 시 생성)은 엔티티를 건드리기 전에 끝낸다
-        var owner = await _users.ResolveAsync(input.Owner);
-        var coOwner = await _users.ResolveAsync(input.CoOwner);
-        if (owner != null && coOwner != null && owner.Id == coOwner.Id) coOwner = null;
-
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
         var stage = p.Stages.First(s => s.Id == input.StageId);
         var all = Rules.AllWorks(p).ToDictionary(w => w.Id);
+
+        // 담당자 확인. 새 이름은 저장하지 않고 Add 만 해 두므로 아래 검증에 실패하면 남지 않는다(마지막 SaveChanges 에서 함께 저장)
+        var current = input.Id != null ? all.GetValueOrDefault(input.Id.Value) : null;
+        var owner = await _users.ResolveAsync(input.Owner, "owner", current?.OwnerId);
+        var coOwner = await _users.ResolveAsync(input.CoOwner, "coOwner", current?.CoOwnerId);
+        if (ReferenceEquals(owner, coOwner)) coOwner = null;
 
         var progress = input.Progress;
         var actualStart = input.ActualStart;
@@ -642,7 +645,7 @@ public class ProjectService
             var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, actualStart != null, planChanged: true, cal);
             w = new WorkItem
             {
-                Title = title, OwnerId = owner?.Id, CoOwnerId = coOwner?.Id, Progress = progress,
+                Title = title, Owner = owner, CoOwner = coOwner, Progress = progress,
                 PlanStart = input.PlanStart.Value, PlanEnd = input.PlanEnd.Value,
                 ActualStart = actualStart, ActualEnd = input.ActualEnd, Note = note, CreatedAt = _clock.UtcNow,
             };
@@ -681,8 +684,9 @@ public class ProjectService
                 changed.Add($"단계 → {stage.Name}");
                 w.StageId = stage.Id;
             }
-            if (w.OwnerId != owner?.Id) { changed.Add($"담당 → {owner?.Name ?? "없음"}"); w.OwnerId = owner?.Id; w.Owner = owner; }
-            if (w.CoOwnerId != coOwner?.Id) { changed.Add($"부담당 → {coOwner?.Name ?? "없음"}"); w.CoOwnerId = coOwner?.Id; w.CoOwner = coOwner; }
+            // 새 담당자(Id 0)는 FK 를 건드리지 않고 내비게이션으로만 연결한다 — 저장할 때 EF 가 새 Id 로 맞춘다
+            if (w.OwnerId != owner?.Id) { changed.Add($"담당 → {owner?.Name ?? "없음"}"); if (owner?.Id != 0) w.OwnerId = owner?.Id; w.Owner = owner; }
+            if (w.CoOwnerId != coOwner?.Id) { changed.Add($"부담당 → {coOwner?.Name ?? "없음"}"); if (coOwner?.Id != 0) w.CoOwnerId = coOwner?.Id; w.CoOwner = coOwner; }
             if (w.Progress != progress) { changed.Add($"진행률 {w.Progress}% → {progress}%"); w.Progress = progress; }
             if (w.ActualStart != actualStart) { changed.Add($"실적 시작 {Fmt(actualStart)}"); w.ActualStart = actualStart; }
             if (w.ActualEnd != input.ActualEnd) { changed.Add(input.ActualEnd == null ? "실적 종료 취소" : $"실적 종료 {Fmt(input.ActualEnd)}"); w.ActualEnd = input.ActualEnd; }

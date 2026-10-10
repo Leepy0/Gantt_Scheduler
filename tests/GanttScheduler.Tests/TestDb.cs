@@ -51,8 +51,9 @@ public sealed class TestDb : IDisposable
         return new AppDb(builder.Options);
     }
 
-    // 요청 하나에 해당하는 서비스 묶음 (새 DbContext)
-    public Scope NewScope() => new(this);
+    // 요청 하나에 해당하는 서비스 묶음 (새 DbContext).
+    // userName 을 주면 그 사용자로 요청한다 — 없으면 만들고, 관리자 여부는 admin 으로 맞춘다 (권한 테스트용)
+    public Scope NewScope(string? userName = null, bool admin = false, AccessOptions? access = null) => new(this, userName, admin, access);
 
     public void Dispose()
     {
@@ -71,15 +72,24 @@ public sealed class TestDb : IDisposable
         public UserService Users { get; }
         public InsightService Insights { get; }
 
-        public Scope(TestDb owner)
+        public Scope(TestDb owner, string? userName = null, bool admin = false, AccessOptions? access = null)
         {
             Db = owner.Open();
-            Me = new CurrentUser { User = Db.Users.First(u => u.Id == owner.Me.Id), Ip = "test" };
-            Users = new UserService(Db, owner.Clock);
+            Me = new CurrentUser { User = userName == null ? Db.Users.First(u => u.Id == owner.Me.Id) : Act(owner, userName, admin), Ip = "test" };
+            Users = new UserService(Db, owner.Clock, access);
             Projects = new ProjectService(Db, owner.Clock, Me, Users);
             Dashboard = new DashboardService(Projects, owner.Clock, Me);
             Masters = new MasterService(Db, owner.Clock, Me);
             Insights = new InsightService(Db, Projects, owner.Clock, Me);
+        }
+
+        private AppUser Act(TestDb owner, string name, bool admin)
+        {
+            var user = Db.Users.FirstOrDefault(u => u.Name == name);
+            if (user == null) Db.Users.Add(user = new AppUser { Name = name, CreatedAt = owner.Clock.UtcNow });
+            user.IsAdmin = admin;
+            Db.SaveChanges();
+            return user;
         }
 
         public void Dispose() => Db.Dispose();

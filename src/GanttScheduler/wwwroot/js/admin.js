@@ -38,7 +38,7 @@
         if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일'].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 1) return n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '';
         if (kind === 'category' && n.level === 2) return n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '';
-        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', n.ips && n.ips.length ? 'IP ' + n.ips.length : '미접속'].filter(Boolean).join(' · ');
+        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속'].filter(Boolean).join(' · ');
         if (kind === 'holiday') return n.date;
         return '';
     }
@@ -112,6 +112,18 @@
         return nodes.filter(function (n) { return n.level === level && n.id === id; })[0];
     }
 
+    // 사용자에 연결된 접속 IP 목록. 지금 이 기기의 IP 는 해제할 수 없다(스스로 잠기지 않게)
+    function ipItems(n) {
+        var list = n.addresses || [];
+        if (!list.length) return '<li class="muted">접속 이력 없음</li>';
+        return list.map(function (a) {
+            return '<li><span class="ip">' + esc(a.ip) + '</span>' +
+                '<span class="hint">마지막 접속 ' + esc(a.lastSeen) + (a.current ? ' · 지금 이 기기' : '') + '</span>' +
+                (isAdmin && !a.current ? '<button type="button" class="btn icon small ghost" data-remove-ip="' + esc(a.ip) + '" aria-label="' + esc(a.ip) + ' 연결 해제" title="연결 해제">' + icon('x') + '</button>' : '') +
+                '</li>';
+        }).join('');
+    }
+
     function field(name, label, inner) {
         return '<label class="field" data-field="' + name + '"><span class="label">' + label + '</span>' + inner + '</label>';
     }
@@ -147,7 +159,11 @@
                 '<select data-org-part aria-label="파트"' + (isAdmin ? '' : ' disabled') + '></select></div>' +
                 '<input type="hidden" name="orgUnitId" /></div>' +
                 '<label class="check"><input type="checkbox" name="isAdmin"' + (n.isAdmin ? ' checked' : '') + ' />관리자 (기준 정보 변경·과제 삭제)</label>' +
-                '<div class="field"><span class="label">접속 IP</span><div class="readonly">' + (n.ips && n.ips.length ? esc(n.ips.join(', ')) : '접속 이력 없음') + '</div></div>';
+                '<div class="field" data-field="ip"><span class="label">접속 IP</span><ul class="ip-list" data-ips>' + ipItems(n) + '</ul>' +
+                (isAdmin ? '<div class="ip-add"><input name="newIp" maxlength="45" inputmode="decimal" autocomplete="off" placeholder="IP 주소 (예: 10.1.2.3)" aria-label="연결할 IP 주소" />' +
+                    '<button type="button" class="btn" data-add-ip>' + icon('plus') + '연결</button></div>' +
+                    '<span class="hint">관리자는 이름 등록 화면에서 새 PC 를 연결할 수 없습니다. PC 를 바꾼 관리자는 여기서 IP 를 추가해 주세요.</span>' : '') +
+                '</div>';
         }
 
         var isRemovable = removable(level);
@@ -169,10 +185,11 @@
                     } catch (err) { sheet.setError(err.message, err.field); }
                 }
             },
-            onOpen: function (form) {
+            onOpen: function (form, sheet) {
                 if (kind !== 'user') return;
                 OrgPicker.bind(orgs, form.querySelector('[data-org-group]'), form.querySelector('[data-org-part]'),
                     form.elements.orgUnitId, form.querySelector('[data-org-field]'), n.orgUnitId);
+                bindIps(form, sheet, level, id);
             },
             onSubmit: async function (form) {
                 var f = form.elements;
@@ -188,6 +205,43 @@
                 });
                 App.toast('저장했습니다.');
             }
+        });
+    }
+
+    // 사용자 시트의 IP 연결·해제. 저장 단추와 따로 바로 반영한다
+    function bindIps(form, sheet, level, id) {
+        var input = form.elements.newIp;
+        var box = form.querySelector('[data-ips]');
+        function refresh() {
+            var n = find(level, id);
+            if (n) box.innerHTML = ipItems(n);
+        }
+        async function add() {
+            try {
+                await change('AddIp', { userId: id, ip: input.value });
+                input.value = '';
+                sheet.setError(null);
+                refresh();
+                App.toast('IP 를 연결했습니다.');
+            } catch (err) { sheet.setError(err.message, err.field); }
+        }
+        if (input) {
+            form.querySelector('[data-add-ip]').addEventListener('click', add);
+            // 입력란에서 Enter 는 시트 저장이 아니라 IP 연결
+            input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+        }
+        box.addEventListener('click', async function (e) {
+            var t = e.target.closest('[data-remove-ip]');
+            if (!t) return;
+            var ip = t.dataset.removeIp;
+            var ok = await App.confirm({ title: 'IP 연결 해제', message: ip + ' 연결을 해제합니다. 그 기기에서 다시 접속하면 이름을 새로 등록해야 합니다.', verb: '연결 해제' });
+            if (!ok) return;
+            try {
+                await change('RemoveIp', { userId: id, ip: ip });
+                sheet.setError(null);
+                refresh();
+                App.toast('IP 연결을 해제했습니다.');
+            } catch (err) { sheet.setError(err.message, err.field); }
         });
     }
 

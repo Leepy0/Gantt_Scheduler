@@ -69,4 +69,31 @@ public class ServiceInstallerTests
     [Fact]
     public void 서비스가_없다는_출력에서는_상태를_읽지_못한다() =>
         Assert.Null(ServiceInstaller.StateOf("[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\r\n\r\nThe specified service does not exist as an installed service."));
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("10.0.0.0/8", "10.0.0.0/8")]
+    [InlineData(" 10.0.0.0/8 , 192.168.1.10,localsubnet ", "10.0.0.0/8,192.168.1.10,LocalSubnet")]
+    [InlineData("fd00::/8", "fd00::/8")]
+    [InlineData("10.1.2.3/8", "10.0.0.0/8")]
+    public void 방화벽_원격_주소_제한을_읽는다(string? value, string? expected) => Assert.Equal(expected, ServiceInstaller.RemoteIp(value));
+
+    [Theory]
+    [InlineData("사내망")]
+    [InlineData("10.0.0.0/8;192.168.0.0/16")]
+    [InlineData("10.0.0.0/33")]
+    [InlineData("10")]
+    public void 방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(string value) =>
+        Assert.Throws<ArgumentException>(() => ServiceInstaller.RemoteIp(value));
+
+    [Fact]
+    public void 방화벽_규칙은_원격_주소를_줄_때만_제한한다()
+    {
+        var open = ServiceInstaller.FirewallRule("GanttScheduler", 8080, null);
+        Assert.Equal(new[] { "advfirewall", "firewall", "add", "rule", "name=GanttScheduler", "dir=in", "action=allow", "protocol=TCP", "localport=8080" }, open);
+        var limited = ServiceInstaller.FirewallRule("GanttScheduler", 80, "10.0.0.0/8,LocalSubnet");
+        Assert.Equal("remoteip=10.0.0.0/8,LocalSubnet", limited[^1]);
+        Assert.Equal("localport=80", limited[^2]);
+    }
 }

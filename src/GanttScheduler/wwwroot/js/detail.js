@@ -829,6 +829,8 @@
                     planHint.textContent = hint + offNote(f.planStart.value, '시작일') + offNote(f.planEnd.value, '종료일');
                 }
                 ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', sync); });
+                App.nameHint(f.owner, data.users, isNew ? null : w.owner);
+                App.nameHint(f.coOwner, data.users, isNew ? null : w.coOwner);
                 form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = today; sync(); });
                 form.querySelector('[data-end-today]').addEventListener('click', function () {
                     if (!f.actualStart.value) f.actualStart.value = today;
