@@ -202,8 +202,8 @@ public static class Reporting
                 next.AddRange(Rules.Ordered(p)
                     .Where(s => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value >= nextFrom && s.TargetDate.Value <= nextTo)
                     .Select(s => $"[{s.Name}] 단계 목표 {s.TargetDate!.Value:MM-dd}"));
-                next.AddRange(Rules.AllWorks(p)
-                    .Where(w => w.ActualEnd == null && w.PlanEnd >= nextFrom && w.PlanEnd <= nextTo)
+                next.AddRange(p.Stages.SelectMany(s => s.Works.Where(w => Rules.IsOpen(w, s)))   // 완료된 단계의 작업은 뺀다
+                    .Where(w => w.PlanEnd >= nextFrom && w.PlanEnd <= nextTo)
                     .OrderBy(w => w.PlanEnd)
                     .Select(w => $"{w.Title} 종료 목표 {w.PlanEnd:MM-dd}" + (w.Owner != null ? $" ({w.Owner.Name})" : "")));
             }
@@ -230,10 +230,11 @@ public static class Reporting
         {
             foreach (var s in Rules.Ordered(p))
             {
-                foreach (var w in s.Works.Where(w => w.ActualEnd == null && (w.OwnerId == userId || w.CoOwnerId == userId)))
+                // 완료된 단계의 작업은 단계와 함께 끝난 것으로 본다(Rules.IsOpen) — 유령 지연을 남기지 않는다
+                foreach (var w in s.Works.Where(w => Rules.IsOpen(w, s) && (w.OwnerId == userId || w.CoOwnerId == userId)))
                 {
                     works.Add(new MyWork(p.Id, p.Title, w.Id, s.Name, w.Title, w.OwnerId == userId ? "담당" : "부담당",
-                        w.PlanStart, w.PlanEnd, w.Progress, Views.Key(Rules.StatusOf(w)), Rules.IsLate(w, today),
+                        w.PlanStart, w.PlanEnd, w.Progress, Views.Key(Rules.StatusOf(w)), Rules.IsLate(w, s, today),
                         w.PlanEnd.DayNumber - today.DayNumber));
                 }
             }

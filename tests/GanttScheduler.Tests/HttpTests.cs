@@ -47,7 +47,7 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     }
 }
 
-public class HttpTests : IClassFixture<AppFactory>
+public partial class HttpTests : IClassFixture<AppFactory>
 {
     private readonly AppFactory _factory;
     public HttpTests(AppFactory factory) => _factory = factory;

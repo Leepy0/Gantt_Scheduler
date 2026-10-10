@@ -177,11 +177,18 @@ public class RulesTests
         var p = NewProject(stage, noTarget);
         p.Links.Add(new WorkLink { PredecessorId = 1, SuccessorId = 2 });
 
+        // 여유는 근무일로 센다 (주말 10-17~18 은 넣지 않는다)
         var floats = Rules.Floats(p, cal);
-        Assert.Equal(4, floats[2]);                 // B: 목표일 10-20 까지 4일
-        Assert.Equal(5, floats[1]);                 // A: B 시작까지 틈 1일 + B 의 여유 4일 (자기 단계 여유 7일보다 작다)
-        Assert.Equal(6, floats[3]);
+        Assert.Equal(2, floats[2]);                 // B: 금 종료 → 목표일 화(10-20) 까지 근무일 2일(월·화)
+        Assert.Equal(3, floats[1]);                 // A: B 시작까지 틈 1근무일 + B 의 여유 2 (자기 단계 여유 5근무일보다 작다)
+        Assert.Equal(4, floats[3]);                 // C: 수 종료 → 화까지 4근무일
         Assert.False(floats.ContainsKey(4));        // 목표일 없는 단계는 제약이 없다
+
+        // 목표일이 주말이면 직전 금요일에 끝나는 작업은 여유 0 → 임계
+        stage.TargetDate = Day(18);                 // 일요일
+        var weekend = Rules.Floats(p, cal);
+        Assert.Equal(0, weekend[2]);
+        Assert.True(Views.Work(b, Day(9), cal, weekend, stage: stage).Critical);
 
         // 후행이 선행보다 먼저 시작하면 위반
         Assert.False(Rules.Violates(a, b, 0, cal));
