@@ -326,6 +326,55 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert((await page.locator('#summary').innerText()).includes('0%'), '진행률이 초기화되지 않음');
     });
 
+    await step('연쇄 이동 — 이후 단계의 미착수 작업도 같은 근무일만큼 이동(선택)', async () => {
+        await openProject(page, '광주 2공장 물류 동선 Simulation');
+        // 이후 단계(검증)에 아직 시작하지 않은 작업을 하나 둔다
+        await page.click('#add-work');
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' input[name=title]', '검증 시나리오 실행');
+        await page.locator(SHEET + ' select[name=stageId]').selectOption({ label: '검증' });
+        await page.fill(SHEET + ' input[name=planStart]', kstToday(15));
+        await page.fill(SHEET + ' input[name=planEnd]', kstToday(17));
+        await submitSheet(page);
+        const bar = () => workRow(page, '검증 시나리오 실행').locator('.g-bar.draggable');
+        const before = await bar().getAttribute('title');
+
+        await stageRow(page, '모델링').click();
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' input[name=targetDate]', kstToday(14));
+        const option = page.locator(SHEET + ' label', { has: page.locator('input[name=cascadeWorks]') });
+        assert(await option.isVisible(), '작업 포함 선택지가 보이지 않음');
+        assert((await option.innerText()).includes('미착수 작업 1건'), '작업 수 표시가 아님: ' + (await option.innerText()));
+        assert(!(await page.isChecked(SHEET + ' input[name=cascadeWorks]')), '작업 포함이 기본으로 켜져 있음');
+        await page.check(SHEET + ' input[name=cascade]');
+        await page.check(SHEET + ' input[name=cascadeWorks]');
+        await page.fill(SHEET + ' textarea[name=reason]', '모델링 범위 확대');
+        await shot(page, 'd30-cascade-works', false);
+        await submitSheet(page);
+        const after = await bar().getAttribute('title');
+        assert(after !== before, '이후 단계 작업이 옮겨지지 않음: ' + after);
+    });
+
+    await step('단계 완료 — 남은 작업을 완료일로 닫고 완료', async () => {
+        await stageRow(page, '모델링').click();
+        await page.waitForSelector(SHEET);
+        const close = page.locator(SHEET + ' [data-close-works]');
+        assert(await close.isHidden(), '완료일을 넣기 전에 선택지가 보임');
+        await page.click(SHEET + ' [data-done-today]');
+        assert(await close.isVisible(), '남은 작업 닫기 선택지가 보이지 않음');
+        assert((await close.innerText()).includes('남은 작업 2건'), '남은 작업 수가 아님: ' + (await close.innerText()));
+        await page.check(SHEET + ' input[name=closeWorks]');
+        await shot(page, 'd31-stage-close-works', false);
+        await submitSheet(page);
+        for (const name of ['AGV 로직 구현', '시나리오 정의']) {
+            const row = workRow(page, name);
+            assert((await row.innerText()).includes('100%'), name + ' 이 닫히지 않음: ' + (await row.innerText()));
+            assert((await row.locator('.alarm').count()) === 0, name + ' 에 지연 표시가 남음');
+        }
+        assert((await stageRow(page, '모델링').innerText()).includes('완료'), '단계가 완료되지 않음');
+        await shot(page, 'd32-stage-closed-works');
+    });
+
     await step('모든 단계 완료 시 자동으로 완료 상태', async () => {
         await openProject(page, '폴란드 세탁기 창고 입출고 개선');
         for (let i = 0; i < 3; i++) {

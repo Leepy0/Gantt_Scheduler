@@ -22,7 +22,7 @@ public record WorkView
     public bool DoneLate { get; init; }
     public string? Note { get; init; }
     public List<int> Predecessors { get; init; } = new();
-    public int? Float { get; init; }                    // 여유 일수 (제약이 없으면 null)
+    public int? Float { get; init; }                    // 여유 근무일 (제약이 없으면 null)
     public bool Critical { get; init; }                 // 미완료이고 여유가 없음
     public bool DepViolation { get; init; }             // 선행 작업보다 먼저 시작하게 잡혀 있음
 }
@@ -53,6 +53,8 @@ public record StageView
     public int CheckDone { get; init; }
     public int CheckTotal { get; init; }
     public List<WorkView> Works { get; init; } = new();
+    public int OpenWorks { get; init; }                 // 실적 종료가 없는 작업 수 (완료하면서 함께 닫을 수 있는 작업)
+    public int LaterWorks { get; init; }                // 연쇄 이동 때 함께 옮길 수 있는 이후 단계의 미착수 작업 수
 }
 
 public record ActivityView(
@@ -171,9 +173,11 @@ public static class Views
     }
 
     public static WorkView Work(WorkItem w, DateOnly today, WorkCalendar cal,
-        IReadOnlyDictionary<int, int>? floats = null, List<int>? predecessors = null, bool violation = false)
+        IReadOnlyDictionary<int, int>? floats = null, List<int>? predecessors = null, bool violation = false, Stage? stage = null)
     {
         int? slack = floats != null && floats.TryGetValue(w.Id, out var f) ? f : null;
+        // 완료된 단계의 작업은 지연·임계로 보지 않는다 (Rules.IsOpen)
+        var open = stage == null ? w.ActualEnd == null : Rules.IsOpen(w, stage);
         return new WorkView
         {
             Id = w.Id, StageId = w.StageId, Version = w.Version, Title = w.Title,
@@ -181,10 +185,10 @@ public static class Views
             PlanStart = w.PlanStart, PlanEnd = w.PlanEnd, PlanWorkDays = cal.WorkingDays(w.PlanStart, w.PlanEnd),
             ActualStart = w.ActualStart, ActualEnd = w.ActualEnd,
             BaselineStart = w.BaselineStart, BaselineEnd = w.BaselineEnd,
-            Status = Key(Rules.StatusOf(w)), Late = Rules.IsLate(w, today), DoneLate = Rules.IsDoneLate(w), Note = w.Note,
+            Status = Key(Rules.StatusOf(w)), Late = open && Rules.IsLate(w, today), DoneLate = Rules.IsDoneLate(w), Note = w.Note,
             Predecessors = predecessors ?? new List<int>(),
             Float = slack,
-            Critical = w.ActualEnd == null && slack != null && slack.Value <= 0,
+            Critical = open && slack != null && slack.Value <= 0,
             DepViolation = violation,
         };
     }
@@ -204,13 +208,16 @@ public static class Views
         if (withWorks)
         {
             floats = Rules.Floats(p, cal);
-            var byId = Rules.AllWorks(p).ToDictionary(w => w.Id);
+            var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
+            foreach (var st in p.Stages)
+                foreach (var w in st.Works) byId[w.Id] = (w, st);
             foreach (var l in p.Links)
             {
                 if (!byId.TryGetValue(l.PredecessorId, out var from) || !byId.TryGetValue(l.SuccessorId, out var to)) continue;
-                if (!preds.TryGetValue(to.Id, out var ids)) preds[to.Id] = ids = new List<int>();
-                ids.Add(from.Id);
-                if (to.ActualStart == null && Rules.Violates(from, to, l.LagDays, cal)) violated.Add(to.Id);
+                if (!preds.TryGetValue(to.Work.Id, out var ids)) preds[to.Work.Id] = ids = new List<int>();
+                ids.Add(from.Work.Id);
+                // 밀기 대상(미착수·단계 미완료)만 위반으로 표시한다 — 나머지는 자동으로 옮기지 않으므로 경고할 일이 아니다
+                if (Rules.IsMovable(to.Work, to.Stage) && Rules.Violates(l, from.Work, to.Work, cal)) violated.Add(to.Work.Id);
             }
         }
 
@@ -232,7 +239,7 @@ public static class Views
 
             var works = withWorks
                 ? s.Works.OrderBy(w => w.PlanStart).ThenBy(w => w.Id)
-                    .Select(w => Work(w, today, cal, floats, preds.TryGetValue(w.Id, out var ids) ? ids : null, violated.Contains(w.Id)))
+                    .Select(w => Work(w, today, cal, floats, preds.TryGetValue(w.Id, out var ids) ? ids : null, violated.Contains(w.Id), s))
                     .ToList()
                 : new List<WorkView>();
 
@@ -250,6 +257,8 @@ public static class Views
                 InboundHint = s.Kind == StageKind.Inbound && s.CompletedDate == null ? inbound : null,
                 Checks = checks, CheckDone = checks.Count(c => c.Done), CheckTotal = checks.Count,
                 Works = works,
+                OpenWorks = withWorks && s.CompletedDate == null ? s.Works.Count(w => w.ActualEnd == null) : 0,
+                LaterWorks = withWorks ? Rules.CascadeWorks(p, s).Count() : 0,
             });
 
             if (s.TargetDate != null) prevTarget = s.TargetDate;

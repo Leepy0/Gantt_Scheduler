@@ -493,6 +493,12 @@
         }).join('');
     }
 
+    // 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮길지 (건수는 서버가 센다, 기본 꺼짐)
+    function cascadeWorksHtml(s) {
+        if (!s || !s.laterWorks) return '';
+        return '<label class="check"><input type="checkbox" name="cascadeWorks" />이후 단계의 미착수 작업 ' + s.laterWorks + '건도 같은 근무일 수만큼 이동</label>';
+    }
+
     function openStageSheet(s) {
         var isNew = !s;
         var index = isNew ? -1 : P.stages.indexOf(s);
@@ -515,6 +521,7 @@
             html += '<div data-reason hidden class="form">' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유"></textarea>') +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
+                cascadeWorksHtml(s) +
                 '</div>';
             html += '<div class="sheet-section" data-field="check"><h3>체크리스트 <span class="count" data-check-count></span></h3>' +
                 '<ul class="check-list" data-checks></ul>' +
@@ -524,7 +531,11 @@
                 '<input type="date" name="completedDate" value="' + (s.completedDate || '') + '" />' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-done-today>' + icon('check') + '오늘 완료</button>' +
                 '<button type="button" class="btn small" data-clear-done>완료 취소</button></div></div>' +
-                '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>완료일이 오늘보다 미래입니다.</span></p>';
+                '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>완료일이 오늘보다 미래입니다.</span></p>' +
+                (!s.completedDate && s.openWorks > 0
+                    ? '<label class="check" data-close-works hidden><input type="checkbox" name="closeWorks" />' +
+                      '남은 작업 ' + s.openWorks + '건을 완료일로 닫고 완료</label>'
+                    : '');
             html += '<div class="field"><span class="label">순서</span><div class="inline-btns">' +
                 '<button type="button" class="btn small" data-move="-1"' + (index <= 0 ? ' disabled' : '') + '>' + icon('up') + '앞으로</button>' +
                 '<button type="button" class="btn small" data-move="1"' + (index >= P.stages.length - 1 ? ' disabled' : '') + '>' + icon('down') + '뒤로</button></div></div>';
@@ -566,11 +577,19 @@
                     hint.textContent = notes;
                     if (reasonBox) reasonBox.hidden = !(s.targetDate && target.value !== s.targetDate);
                 }
-                function onDone() { if (future) future.hidden = !(done.value && done.value > today); }
+                var closeWorks = form.querySelector('[data-close-works]');
+                function onDone() {
+                    if (future) future.hidden = !(done.value && done.value > today);
+                    // 미완료 단계를 완료할 때만 남은 작업을 함께 닫을지 묻는다
+                    if (closeWorks) {
+                        closeWorks.hidden = !done.value;
+                        if (!done.value) form.elements.closeWorks.checked = false;
+                    }
+                }
 
                 target.addEventListener('input', onTarget);
                 onTarget();
-                if (done) done.addEventListener('input', onDone);
+                if (done) { done.addEventListener('input', onDone); onDone(); }
 
                 var hintBtn = form.querySelector('[data-apply-hint]');
                 if (hintBtn) hintBtn.addEventListener('click', function () { target.value = s.inboundHint; onTarget(); });
@@ -634,6 +653,8 @@
                     completedDate: isNew ? null : (f.completedDate.value || null),
                     reason: f.reason ? f.reason.value : null,
                     cascade: f.cascade ? f.cascade.checked : false,
+                    cascadeWorks: f.cascadeWorks ? f.cascadeWorks.checked : false,
+                    closeWorks: f.closeWorks ? f.closeWorks.checked : false,
                     version: version
                 });
                 App.toast(isNew ? '단계를 추가했습니다.' : '단계를 저장했습니다.');
@@ -650,14 +671,16 @@
             html: '<div class="form-note"><b>' + s.targetDate + ' → ' + newDate + '</b><span class="muted">' + signed(D.diff(newDate, s.targetDate)) + '일</span></div>' +
                 (offNote(newDate, '목표일') ? '<p class="form-warn">' + icon('alert') + '<span>' + offNote(newDate, '목표일') + '</span></p>' : '') +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유" required></textarea>') +
-                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : ''),
+                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
+                cascadeWorksHtml(s),
             primary: '변경',
             onOpen: function (form) { form.elements.reason.focus(); },
             onClose: function (saved) { if (!saved) renderSchedule(true); },
             onSubmit: async function (form) {
                 await api('SaveStage', {
                     projectId: P.id, id: s.id, name: s.name, targetDate: newDate, completedDate: s.completedDate,
-                    reason: form.elements.reason.value, cascade: form.elements.cascade ? form.elements.cascade.checked : false, version: s.version
+                    reason: form.elements.reason.value, cascade: form.elements.cascade ? form.elements.cascade.checked : false,
+                    cascadeWorks: form.elements.cascadeWorks ? form.elements.cascadeWorks.checked : false, version: s.version
                 });
                 App.toast('목표일을 변경했습니다.');
             }
@@ -733,7 +756,7 @@
         if (!isNew) {
             if (w.depViolation) status += '<p class="form-error">' + icon('link') + '<span>선행 작업이 끝나기 전에 시작하도록 잡혀 있습니다. 목표 일정을 조정해 주세요.</span></p>';
             var bits = [];
-            if (w.float != null) bits.push(w.float <= 0 ? '여유 없음 — 밀리면 단계 목표일이 밀립니다' : '여유 ' + w.float + '일');
+            if (w.float != null) bits.push(w.float <= 0 ? '여유 없음 — 밀리면 단계 목표일이 밀립니다' : '여유 ' + w.float + '근무일');
             if (w.baselineStart) bits.push('기준선 ' + D.md(w.baselineStart) + ' ~ ' + D.md(w.baselineEnd));
             if (bits.length) status += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
         }
@@ -881,7 +904,7 @@
             html: field('title', '새 과제명', '<input name="title" maxlength="200" required value="' + esc(P.title + ' (복제)') + '" />') +
                 field('startDate', '착수일', '<input type="date" name="startDate" required value="' + today + '" />') +
                 '<label class="check"><input type="checkbox" name="works" checked />작업과 의존 관계도 복사</label>' +
-                '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 새 착수일에 맞춰 통째로 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다.</span>',
+                '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 간격 그대로 새 착수일에 맞춰 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다.</span>',
             primary: '복제',
             onSubmit: async function (form) {
                 var f = form.elements;
