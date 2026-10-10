@@ -382,8 +382,9 @@ public class ExcelExporter
         _ => "예정",
     };
 
+    // 실적 종료 없이 단계 완료로 함께 끝난 작업은 '완료(단계)' — '완료'로 시작해 색도 완료와 같다
     public static string WorkLabel(WorkView w) =>
-        w.Late ? "지연" : w.DoneLate ? "초과 완료" : w.Status switch
+        w.Late ? "지연" : w.DoneLate ? "초과 완료" : w.ClosedOn != null ? "완료(단계)" : w.Status switch
         {
             "done" => "완료",
             "inprogress" => "진행중",

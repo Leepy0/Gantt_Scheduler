@@ -20,7 +20,7 @@
 {
     <div class="form-note" id="no-admin" role="status">
         <svg class="ic"><use href="#i-alert" /></svg>
-        <div><strong>관리자가 아직 없습니다.</strong> 서버(이 프로그램이 설치된 PC)의 브라우저에서 접속해 이름을 등록하면 관리자가 됩니다.
+        <div><strong>관리자가 아직 없습니다.</strong> 서버(이 프로그램이 설치된 PC)의 브라우저에서 <code>@Model.LocalUrl</code> 로 접속해 이름을 등록하면 관리자가 됩니다(서버 PC 에서도 서버 이름이나 IP 로 접속하면 다른 PC 로 봅니다).
             다른 PC 를 관리자로 쓰려면 서버 콘솔에서 <code>GanttScheduler.exe admin 이름 --ip @Model.Ip</code> 를 실행하세요.</div>
     </div>
 }

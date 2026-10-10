@@ -158,8 +158,9 @@
     // 담당자: 목록에 없는 이름이면 새 담당자로 등록된다고 알린다
     var ownerInput = document.getElementById('Form_Owner');
     var ownerList = document.getElementById('user-names');
+    // 수정 화면이면 지금 담당자(서버가 준 저장된 이름)는 새 사람이 아니다. 입력칸 값은 오류로 다시 그린 화면에서 새 이름일 수 있어 쓰지 않는다
     App.nameHint(ownerInput, ownerList ? Array.prototype.map.call(ownerList.options, function (o) { return o.value; }) : [],
-        /[?&]id=\d/.test(location.search) && ownerInput ? ownerInput.value.trim() : null);   // 수정 화면이면 지금 담당자는 새 사람이 아니다
+        meta.currentOwner || null);
 
     // 서버가 알려 준 오류 필드 표시
     if (meta.errorField) {

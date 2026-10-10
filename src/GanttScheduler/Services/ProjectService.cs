@@ -458,6 +458,7 @@ public class ProjectService
             if (s.CompletedDate != input.CompletedDate)
             {
                 changed = true;
+                Guid? reopened = null;
                 if (completing)
                 {
                     var batch = Guid.NewGuid();
@@ -466,10 +467,25 @@ public class ProjectService
                     if (input.CloseWorks) CloseOpenWorks(p, s, input.CompletedDate!.Value, batch);
                 }
                 else if (input.CompletedDate == null)
-                    p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate)));
+                {
+                    reopened = Guid.NewGuid();
+                    p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate),
+                        batch: reopened));
+                }
                 else
                     p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(input.CompletedDate)}", stageId: s.Id));
                 s.CompletedDate = input.CompletedDate;
+
+                // 완료돼 있는 동안 이 단계의 미착수 작업은 밀기 대상이 아니었다(규칙 3). 다시 열면 그 사이 늦어진 선행에 맞춰
+                // 밀어 둔다 — 그대로 두면 위반이 드러난 채 남고, 그 작업의 일정을 고칠 때마다 사람이 직접 풀어야 한다
+                if (reopened != null)
+                {
+                    var cal = await CalendarAsync();
+                    var plan = new PlanBatch();
+                    foreach (var m in Rules.Reschedule(p, cal, s.Works.ToList()))
+                        plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", "단계 완료 취소로 선행 일정에 맞춤");
+                    CommitPlan(p, plan, reopened.Value, "completedDate");
+                }
             }
 
             if (changed) s.Version++;
@@ -642,7 +658,7 @@ public class ProjectService
         if (input.Id == null)
         {
             ValidateWorkDates(p, null, input.PlanStart.Value, input.PlanEnd.Value, actualStart, input.ActualEnd);
-            var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, actualStart != null, planChanged: true, cal);
+            var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, Rules.IsMovable(actualStart, stage), planChanged: true, cal);
             w = new WorkItem
             {
                 Title = title, Owner = owner, CoOwner = coOwner, Progress = progress,
@@ -665,7 +681,10 @@ public class ProjectService
                 throw new RuleException("목표 일정을 바꿀 때는 변경 사유를 입력해 주세요.", "reason");
             // 검사를 모두 통과한 뒤에만 값을 바꾼다
             ValidateWorkDates(p, w, input.PlanStart.Value, input.PlanEnd.Value, actualStart, input.ActualEnd);
-            var wanted = ValidatePredecessors(p, w, all, input.Predecessors, input.PlanStart.Value, actualStart != null, planChanged, cal);
+            // 실적 시작을 지우거나 열린 단계로 옮겨 이번 저장으로 밀기 대상이 되는 작업은 일정을 새로 잡는 것과 같으므로 선행을 검사한다
+            var movable = Rules.IsMovable(actualStart, stage);
+            var becameMovable = movable && !Rules.IsMovable(w, p.Stages.First(s => s.Id == w.StageId));
+            var wanted = ValidatePredecessors(p, w, all, input.Predecessors, input.PlanStart.Value, movable, planChanged || becameMovable, cal);
 
             if (planChanged)
             {
@@ -725,14 +744,16 @@ public class ProjectService
 
     // 선행 작업 지정이 유효한지 검사하고, 적용할 선행 작업 id 목록을 돌려준다 (predecessors 가 null 이면 지금 그대로).
     // w 가 null 이면 새 작업. 존재·순환은 늘 검사한다. "선행이 끝난 뒤 시작" 검사는 새 작업이거나 목표 일정·선행 집합이
-    // 바뀔 때만 한다 — 공휴일 추가 등으로 이미 생긴 위반이 제목·담당·메모·진행률만 고치는 저장까지 막지 않게(위반은 화면에 표시된다)
+    // 바뀔 때만 한다 — 공휴일 추가 등으로 이미 생긴 위반이 제목·담당·메모·진행률만 고치는 저장까지 막지 않게(위반은 화면에 표시된다).
+    // movable: 저장 뒤의 값으로 본 밀기 대상 여부(Rules.IsMovable). 이미 시작했거나 완료된 단계의 작업은 밀지도, 위반으로 표시하지도
+    // 않으므로 날짜도 검사하지 않는다 — 표시와 검사가 같은 기준이어야 '표시는 없는데 저장이 막히는' 일이 없다
     private static List<int> ValidatePredecessors(Project p, WorkItem? w, Dictionary<int, WorkItem> all, List<int>? predecessors,
-                                                  DateOnly planStart, bool started, bool planChanged, WorkCalendar cal)
+                                                  DateOnly planStart, bool movable, bool planChanged, WorkCalendar cal)
     {
         var current = w == null ? new List<WorkLink>() : p.Links.Where(l => l.SuccessorId == w.Id).ToList();
         var wanted = predecessors == null ? current.Select(l => l.PredecessorId).ToList() : predecessors.Distinct().ToList();
         var predsChanged = !current.Select(l => l.PredecessorId).ToHashSet().SetEquals(wanted);
-        var checkDates = !started && (w == null || planChanged || predsChanged);
+        var checkDates = movable && (w == null || planChanged || predsChanged);
 
         // 순환 검사는 이 작업으로 들어오는 기존 관계를 빼고, 지정한 것을 하나씩 더해 가며 한다
         var edges = p.Links.Where(l => w == null || l.SuccessorId != w.Id).Select(l => (l.PredecessorId, l.SuccessorId)).ToList();
@@ -744,7 +765,7 @@ public class ProjectService
                 throw new RuleException($"'{pred.Title}' 을(를) 선행으로 두면 의존 관계가 순환합니다.", "predecessors");
             if (w != null) edges.Add((id, w.Id));
 
-            // 아직 시작하지 않은 작업은 선행 작업이 끝난 다음 근무일 이후로만 잡을 수 있다
+            // 밀기 대상 작업(미착수·단계 미완료)은 선행 작업이 끝난 다음 근무일 이후로만 잡을 수 있다
             if (!checkDates) continue;
             var link = current.FirstOrDefault(l => l.PredecessorId == id) ?? new WorkLink { PredecessorId = id };
             var earliest = Rules.EarliestStart(link, pred, cal);

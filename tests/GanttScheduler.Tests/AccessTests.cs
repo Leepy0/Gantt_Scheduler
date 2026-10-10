@@ -98,6 +98,81 @@ public class AccessTests : IClassFixture<TestDb>
             Assert.Equal(_db.Clock.UtcNow, (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.66.2.1")).LastSeenAt);
     }
 
+    [Fact]
+    public async Task 관리자에_연결된_기기를_다른_이름으로_바꾸려면_확인을_받는다()
+    {
+        using var db = new TestDb();
+        using (var s = db.NewScope())
+            await s.Masters.AddAddressAsync(new MasterIp(db.Me.Id, "10.67.0.1"));
+
+        // 관리자가 혼자이고 다른 기기도 없다 → admin 명령으로만 되돌릴 수 있다고 알리고, 확인 없이는 옮기지 않는다
+        using (var s = db.NewScope())
+        {
+            var warning = await s.Users.LeaveAdminWarningAsync("10.67.0.1");
+            Assert.Contains("관리자 테스터 님", warning);
+            Assert.Contains("admin 명령", warning);
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Users.RegisterAsync("10.67.0.1", "옆자리", null));
+            Assert.Equal("leaveAdmin", ex.Field);
+            Assert.False(await s.Db.Users.AnyAsync(u => u.Name == "옆자리"));
+            // 자기 이름을 다시 고르는 것은 옮기는 것이 아니다
+            Assert.Equal(db.Me.Id, (await s.Users.RegisterAsync("10.67.0.1", "테스터", null)).Id);
+            // 일반 사용자 기기에는 안내가 없다
+            await s.Users.RegisterAsync("10.67.0.2", "일반직원", null);
+            Assert.Null(await s.Users.LeaveAdminWarningAsync("10.67.0.2"));
+            Assert.Null(await s.Users.LeaveAdminWarningAsync("10.67.9.9"));
+        }
+
+        // 다른 관리자가 있으면 그 관리자가 다시 연결해 줄 수 있다고 알린다
+        using (db.NewScope("다른관리자", admin: true)) { }
+        using (var s = db.NewScope())
+            Assert.Contains("다른 관리자가 관리 > 사용자", await s.Users.LeaveAdminWarningAsync("10.67.0.1"));
+
+        // 확인하면 옮긴다 (IP 를 넘겨받은 사람은 자기 이름으로 바꿀 수 있어야 한다)
+        using (var s = db.NewScope())
+            Assert.False((await s.Users.RegisterAsync("10.67.0.1", "옆자리", null, leaveAdmin: true)).IsAdmin);
+        using (var s = db.NewScope())
+            Assert.Equal("옆자리", (await s.Db.UserAddresses.Include(a => a.User).SingleAsync(a => a.Ip == "10.67.0.1")).User!.Name);
+    }
+
+    [Fact]
+    public async Task 관리자_계정의_재확인은_서버_자신에서만_받는다()
+    {
+        using var db = new TestDb();
+        using (var s = db.NewScope())
+            await s.Masters.AddAddressAsync(new MasterIp(db.Me.Id, "10.67.1.1"));
+        var old = db.Clock.UtcNow.AddDays(-40);
+        using (var s = db.NewScope())
+        {
+            (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.67.1.1")).LastSeenAt = old;
+            await s.Db.SaveChangesAsync();
+        }
+        // DHCP 로 넘겨받은 사람이 '맞습니다' 한 번으로 관리자가 되지 않게
+        using (var s = db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Users.ConfirmAsync("10.67.1.1"));
+            Assert.Equal(UserService.AdminConfirmRefused, ex.Message);
+        }
+        using (var s = db.NewScope())
+            Assert.Equal(old, (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.67.1.1")).LastSeenAt);
+
+        // 서버 자신에서는 확인을 받는다
+        using (var s = db.NewScope())
+            await s.Users.ConfirmAsync("10.67.1.1", local: true);
+        using (var s = db.NewScope())
+            Assert.Equal(db.Clock.UtcNow, (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.67.1.1")).LastSeenAt);
+
+        // 복구 경로: 다른 관리자가 같은 IP 를 다시 연결하면 마지막 접속이 갱신된다
+        using (var s = db.NewScope())
+        {
+            (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.67.1.1")).LastSeenAt = old;
+            await s.Db.SaveChangesAsync();
+        }
+        using (var s = db.NewScope("다른관리자", admin: true))
+            await s.Masters.AddAddressAsync(new MasterIp(db.Me.Id, "10.67.1.1"));
+        using (var s = db.NewScope())
+            Assert.Equal(db.Clock.UtcNow, (await s.Db.UserAddresses.SingleAsync(a => a.Ip == "10.67.1.1")).LastSeenAt);
+    }
+
     // ── 첫 관리자 ──────────────────────────────────────────────────────
 
     // 관리자가 없는 DB (테스트 DB 의 기본 관리자를 일반 사용자로 바꾼다)
@@ -252,7 +327,7 @@ public class AccessTests : IClassFixture<TestDb>
             Assert.Equal("ip", taken.Field);
             Assert.Contains("새PC관리자", taken.Message);
             // 형식이 아닌 값 ("10" 은 0.0.0.10 으로 읽히므로 받지 않는다)
-            foreach (var bad in new[] { "10", "10.1", "abc", "" })
+            foreach (var bad in new[] { "10", "10.1", "abc", "", "192.168.001.010", "0x0A.1.2.3" })
                 Assert.Equal("ip", (await Assert.ThrowsAsync<RuleException>(() => s.Masters.AddAddressAsync(new MasterIp(userId, bad)))).Field);
 
             await s.Masters.RemoveAddressAsync(new MasterIp(userId, "10.66.4.1"));
@@ -423,6 +498,39 @@ public class AccessTests : IClassFixture<TestDb>
         // 접두 뒤 비트가 남은 대역은 접두까지만 본다
         Assert.True(new AccessOptions { AllowedNetworks = AccessOptions.ParseNetworks(new[] { "10.1.2.3/8" }) }.IsAllowed(IPAddress.Parse("10.200.0.1")));
         Assert.Throws<InvalidOperationException>(() => AccessOptions.ParseNetworks(new[] { "10" }));
+    }
+
+    [Theory]
+    [InlineData("10.0.0.1", "10.0.0.1")]
+    [InlineData(" 0.0.0.0 ", "0.0.0.0")]
+    [InlineData("255.255.255.255", "255.255.255.255")]
+    [InlineData("::1", "::1")]
+    [InlineData("::ffff:10.1.2.3", "::ffff:10.1.2.3")]
+    [InlineData("fe80::1", "fe80::1")]
+    [InlineData("192.168.001.010", null)]     // IPAddress.TryParse 는 8진수로 읽어 192.168.1.8
+    [InlineData("10.010.1.5", null)]          // → 10.8.1.5
+    [InlineData("0x0A.1.2.3", null)]          // 16진수
+    [InlineData("1.2.3.256", null)]
+    [InlineData("10", null)]
+    [InlineData("10.1.2", null)]
+    [InlineData("::ffff:010.1.1.1", null)]
+    [InlineData("１０.1.2.3", null)]           // 전각 숫자
+    public void IP_주소는_앞자리_0_없는_십진수만_받는다(string text, string? expected)
+    {
+        Assert.Equal(expected != null, AccessOptions.TryParseIp(text, out var ip));
+        if (expected != null) Assert.Equal(IPAddress.Parse(expected), ip);
+    }
+
+    [Fact]
+    public void 대역의_주소_부분도_십진수만_받는다()
+    {
+        Assert.True(AccessOptions.TryParseNetwork("10.0.0.0/8", out var net));
+        Assert.Equal("10.0.0.0/8", net.ToString());
+        foreach (var bad in new[] { "010.0.0.0/8", "10.0.0.0/", "10.0.0.0/x", "0x0A.0.0.0/8", "/8", "10.0.0.0/8/8" })
+            Assert.False(AccessOptions.TryParseNetwork(bad, out _), bad);
+        Assert.Throws<InvalidOperationException>(() => AccessOptions.ParseNetworks(new[] { "010.0.0.0/8" }));
+        var local = Assert.Throws<InvalidOperationException>(() => AccessOptions.ParseNetworks(new[] { "LocalSubnet" }));
+        Assert.Contains("LocalSubnet", local.Message);
     }
 
     [Fact]

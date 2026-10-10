@@ -31,8 +31,15 @@ public static class Rules
 
     public static bool IsLate(WorkItem w, Stage stage, DateOnly today) => IsOpen(w, stage) && w.PlanEnd < today;
 
-    // 의존 관계에 따라 일정을 옮길 수 있는 작업: 아직 시작하지 않았고 단계도 끝나지 않았다
-    public static bool IsMovable(WorkItem w, Stage stage) => w.ActualStart == null && stage.CompletedDate == null;
+    // 의존 관계에 따라 일정을 옮길 수 있는 작업: 아직 시작하지 않았고 단계도 끝나지 않았다.
+    // 밀기·위반 표시·저장할 때의 선행 검사가 모두 이 판정을 쓴다 — 서로 다르게 보면 '표시는 없는데 저장이 막히는' 일이 생긴다
+    public static bool IsMovable(WorkItem w, Stage stage) => IsMovable(w.ActualStart, stage);
+
+    // 저장하려는 값(실적 시작, 옮겨 갈 단계)으로 판정할 때
+    public static bool IsMovable(DateOnly? actualStart, Stage stage) => actualStart == null && stage.CompletedDate == null;
+
+    // 실적 종료 없이 단계 완료로 함께 끝난 것으로 보는 작업 (화면은 '진행 중'·'시작 전' 대신 단계 완료일에 끝난 것으로 그린다)
+    public static bool IsClosedByStage(WorkItem w, Stage stage) => w.ActualEnd == null && stage.CompletedDate != null;
 
     // 완료했지만 목표 종료일보다 늦게 끝남
     public static bool IsDoneLate(WorkItem w) => w.ActualEnd != null && w.ActualEnd.Value > w.PlanEnd;

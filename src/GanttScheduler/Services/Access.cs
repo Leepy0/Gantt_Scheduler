@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace GanttScheduler.Services;
 
@@ -39,26 +40,48 @@ public sealed class AccessOptions
         foreach (var token in items.SelectMany(s => s.Split(new[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)))
         {
             if (TryParseNetwork(token, out var net)) list.Add(net);
-            else throw new InvalidOperationException($"Access:AllowedNetworks 의 '{token}' 을(를) 해석할 수 없습니다. 10.0.0.0/8 처럼 CIDR 이나 주소 하나로 적어 주세요.");
+            else if (token.Equals("LocalSubnet", StringComparison.OrdinalIgnoreCase))
+                // 설치 명령의 --remoteip 는 방화벽 이름 LocalSubnet 을 받지만 앱은 서버의 서브넷을 알지 못한다
+                throw new InvalidOperationException("Access:AllowedNetworks 에는 LocalSubnet 을 적을 수 없습니다(방화벽 --remoteip 전용). 서버가 속한 대역을 10.1.0.0/16 처럼 CIDR 로 적어 주세요.");
+            else throw new InvalidOperationException($"Access:AllowedNetworks 의 '{token}' 을(를) 해석할 수 없습니다. 10.0.0.0/8 처럼 CIDR 이나 주소 하나로 적어 주세요(앞자리 0 없는 십진수).");
         }
         return list;
     }
 
-    // IP 주소 하나. IPAddress.TryParse 는 "10" 이나 "10.1" 도 받아 엉뚱한 주소(0.0.0.10)가 되므로 IPv4 는 점 네 마디만 받는다
+    // IPv4 는 십진수 네 마디만 받는다. IPAddress.TryParse 는 "10" 이나 "10.1" 도 받아 엉뚱한 주소(0.0.0.10)가 되고,
+    // 앞자리 0 은 8진수(192.168.001.010 → 192.168.1.8), 0x 는 16진수로 읽는다. 자산 대장에 적힌 모양 그대로 넣었다가
+    // 다른 사람의 PC 가 관리자로 연결되거나 방화벽에 엉뚱한 대역이 열리지 않게 한다
+    private static readonly Regex DecimalV4 = new(@"^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$", RegexOptions.CultureInvariant);
+
+    // IP 주소 하나 (IPv4 는 위 형식, IPv6 는 표준 표기. IPv6 안에 적은 IPv4 부분도 같은 규칙)
     public static bool TryParseIp(string? text, out IPAddress ip)
     {
         ip = IPAddress.None;
         text = (text ?? "").Trim();
         if (text.Length == 0 || text.Length > 45) return false;
-        if (!text.Contains(':') && text.Count(c => c == '.') != 3) return false;
+        if (text.Contains(':'))
+        {
+            var tail = text[(text.LastIndexOf(':') + 1)..];
+            if (tail.Contains('.') && !DecimalV4.IsMatch(tail)) return false;
+        }
+        else if (!DecimalV4.IsMatch(text)) return false;
         if (!IPAddress.TryParse(text, out var parsed)) return false;
         ip = parsed;
         return true;
     }
 
+    // CIDR(10.0.0.0/8) 또는 주소 하나. CIDR 의 주소 부분도 TryParseIp 와 같은 형식만 받는다
     public static bool TryParseNetwork(string token, out IPNetwork network)
     {
-        if (token.Contains('/')) return IPNetwork.TryParse(token, out network);
+        network = default;
+        token = (token ?? "").Trim();
+        var slash = token.IndexOf('/');
+        if (slash >= 0)
+        {
+            var prefix = token[(slash + 1)..];
+            if (!TryParseIp(token[..slash], out _) || prefix.Length is 0 or > 3 || !prefix.All(char.IsAsciiDigit)) return false;
+            return IPNetwork.TryParse(token, out network);
+        }
         if (TryParseIp(token, out var ip))
         {
             ip = Unmap(ip);

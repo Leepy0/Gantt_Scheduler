@@ -28,7 +28,13 @@ public class WelcomeModel : PageModel
     [BindProperty(SupportsGet = true)] public string? ReturnUrl { get; set; }
     // 이미 아는 기기에서 다른 이름으로 다시 연결하겠다는 표시. 없으면 아는 기기의 등록 요청은 받지 않는다
     [BindProperty(SupportsGet = true, Name = "switch")] public string? SwitchFlag { get; set; }
+    // 관리자에 연결된 기기를 다른 이름으로 옮기는 것을 확인했다는 표시
+    [BindProperty] public bool LeaveAdmin { get; set; }
     public string? Error { get; private set; }
+    // 이 기기가 관리자에 연결돼 있으면, 다른 이름으로 바꿀 때의 결과 안내 (사용자 바꾸기 화면)
+    public string? LeaveAdminWarning { get; private set; }
+    // 관리자 계정의 재확인은 '맞습니다'로 받지 않는다 (서버 자신 제외) — UserService.ConfirmAsync
+    public bool AdminMustRelink => _me.IsAdmin && !_me.IsLocal;
     public string Ip => _me.Ip;
     public string CurrentName => _me.Name;
     public int ReconfirmDays => _access.ReconfirmDays;
@@ -53,7 +59,7 @@ public class WelcomeModel : PageModel
         Mode = _me.IsKnown ? WelcomeMode.Switch : WelcomeMode.Register;
         try
         {
-            await _users.RegisterAsync(_me.Ip, Name, OrgUnitId, _me.IsLocal);
+            await _users.RegisterAsync(_me.Ip, Name, OrgUnitId, _me.IsLocal, LeaveAdmin);
             return LocalRedirect(SafeReturn());
         }
         catch (RuleException ex)
@@ -67,12 +73,26 @@ public class WelcomeModel : PageModel
     // 'OOO 님이 맞습니까?' → 맞습니다
     public async Task<IActionResult> OnPostConfirmAsync()
     {
-        if (_me.NeedsConfirm) await _users.ConfirmAsync(_me.Ip);
-        return LocalRedirect(SafeReturn());
+        if (!_me.NeedsConfirm) return LocalRedirect(SafeReturn());
+        try
+        {
+            await _users.ConfirmAsync(_me.Ip, _me.IsLocal);
+            return LocalRedirect(SafeReturn());
+        }
+        catch (RuleException ex)
+        {
+            Mode = WelcomeMode.Confirm;
+            Error = ex.Message;
+            await LoadAsync();
+            return Page();
+        }
     }
 
-    private async Task LoadAsync() =>
+    private async Task LoadAsync()
+    {
         OrgJson = AppJson.Serialize(new { orgs = (await _masters.ListAsync("org")).Where(o => o.Active), selected = OrgUnitId });
+        if (Mode == WelcomeMode.Switch) LeaveAdminWarning = await _users.LeaveAdminWarningAsync(_me.Ip);
+    }
 
     private string SafeReturn() => Url.IsLocalUrl(ReturnUrl) ? ReturnUrl! : Url.Content("~/");
 }

@@ -25,6 +25,7 @@ public record WorkView
     public int? Float { get; init; }                    // 여유 근무일 (제약이 없으면 null)
     public bool Critical { get; init; }                 // 미완료이고 여유가 없음
     public bool DepViolation { get; init; }             // 선행 작업보다 먼저 시작하게 잡혀 있음
+    public DateOnly? ClosedOn { get; init; }            // 실적 종료 없이 단계 완료로 함께 끝난 것으로 보는 날 (단계 완료일)
 }
 
 public record CheckView(int Id, string Text, bool Done, string? DoneBy, DateTime? DoneAt);
@@ -190,6 +191,7 @@ public static class Views
             Float = slack,
             Critical = open && slack != null && slack.Value <= 0,
             DepViolation = violation,
+            ClosedOn = stage != null && Rules.IsClosedByStage(w, stage) ? stage.CompletedDate : null,
         };
     }
 

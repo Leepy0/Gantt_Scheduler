@@ -36,6 +36,8 @@ public class AdminCommandTests
     [InlineData("admin|홍길동|--ip")]
     [InlineData("admin|홍길동|--ip|10")]
     [InlineData("admin|홍길동|--ip|서버")]
+    [InlineData("admin|홍길동|--ip|192.168.001.010")]     // 8진수로 읽혀 192.168.1.8 이 된다
+    [InlineData("admin|홍길동|--ip|0x0A.1.2.3")]
     [InlineData("admin|홍|길동")]
     [InlineData("admin|홍길동|--port|80")]
     public void 잘못된_인자는_이유를_알린다(string joined)

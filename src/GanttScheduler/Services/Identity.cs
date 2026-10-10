@@ -153,6 +153,7 @@ public class UserGateMiddleware
 public class UserService
 {
     public const string AdminLinkRefused = "관리자 이름에는 이 화면에서 PC 를 연결할 수 없습니다. 다른 관리자에게 IP 추가를 요청하세요.";
+    public const string AdminConfirmRefused = "관리자 계정은 오래 쓰지 않은 기기를 이 화면에서 다시 확인할 수 없습니다. 다른 관리자에게 IP 연결을 요청하거나 서버에서 admin 명령을 실행하세요.";
 
     private readonly AppDb _db;
     private readonly IClock _clock;
@@ -169,7 +170,8 @@ public class UserService
 
     // 이름으로 등록. 같은 이름의 사용자가 이미 있으면 이 IP 를 그 사용자에 연결한다(PC 교체·IP 변경 대응).
     // local: 서버 자신(루프백)에서 온 요청 — 관리자가 없을 때 첫 관리자가 될 수 있다
-    public async Task<AppUser> RegisterAsync(string ip, string? name, int? orgUnitId, bool local = false)
+    // leaveAdmin: 관리자에 연결된 이 기기를 다른 이름으로 옮기는 것을 확인했다는 표시 (LeaveAdminWarningAsync)
+    public async Task<AppUser> RegisterAsync(string ip, string? name, int? orgUnitId, bool local = false, bool leaveAdmin = false)
     {
         name = (name ?? "").Trim();
         if (name.Length == 0) throw new RuleException("이름을 입력해 주세요.", "name");
@@ -186,6 +188,10 @@ public class UserService
         // 얻는 길을 막기 위해서다. PC 를 바꾼 관리자는 다른 관리자가 관리 > 사용자에서 IP 를 추가하거나, 서버에서 admin 명령으로 연결한다
         if (user is { IsAdmin: true } && addr?.UserId != user.Id)
             throw new RuleException(AdminLinkRefused, "name");
+        // 관리자에 연결된 기기를 다른 이름으로 옮기면 위 규칙 때문에 그 관리자는 이 기기에서 돌아오지 못한다. 실수로 잠기지 않게 확인을 받는다
+        // (막지는 않는다 — IP 를 넘겨받은 사람은 자기 이름으로 바꿀 수 있어야 한다)
+        if (addr != null && addr.UserId != user?.Id && !leaveAdmin && await LeaveAdminWarningAsync(ip) is { } warning)
+            throw new RuleException(warning + " 그래도 바꾸려면 확인란을 선택해 주세요.", "leaveAdmin");
 
         // 관리자가 한 명도 없으면 첫 관리자를 정한다. 기본은 서버 자신에서 등록한 사람만(설치 직후 아무 PC 나 선점하지 못하게)
         var firstAdmin = !await _db.Users.AnyAsync(u => u.IsAdmin) && (local || !_access.FirstAdminLocalOnly);
@@ -214,11 +220,27 @@ public class UserService
         return user;
     }
 
-    // 'OOO 님이 맞습니까?'에 맞다고 답한 경우 — 이 IP 연결을 다시 쓰는 것으로 기록한다
-    public async Task ConfirmAsync(string ip)
+    // 이 IP 가 사용 중인 관리자에 연결돼 있으면, 다른 이름으로 옮겼을 때 그 관리자가 되돌아오는 방법을 알리는 문구. 아니면 null
+    public async Task<string?> LeaveAdminWarningAsync(string ip)
     {
-        var addr = await _db.UserAddresses.FirstOrDefaultAsync(a => a.Ip == ip);
+        var addr = await _db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.Ip == ip);
+        if (addr?.User is not { IsAdmin: true, IsActive: true } admin) return null;
+        var otherAdmin = await _db.Users.AnyAsync(u => u.IsAdmin && u.IsActive && u.Id != admin.Id);
+        var otherDevice = await _db.UserAddresses.AnyAsync(a => a.UserId == admin.Id && a.Ip != ip);
+        var back = otherAdmin ? "되돌리려면 다른 관리자가 관리 > 사용자에서 이 IP 를 다시 연결해야 합니다."
+            : otherDevice ? $"되돌리려면 {admin.Name} 님이 연결된 다른 기기에서 관리 > 사용자로 이 IP 를 다시 연결해야 합니다."
+            : "관리자가 혼자이고 연결된 다른 기기도 없어 서버 콘솔의 admin 명령으로만 되돌릴 수 있습니다.";
+        return $"이 기기는 관리자 {admin.Name} 님에 연결돼 있습니다. 다른 이름으로 바꾸면 {admin.Name} 님은 이 기기에서 다시 관리자로 돌아올 수 없습니다. {back}";
+    }
+
+    // 'OOO 님이 맞습니까?'에 맞다고 답한 경우 — 이 IP 연결을 다시 쓰는 것으로 기록한다.
+    // 관리자 계정은 이 한 번의 확인으로 되살리지 않는다: DHCP 로 이 IP 를 넘겨받은 사람이 '맞습니다'만 누르면
+    // 관리자 권한(업데이트 파일 올리기 → 서버에서 실행)을 얻게 되기 때문이다. 서버 자신(루프백)에서 온 확인만 받는다
+    public async Task ConfirmAsync(string ip, bool local = false)
+    {
+        var addr = await _db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.Ip == ip);
         if (addr == null) return;
+        if (addr.User is { IsAdmin: true } && !local) throw new RuleException(AdminConfirmRefused, "confirm");
         addr.LastSeenAt = _clock.UtcNow;
         await _db.SaveChangesAsync();
     }

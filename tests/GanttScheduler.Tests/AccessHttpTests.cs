@@ -38,11 +38,12 @@ public class AccessHttpTests
         return c;
     }
 
-    private static async Task<HttpResponseMessage> PostWelcomeAsync(HttpClient c, string name, bool switchUser = false, string handler = "")
+    private static async Task<HttpResponseMessage> PostWelcomeAsync(HttpClient c, string name, bool switchUser = false, string handler = "", bool leaveAdmin = false)
     {
         var html = await (await c.GetAsync("/Welcome?switch=1")).Content.ReadAsStringAsync();
         var form = new Dictionary<string, string> { ["Name"] = name, ["ReturnUrl"] = "/Projects", ["__RequestVerificationToken"] = TokenOf(html) };
         if (switchUser) form["switch"] = "1";
+        if (leaveAdmin) form["LeaveAdmin"] = "true";
         return await c.PostAsync("/Welcome" + handler, new FormUrlEncodedContent(form));
     }
 
@@ -173,6 +174,48 @@ public class AccessHttpTests
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/Projects")).StatusCode);
     }
 
+    [Fact]
+    public async Task 관리자_계정은_재확인을_클릭으로_받지_않고_기기를_옮길_때는_확인을_받는다()
+    {
+        using var f = Forwarded();
+        using (var s = f.Db.NewScope())
+            await s.Masters.AddAddressAsync(new MasterIp(f.Db.Me.Id, "10.9.3.1"));
+        await AgeAsync(f, "10.9.3.1", days: 40);
+        var c = Client(f, "10.9.3.1");
+
+        // 'OOO 님이 맞습니까?' 에 '맞습니다' 대신 다시 연결하는 방법을 안내한다
+        var confirm = await (await c.GetAsync("/Welcome?returnUrl=%2FProjects")).Content.ReadAsStringAsync();
+        var text = WebUtility.HtmlDecode(confirm);
+        Assert.Contains("테스터 님이 맞습니까?", text);
+        Assert.Contains("id=\"admin-relink\"", text);
+        Assert.Contains("admin 테스터 --ip 10.9.3.1", text);
+        Assert.DoesNotContain("confirm-yes", text);
+
+        // 화면을 거치지 않고 보낸 '맞습니다'도 받지 않는다
+        var yes = await c.PostAsync("/Welcome?handler=Confirm", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["ReturnUrl"] = "/Projects", ["__RequestVerificationToken"] = TokenOf(confirm),
+        }));
+        Assert.Equal(HttpStatusCode.OK, yes.StatusCode);
+        Assert.Contains(UserService.AdminConfirmRefused, WebUtility.HtmlDecode(await yes.Content.ReadAsStringAsync()));
+        Assert.Equal(HttpStatusCode.Redirect, (await c.GetAsync("/Projects")).StatusCode);
+
+        // 본인이 아니면 내 이름으로: 관리자 기기를 옮기는 결과를 보여 주고, 확인란 없이는 옮기지 않는다
+        var switchPage = WebUtility.HtmlDecode(await (await c.GetAsync("/Welcome?switch=1")).Content.ReadAsStringAsync());
+        Assert.Contains("id=\"leave-admin\"", switchPage);
+        Assert.Contains("다시 관리자로 돌아올 수 없습니다", switchPage);
+        var refused = await PostWelcomeAsync(c, "넘겨받은사람", switchUser: true);
+        Assert.Equal(HttpStatusCode.OK, refused.StatusCode);
+        Assert.Contains("확인란을 선택해 주세요", WebUtility.HtmlDecode(await refused.Content.ReadAsStringAsync()));
+        Assert.Equal("테스터", await UserOfIpAsync(f, "10.9.3.1"));
+
+        var moved = await PostWelcomeAsync(c, "넘겨받은사람", switchUser: true, leaveAdmin: true);
+        Assert.Equal(HttpStatusCode.Redirect, moved.StatusCode);
+        Assert.Equal("넘겨받은사람", await UserOfIpAsync(f, "10.9.3.1"));
+        var admin = await (await c.GetAsync("/Admin")).Content.ReadAsStringAsync();
+        Assert.Contains("조회 전용", admin);
+    }
+
     private static async Task AgeAsync(AppFactory f, string ip, int days)
     {
         using var s = f.Db.NewScope();
@@ -192,6 +235,7 @@ public class AccessHttpTests
         Assert.Contains("관리자가 아직 없습니다", admin);
         Assert.Contains("조회 전용", admin);
         Assert.Contains("--ip 10.9.1.1", admin);
+        Assert.Contains("http://localhost/", admin);      // 서버 이름·IP 가 아니라 localhost 로 접속해야 서버 자신으로 본다
 
         // 서버 자신(프록시를 거치지 않은 루프백)에서 등록하면 관리자
         var local = Client(f);

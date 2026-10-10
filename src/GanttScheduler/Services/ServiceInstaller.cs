@@ -60,6 +60,20 @@ public static class ServiceInstaller
         return list.Count == 0 ? null : string.Join(",", list);
     }
 
+    // 설치를 마친 뒤 앱 설정(Access:AllowedNetworks) 안내. LocalSubnet 은 방화벽만 아는 이름이라 앱 설정에 그대로 적으면
+    // 서버가 시작하지 않는다 — 그때는 실제 대역을 적으라고 따로 알린다
+    public static string AllowedNetworksHint(string remoteIp)
+    {
+        var parts = remoteIp.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var cidrs = parts.Where(x => !x.Equals("LocalSubnet", StringComparison.OrdinalIgnoreCase)).ToList();
+        const string where = "appsettings.Production.json 의 Access:AllowedNetworks";
+        if (cidrs.Count == parts.Length)
+            return $"앱에서도 같은 대역만 받으려면 {where} 에 같은 값을 적습니다.";
+        return $"앱에서도 같은 대역만 받으려면 {where} 에 서버가 속한 대역을 10.1.0.0/16 처럼 CIDR 로 적습니다" +
+               (cidrs.Count > 0 ? $"(나머지 {string.Join(",", cidrs)} 와 함께)" : "") +
+               ". LocalSubnet 은 방화벽 전용이라 앱 설정에 적으면 서버가 시작하지 않습니다.";
+    }
+
     // 방화벽 인바운드 규칙 추가 명령(netsh 인자). remoteIp 가 없으면 모든 주소에서 받는다
     public static string[] FirewallRule(string name, int port, string? remoteIp)
     {
@@ -243,8 +257,7 @@ public static class ServiceInstaller
         }
         Console.WriteLine("완료. 이 서버의 브라우저에서 확인: http://localhost" + (port == 80 ? "" : ":" + port) + "/");
         Console.WriteLine("다른 PC 에서는 http://<서버 이름 또는 IP>" + (port == 80 ? "" : ":" + port) + "/ 로 접속합니다.");
-        if (remote != null)
-            Console.WriteLine("앱에서도 같은 대역만 받으려면 appsettings.Production.json 의 Access:AllowedNetworks 에 같은 값을 적습니다.");
+        if (remote != null) Console.WriteLine(AllowedNetworksHint(remote));
         return 0;
     }
 

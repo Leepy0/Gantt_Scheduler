@@ -84,8 +84,24 @@ public class ServiceInstallerTests
     [InlineData("10.0.0.0/8;192.168.0.0/16")]
     [InlineData("10.0.0.0/33")]
     [InlineData("10")]
+    [InlineData("010.0.0.0/8")]            // 앞자리 0 은 8진수로 읽혀 8.0.0.0/8 이 된다
+    [InlineData("192.168.001.010")]
+    [InlineData("0x0A.0.0.0/8")]
     public void 방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(string value) =>
         Assert.Throws<ArgumentException>(() => ServiceInstaller.RemoteIp(value));
+
+    [Fact]
+    public void LocalSubnet_을_쓰면_앱_설정에는_실제_대역을_적으라고_안내한다()
+    {
+        Assert.Contains("같은 값", ServiceInstaller.AllowedNetworksHint("10.0.0.0/8,192.168.1.10"));
+        var local = ServiceInstaller.AllowedNetworksHint("LocalSubnet");
+        Assert.Contains("CIDR", local);
+        Assert.Contains("LocalSubnet 은 방화벽 전용", local);
+        Assert.Contains("10.0.0.0/8", ServiceInstaller.AllowedNetworksHint("10.0.0.0/8,LocalSubnet"));
+        // 안내대로 그대로 적으면 서버가 시작하지 않는 값이다
+        var ex = Assert.Throws<InvalidOperationException>(() => AccessOptions.ParseNetworks(new[] { "LocalSubnet" }));
+        Assert.Contains("CIDR", ex.Message);
+    }
 
     [Fact]
     public void 방화벽_규칙은_원격_주소를_줄_때만_제한한다()

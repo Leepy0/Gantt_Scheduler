@@ -663,6 +663,139 @@ public class ScheduleServiceTests : IClassFixture<TestDb>
         Assert.Equal(meeting.PlanStart, WorkOf(await ViewAsync(id), "검토 회의").PlanStart);
     }
 
+    [Fact]
+    public async Task 완료된_단계의_작업은_밀지도_검사하지도_않고_완료를_취소하면_선행에_맞춰_민다()
+    {
+        var id = await NewProjectAsync("테스트 완료 취소 밀기");
+        var stages = (await ViewAsync(id)).Stages;
+        var a = await AddWorkAsync(id, stages[0].Id, "A", Day(10, 12), Day(10, 14));
+        var b = await AddWorkAsync(id, stages[1].Id, "B", Day(10, 15), Day(10, 16), a);
+
+        // 단계2 를 완료(작업은 닫지 않음)한 뒤 선행 A 를 늘린다 → 완료 단계의 B 는 밀리지 않고 위반으로도 보이지 않는다
+        using (var s = _db.NewScope())
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[1].Id, stages[1].Name, null, Day(10, 9), null, false));
+        var va = WorkOf(await ViewAsync(id), "A");
+        using (var s = _db.NewScope())
+            await s.Projects.SaveWorkAsync(Work(a, stages[0].Id, "A", Day(10, 12), Day(10, 20), reason: "범위 확대", version: va.Version));
+        var p = await ViewAsync(id);
+        var vb = WorkOf(p, "B");
+        Assert.Equal((Day(10, 15), Day(10, 16)), (vb.PlanStart, vb.PlanEnd));
+        Assert.False(vb.DepViolation);
+        Assert.Equal(Day(10, 9), vb.ClosedOn);                  // 단계와 함께 끝난 것으로 본다 (화면은 '완료(단계)')
+        Assert.Null(WorkOf(p, "A").ClosedOn);
+
+        // 위반으로 표시하지 않는 작업은 일정을 고쳐도 선행 검사로 막지 않는다 (표시와 검사가 같은 기준)
+        using (var s = _db.NewScope())
+            await s.Projects.SaveWorkAsync(Work(b, stages[1].Id, "B", Day(10, 15), Day(10, 19), new List<int> { a }, reason: "기간 조정", version: vb.Version));
+        vb = WorkOf(await ViewAsync(id), "B");
+        Assert.Equal((Day(10, 15), Day(10, 19)), (vb.PlanStart, vb.PlanEnd));
+
+        // 완료를 취소하면 그 사이 늦어진 선행(A, 10-20 종료)에 맞춰 근무일 기간(3일)을 지킨 채 민다
+        var stageVersion = (await ViewAsync(id)).Stages[1].Version;
+        using (var s = _db.NewScope())
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[1].Id, stages[1].Name, null, null, null, false, stageVersion));
+        p = await ViewAsync(id);
+        var moved = WorkOf(p, "B");
+        Assert.Equal((Day(10, 21), Day(10, 23)), (moved.PlanStart, moved.PlanEnd));
+        Assert.Equal(vb.Version + 1, moved.Version);
+        Assert.Null(moved.ClosedOn);
+        await ScheduleAssert.AssertSchedulableAsync(_db, id);
+
+        using var check = _db.NewScope();
+        var reopened = await check.Db.Activities.Where(x => x.ProjectId == id && x.Type == ActivityType.StageReopened).SingleAsync();
+        var plan = await check.Db.Activities.Where(x => x.ProjectId == id && x.BatchId == reopened.BatchId && x.Type == ActivityType.WorkPlanChanged).SingleAsync();
+        Assert.NotNull(reopened.BatchId);
+        Assert.Equal(b, plan.WorkItemId);
+        Assert.Equal("단계 완료 취소로 선행 일정에 맞춤", plan.Reason);
+    }
+
+    [Fact]
+    public async Task 실적_시작을_지워_밀기_대상이_되면_선행을_다시_검사한다()
+    {
+        var id = await NewProjectAsync("테스트 시작 취소 검사");
+        var stage = (await ViewAsync(id)).Stages[0].Id;
+        var a = await AddWorkAsync(id, stage, "A", Day(10, 12), Day(10, 14));
+        int b;
+        using (var s = _db.NewScope())
+            await s.Projects.SaveWorkAsync(Work(null, stage, "B", Day(10, 15), Day(10, 16), new List<int> { a }, actualStart: Day(10, 15)));
+        b = WorkOf(await ViewAsync(id), "B").Id;
+
+        // 이미 시작한 B 는 A 가 늘어나도 밀리지 않는다
+        var va = WorkOf(await ViewAsync(id), "A");
+        using (var s = _db.NewScope())
+            await s.Projects.SaveWorkAsync(Work(a, stage, "A", Day(10, 12), Day(10, 19), reason: "연장", version: va.Version));
+        var vb = WorkOf(await ViewAsync(id), "B");
+        Assert.Equal(Day(10, 15), vb.PlanStart);
+        Assert.False(vb.DepViolation);
+
+        // 실적 시작을 지우면 밀기 대상이 되므로, 선행보다 이른 일정은 거절한다 (위반을 숨긴 채 저장되지 않게)
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() =>
+                s.Projects.SaveWorkAsync(new WorkInput(b, stage, "B", null, null, vb.PlanStart, vb.PlanEnd, null, null, 0, null, null, vb.Version)));
+            Assert.Equal("planStart", ex.Field);
+        }
+        Assert.Equal(Day(10, 15), WorkOf(await ViewAsync(id), "B").ActualStart);
+    }
+
+    [Fact]
+    public async Task 연쇄_이동으로_작업이_범위를_넘으면_거절하고_아무것도_바꾸지_않는다()
+    {
+        var id = await NewProjectAsync("테스트 연쇄 범위");
+        var stages = (await ViewAsync(id)).Stages;
+        using (var s = _db.NewScope())
+            await s.Projects.SaveStageAsync(new StageInput(id, stages[0].Id, stages[0].Name, Day(10, 14), null, null, false));
+        // 이후 단계(목표일 없음)의 작업을 허용 범위 끝(착수일 + 10년) 가까이에 둔다
+        var cal = await CalendarAsync();
+        var max = Rules.DateRange(Day(10, 1)).Max;
+        var end = cal.AddWorkingDays(max, -1);                 // 범위 끝 직전 근무일
+        var start = cal.AddWorkingDays(end, -2);
+        await AddWorkAsync(id, stages[1].Id, "먼 작업", start, end);
+
+        var before = await ViewAsync(id);
+        int activities;
+        using (var s = _db.NewScope())
+            activities = await s.Db.Activities.CountAsync(x => x.ProjectId == id);
+
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.SaveStageAsync(new StageInput(
+                id, stages[0].Id, stages[0].Name, Day(10, 21), null, "범위 시험", true, before.Stages[0].Version, CascadeWorks: true)));
+            Assert.Equal("targetDate", ex.Field);
+            Assert.Contains("함께 옮겨지는 작업 '먼 작업'", ex.Message);
+        }
+
+        var after = await ViewAsync(id);
+        Assert.Equal(Day(10, 14), after.Stages[0].TargetDate);
+        Assert.Equal(before.Stages[0].Version, after.Stages[0].Version);
+        var far = WorkOf(after, "먼 작업");
+        Assert.Equal((start, end, WorkOf(before, "먼 작업").Version), (far.PlanStart, far.PlanEnd, far.Version));
+        using (var s = _db.NewScope())
+            Assert.Equal(activities, await s.Db.Activities.CountAsync(x => x.ProjectId == id));
+    }
+
+    [Fact]
+    public async Task 복제로_옮긴_날짜가_범위를_넘으면_착수일로_거절한다()
+    {
+        var id = await NewProjectAsync("테스트 복제 범위");
+        var stage = (await ViewAsync(id)).Stages[0];
+        // 범위가 생기기 전에 들어간 값 (착수일 + 10년 밖)
+        using (var s = _db.NewScope())
+        {
+            var st = await s.Db.Stages.FirstAsync(x => x.Id == stage.Id);
+            st.TargetDate = new DateOnly(2037, 6, 1);
+            await s.Db.SaveChangesAsync();
+        }
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.CloneAsync(new CloneInput(id, "테스트 복제 범위 사본", Day(10, 1), true)));
+            Assert.Equal("startDate", ex.Field);
+            Assert.Contains("원본 일정을 옮기면", ex.Message);
+        }
+        using (var s = _db.NewScope())
+            Assert.False(await s.Db.Projects.AnyAsync(x => x.Title == "테스트 복제 범위 사본"));
+    }
+
     // 시드 고정 무작위 시나리오: 서비스로 작업·의존을 만들고 목표 일정을 여러 번 바꿔도 불변식이 지켜진다
     [Fact]
     public async Task 무작위로_일정을_바꿔도_서비스가_불변식을_지킨다()

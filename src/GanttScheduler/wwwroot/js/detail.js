@@ -79,6 +79,8 @@
     function workChip(w) {
         if (w.late) return chip('alarm', 'alert', '지연');
         if (w.status === 'done') return w.doneLate ? chip('warn', 'clock', '초과 완료') : chip('ok', 'check', '완료');
+        // 실적 종료 없이 단계 완료로 함께 끝난 것으로 보는 작업 (서버가 closedOn 으로 알려 준다)
+        if (w.closedOn) return chip('ok', 'check', '완료(단계)');
         if (w.status === 'inprogress') return chip('accent', null, '진행 중');
         return chip('', null, '예정');
     }
@@ -173,14 +175,22 @@
         if (showBaseline && w.baselineStart && w.baselineEnd) {
             bars.push({ from: w.baselineStart, to: w.baselineEnd, top: 4, h: 3, cls: 'base', title: '기준선 ' + w.baselineStart + ' ~ ' + w.baselineEnd });
         }
-        // 목표 막대: 끝나지 않은 작업은 끌어서 옮기거나 양 끝을 늘릴 수 있다
+        // 목표 막대: 끝나지 않은 작업은 끌어서 옮기거나 양 끝을 늘릴 수 있다 (단계 완료로 끝난 작업도 끝난 것으로 본다)
         bars.push({
             from: w.planStart, to: w.planEnd, top: 10, h: 8, cls: 'plan' + (w.critical ? ' crit' : ''), anchor: true,
-            drag: w.actualEnd ? null : 'move', kind: 'workPlan',
+            drag: w.actualEnd || w.closedOn ? null : 'move', kind: 'workPlan',
             title: '목표 ' + w.planStart + ' ~ ' + w.planEnd + ' (근무일 ' + w.planWorkDays + '일)' + (w.critical ? ' · 여유 없음' : '')
         });
         var top = 22, h = 12;
-        if (w.actualStart) {
+        if (w.closedOn) {
+            // 단계 완료로 함께 끝난 작업: 실적 막대는 단계 완료일에서 끊는다. 시작 기록이 없으면 실적 막대를 그리지 않는다
+            if (w.actualStart) {
+                bars.push({
+                    from: w.actualStart, to: D.max(w.closedOn, w.actualStart), top: top, h: h, cls: 'done',
+                    title: '실적 ' + w.actualStart + ' ~ (단계 완료 ' + w.closedOn + ')'
+                });
+            }
+        } else if (w.actualStart) {
             if (w.actualEnd) {
                 bars.push({
                     from: w.actualStart, to: w.actualEnd, top: top, h: h, cls: w.doneLate ? 'over' : 'done',
@@ -295,7 +305,7 @@
                 : '';
             var works = s.works.map(function (w) {
                 var range = '목표 ' + D.md(w.planStart) + '~' + D.md(w.planEnd) + ' (' + w.planWorkDays + '일)' +
-                    (w.actualStart ? ' · 실적 ' + D.md(w.actualStart) + '~' + (w.actualEnd ? D.md(w.actualEnd) : '') : '');
+                    (w.actualStart ? ' · 실적 ' + D.md(w.actualStart) + '~' + (w.actualEnd ? D.md(w.actualEnd) : w.closedOn ? '(단계 완료 ' + D.md(w.closedOn) + ')' : '') : '');
                 var who = owners(w);
                 var pre = w.predecessors.map(function (id) { return titles[id]; }).filter(Boolean);
                 var chips = workChip(w);
@@ -755,8 +765,9 @@
         var status = '';
         if (!isNew) {
             if (w.depViolation) status += '<p class="form-error">' + icon('link') + '<span>선행 작업이 끝나기 전에 시작하도록 잡혀 있습니다. 목표 일정을 조정해 주세요.</span></p>';
+            if (w.closedOn) status += '<div class="form-note">' + icon('check') + '<div>단계 완료(' + D.md(w.closedOn) + ')로 함께 끝난 것으로 봅니다. 지연·임계·일정 밀기에서 빠집니다.</div></div>';
             var bits = [];
-            if (w.float != null) bits.push(w.float <= 0 ? '여유 없음 — 밀리면 단계 목표일이 밀립니다' : '여유 ' + w.float + '근무일');
+            if (w.float != null && !w.closedOn) bits.push(w.float <= 0 ? '여유 없음 — 밀리면 단계 목표일이 밀립니다' : '여유 ' + w.float + '근무일');
             if (w.baselineStart) bits.push('기준선 ' + D.md(w.baselineStart) + ' ~ ' + D.md(w.baselineEnd));
             if (bits.length) status += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
         }

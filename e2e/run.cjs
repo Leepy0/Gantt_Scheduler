@@ -131,6 +131,9 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         const card = await page.locator('.welcome-card').innerText();
         assert(card.includes('사용자 바꾸기') && card.includes('평영'), '지금 사용자가 표시되지 않음: ' + card);
         assert(card.includes('동명이인'), '기존 이름 연결 안내가 없음');
+        // 관리자에 연결된 기기를 다른 이름으로 옮기면 돌아올 수 없다는 안내와 확인란
+        assert(card.includes('다시 관리자로 돌아올 수 없습니다'), '관리자 기기 안내가 없음: ' + card);
+        assert(!(await page.isChecked('#leave-admin input[name=LeaveAdmin]')), '확인란이 기본으로 켜져 있음');
         await shot(page, 'd01b-switch-user');
         // 취소하면 원래 화면으로
         await page.locator('.welcome-card a.btn', { hasText: '취소' }).click();
@@ -412,6 +415,26 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(after !== before, '이후 단계 작업이 옮겨지지 않음: ' + after);
     });
 
+    await step('간트에서 단계 목표일을 끌어도 이후 단계 작업 포함 선택지가 보임', async () => {
+        await page.click('#zoom [data-zoom=day]');
+        const handle = page.locator('#gantt .g-row.stage', { hasText: '모델링' }).locator('.g-bar.draggable .g-rz.r');
+        await handle.scrollIntoViewIfNeeded();
+        const box = await handle.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 28 * 2, box.y + box.height / 2, { steps: 6 });   // 하루 28px → 2일
+        await page.mouse.up();
+        await page.waitForSelector(SHEET);
+        assert((await page.locator(SHEET + ' .sheet-head h2').innerText()).includes('목표일 변경'), '목표일 변경 확인 창이 아님');
+        const option = page.locator(SHEET + ' label', { has: page.locator('input[name=cascadeWorks]') });
+        assert(await option.isVisible(), '끌기 시트에 작업 포함 선택지가 없음');
+        assert((await option.innerText()).includes('미착수 작업 1건'), '작업 수 표시가 아님: ' + (await option.innerText()));
+        assert(!(await page.isChecked(SHEET + ' input[name=cascadeWorks]')), '작업 포함이 기본으로 켜져 있음');
+        await shot(page, 'd30b-gantt-target-cascade-works', false);
+        await closeSheet(page);     // 저장하지 않으면 그대로
+        await page.click('#zoom [data-zoom=week]');
+    });
+
     await step('단계 완료 — 남은 작업을 완료일로 닫고 완료', async () => {
         await stageRow(page, '모델링').click();
         await page.waitForSelector(SHEET);
@@ -430,6 +453,31 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         }
         assert((await stageRow(page, '모델링').innerText()).includes('완료'), '단계가 완료되지 않음');
         await shot(page, 'd32-stage-closed-works');
+    });
+
+    await step('단계만 완료하면 남은 작업은 완료(단계)로 보이고 끌 수 없으며, 완료를 취소하면 되돌아옴', async () => {
+        // '검증' 단계에는 앞에서 만든 미착수 작업(검증 시나리오 실행)이 있다
+        const bar = () => workRow(page, '검증 시나리오 실행').locator('.g-bar.draggable');
+        assert((await bar().count()) === 1, '완료 전 작업 막대를 끌 수 없음');
+        await stageRow(page, '검증').click();
+        await page.waitForSelector(SHEET);
+        await page.click(SHEET + ' [data-done-today]');
+        assert(!(await page.isChecked(SHEET + ' input[name=closeWorks]')), '남은 작업 닫기가 기본으로 켜져 있음');
+        await submitSheet(page);
+        assert((await bar().count()) === 0, '단계 완료로 끝난 작업을 끌 수 있음');
+        assert((await workRow(page, '검증 시나리오 실행').locator('.g-bar.ghost').count()) === 0, "끝난 작업에 '시작 전' 막대가 남음");
+        await shot(page, 'd33-stage-done-open-work');
+
+        await page.click('#view-mode [data-view=list]');
+        const item = page.locator('#schedule-list .work-item', { has: page.locator('.work-title', { hasText: '검증 시나리오 실행' }) });
+        assert((await item.innerText()).includes('완료(단계)'), '완료(단계) 표시가 없음: ' + (await item.innerText()));
+        await page.click('#view-mode [data-view=gantt]');
+
+        await stageRow(page, '검증').click();
+        await page.waitForSelector(SHEET);
+        await page.click(SHEET + ' [data-clear-done]');
+        await submitSheet(page);
+        assert((await bar().count()) === 1, '완료를 취소했는데 작업 막대를 끌 수 없음');
     });
 
     await step('모든 단계 완료 시 자동으로 완료 상태', async () => {
@@ -750,6 +798,20 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.waitForSelector(SHEET);
         await shot(m, 'm07-stage-sheet', false);
         await closeSheet(m);
+    });
+
+    await step('모바일 단계 시트 — 목표일을 바꾸면 이후 단계 작업 포함 선택지', async () => {
+        await openProject(m, '광주 2공장 물류 동선 Simulation');
+        await m.click('#view-mode [data-view=list]');
+        await m.locator('#schedule-list .stage-head', { hasText: '모델링' }).click();
+        await m.waitForSelector(SHEET);
+        await m.fill(SHEET + ' input[name=targetDate]', kstToday(20));
+        const option = m.locator(SHEET + ' label', { has: m.locator('input[name=cascadeWorks]') });
+        assert(await option.isVisible(), '작업 포함 선택지가 보이지 않음');
+        await noOverflow('단계 시트');
+        await shot(m, 'm07b-stage-cascade-works', false);
+        await closeSheet(m);
+        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
     await step('모바일 자료·분석·과제 등록·관리 화면', async () => {
