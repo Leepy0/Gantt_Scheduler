@@ -37,7 +37,7 @@ public static class DbInitializer
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
     }
 
-    private static string SchemaHash(string script) =>
+    public static string SchemaHash(string script) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));
 }
 

@@ -1,41 +1,78 @@
 @page
 @model WelcomeModel
 @{
-    ViewData["Title"] = "사용자 등록";
+    ViewData["Title"] = Model.Mode switch { WelcomeMode.Confirm => "사용자 확인", WelcomeMode.Switch => "사용자 바꾸기", _ => "사용자 등록" };
     ViewData["Bare"] = true;
+    var back = Url.IsLocalUrl(Model.ReturnUrl) ? Model.ReturnUrl : Url.Content("~/");
 }
 <section class="welcome">
     <div class="card welcome-card">
         <div class="brand-lg">과제 스케줄러</div>
-        <h1>이름을 등록해 주세요</h1>
-        <p class="muted">이 기기(@Model.Ip)에서 처음 접속했습니다. 등록한 이름이 작성자·담당자로 표시됩니다.</p>
-        <form method="post" class="form">
-            <input type="hidden" asp-for="ReturnUrl" />
-            <input type="hidden" asp-for="OrgUnitId" id="org-id" />
-            <label class="field">
-                <span class="label">이름</span>
-                <input asp-for="Name" maxlength="50" autocomplete="name" required autofocus />
-            </label>
-            <div class="field" id="org-field" hidden>
-                <span class="label">소속 <span class="opt">선택</span></span>
-                <div class="field-row">
-                    <select id="org-group" aria-label="그룹"></select>
-                    <select id="org-part" aria-label="파트"></select>
-                </div>
-            </div>
-            @if (Model.Error != null)
+        @if (Model.Mode == WelcomeMode.Confirm)
+        {
+            <h1>@Model.CurrentName 님이 맞습니까?</h1>
+            <p class="muted">이 기기(@Model.Ip)에서 @(Model.ReconfirmDays)일 넘게 접속하지 않았습니다. IP 가 다른 사람에게 다시 배정됐을 수 있어 확인합니다.</p>
+            <form method="post" asp-page-handler="Confirm" class="form">
+                <input type="hidden" asp-for="ReturnUrl" />
+                <button type="submit" class="btn primary block" id="confirm-yes">맞습니다</button>
+                <a class="btn block" id="confirm-no" asp-page="/Welcome" asp-route-switch="1" asp-route-returnUrl="@Model.ReturnUrl">아닙니다 — 내 이름 입력</a>
+            </form>
+        }
+        else
+        {
+            if (Model.Mode == WelcomeMode.Switch)
             {
-                <p class="form-error" role="alert"><svg class="ic"><use href="#i-alert" /></svg>@Model.Error</p>
+                <h1>사용자 바꾸기</h1>
+                <p class="muted">이 기기(@Model.Ip)는 지금 <strong>@Model.CurrentName</strong> 님으로 연결돼 있습니다. 다른 사람이 쓰는 기기라면 그 사람의 이름을 입력하세요.</p>
             }
-            <button type="submit" class="btn primary block">등록하고 시작</button>
-        </form>
+            else
+            {
+                <h1>이름을 등록해 주세요</h1>
+                <p class="muted">이 기기(@Model.Ip)에서 처음 접속했습니다. 등록한 이름이 작성자·담당자로 표시됩니다.</p>
+            }
+            <form method="post" class="form">
+                <input type="hidden" asp-for="ReturnUrl" />
+                <input type="hidden" asp-for="OrgUnitId" id="org-id" />
+                @if (Model.Mode == WelcomeMode.Switch)
+                {
+                    <input type="hidden" name="switch" value="1" />
+                }
+                <label class="field">
+                    <span class="label">이름</span>
+                    <input asp-for="Name" maxlength="50" autocomplete="name" required autofocus aria-describedby="name-note" />
+                    <span class="hint" id="name-note">기존 이름을 입력하면 그 사람에 연결됩니다(동명이인·오타 주의).</span>
+                </label>
+                <div class="field" id="org-field" hidden>
+                    <span class="label">소속 <span class="opt">선택</span></span>
+                    <div class="field-row">
+                        <select id="org-group" aria-label="그룹"></select>
+                        <select id="org-part" aria-label="파트"></select>
+                    </div>
+                </div>
+                @if (Model.Error != null)
+                {
+                    <p class="form-error" role="alert"><svg class="ic"><use href="#i-alert" /></svg>@Model.Error</p>
+                }
+                @if (Model.Mode == WelcomeMode.Switch)
+                {
+                    <button type="submit" class="btn primary block">이 이름으로 연결</button>
+                    <a class="btn block" href="@back">취소</a>
+                }
+                else
+                {
+                    <button type="submit" class="btn primary block">등록하고 시작</button>
+                }
+            </form>
+        }
     </div>
 </section>
 <script id="page-data" type="application/json">@Html.Raw(Model.OrgJson)</script>
 @section Scripts {
     <script src="~/js/org.js" asp-append-version="true"></script>
     <script>
-        OrgPicker.bind(App.data().orgs, document.getElementById('org-group'), document.getElementById('org-part'),
-            document.getElementById('org-id'), document.getElementById('org-field'), App.data().selected);
+        if (document.getElementById('org-group')) {
+            OrgPicker.bind(App.data().orgs, document.getElementById('org-group'), document.getElementById('org-part'),
+                document.getElementById('org-id'), document.getElementById('org-field'), App.data().selected);
+        }
     </script>
 }

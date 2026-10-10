@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 
 namespace GanttScheduler.Tests;
 
@@ -12,9 +14,16 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     private readonly TestDb _db = new();
     // 첨부 파일이 저장소(프로젝트 폴더)에 남지 않게 임시 폴더를 쓴다
     private readonly string _uploads = Path.Combine(Path.GetTempPath(), "gantt-uploads-" + Guid.NewGuid().ToString("N"));
+    // 앱이 만들어진 뒤에 읽는 설정(TrustForwardedHeaders, Access:…)을 테스트마다 바꿔 끼운다
+    private readonly Dictionary<string, string?> _settings;
 
-    public AppFactory()
+    public TestDb Db => _db;
+
+    public AppFactory() : this(null) { }
+
+    internal AppFactory(Dictionary<string, string?>? settings)
     {
+        _settings = settings ?? new();
         Environment.SetEnvironmentVariable("Storage__Path", _uploads);
         // 업데이트 상태·암호화 키도 임시 폴더에 두고, 테스트 중에는 외부(GitHub)에 묻지 않는다
         Environment.SetEnvironmentVariable("Storage__KeyPath", Path.Combine(_uploads, "keys"));
@@ -38,6 +47,9 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         _ = Server;
     }
 
+    protected override void ConfigureWebHost(IWebHostBuilder builder) =>
+        builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(_settings));
+
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
@@ -47,6 +59,8 @@ public sealed class AppFactory : WebApplicationFactory<Program>
     }
 }
 
+// 앱 팩토리는 환경 변수로 DB 를 넘기므로 같은 묶음(차례로 실행)에서만 만든다
+[Collection(AppCollection.Name)]
 public class HttpTests : IClassFixture<AppFactory>
 {
     private readonly AppFactory _factory;

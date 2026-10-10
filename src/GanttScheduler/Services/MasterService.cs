@@ -8,7 +8,14 @@ namespace GanttScheduler.Services;
 public record MasterNode(
     int Id, int? ParentId, int Level, string Name, bool Active, int Sort,
     string? Country = null, int? OceanLeadDays = null, string? Kind = null,
-    string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null);
+    string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null,
+    DateOnly? LastSeen = null, List<UserIpView>? Addresses = null);
+
+// 사용자에 연결된 접속 IP. LastSeen 은 한국 날짜, Current 는 지금 이 화면을 연 기기
+public record UserIpView(string Ip, DateOnly LastSeen, bool Current);
+
+// 관리 > 사용자: IP 직접 연결·해제
+public record MasterIp(int UserId, string? Ip);
 
 public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
@@ -92,7 +99,10 @@ public class MasterService
                 return (await _db.Users.AsNoTracking().Include(u => u.Addresses).Include(u => u.OrgUnit).ThenInclude(o => o!.Parent).ToListAsync())
                     .OrderBy(u => u.Name)
                     .Select(u => new MasterNode(u.Id, null, 1, u.Name, u.IsActive, 0, Org: Views.OrgName(u.OrgUnit), OrgUnitId: u.OrgUnitId,
-                        IsAdmin: u.IsAdmin, Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList()))
+                        IsAdmin: u.IsAdmin, Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList(),
+                        LastSeen: u.Addresses.Count == 0 ? null : KoreaClock.KstDate(u.Addresses.Max(a => a.LastSeenAt)),
+                        Addresses: u.Addresses.OrderByDescending(a => a.LastSeenAt)
+                            .Select(a => new UserIpView(a.Ip, KoreaClock.KstDate(a.LastSeenAt), a.Ip == _me.Ip)).ToList()))
                     .ToList();
 
             default:
@@ -370,6 +380,35 @@ public class MasterService
             default:
                 throw new RuleException("알 수 없는 관리 항목입니다.");
         }
+        await _db.SaveChangesAsync();
+    }
+
+    // 관리자가 사용자에 IP 를 직접 연결한다. 관리자 이름에는 등록 화면에서 새 PC 를 붙일 수 없으므로(이름 사칭 방지),
+    // PC 를 바꾼 관리자는 다른 관리자가 여기서 연결해 준다
+    public async Task AddAddressAsync(MasterIp input)
+    {
+        RequireAdmin();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == input.UserId) ?? throw NotFound();
+        if (!AccessOptions.TryParseIp(input.Ip, out var parsed))
+            throw new RuleException("IP 주소 형식이 아닙니다. 예: 10.1.2.3", "ip");
+        // 접속할 때와 같은 모양으로 저장해야 찾을 수 있다
+        var ip = UserGateMiddleware.NormalizeIp(parsed);
+        var addr = await _db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.Ip == ip);
+        if (addr != null && addr.UserId != user.Id)
+            throw new RuleException($"이 IP 는 '{addr.User?.Name}' 님에 연결돼 있습니다. 먼저 그 연결을 해제해 주세요.", "ip");
+        if (addr == null) _db.UserAddresses.Add(new UserAddress { Ip = ip, UserId = user.Id, LastSeenAt = _clock.UtcNow });
+        else addr.LastSeenAt = _clock.UtcNow;
+        await _db.SaveChangesAsync();
+    }
+
+    // IP 연결 해제 — 그 기기에서 다시 접속하면 이름을 새로 등록한다
+    public async Task RemoveAddressAsync(MasterIp input)
+    {
+        RequireAdmin();
+        var addr = await _db.UserAddresses.FirstOrDefaultAsync(a => a.UserId == input.UserId && a.Ip == input.Ip) ?? throw NotFound();
+        // 자기 기기의 연결을 끊으면 관리자 이름으로 다시 연결할 수 없어 스스로 잠긴다
+        if (addr.Ip == _me.Ip) throw new RuleException("지금 쓰고 있는 기기의 IP 는 해제할 수 없습니다.", "ip");
+        _db.UserAddresses.Remove(addr);
         await _db.SaveChangesAsync();
     }
 

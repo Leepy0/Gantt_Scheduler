@@ -715,3 +715,13 @@ body.bare .notice { top: 8px; }
     .upload-row input[type=file] { flex: 1 1 100%; }
     .upload-row .btn { flex: 1; }
 }
+
+/* 사용자 식별: 헤더의 내 이름(사용자 바꾸기), 관리 > 사용자 IP 목록 */
+a.me:hover { color: var(--accent); text-decoration: none; }
+.ip-list { display: flex; flex-direction: column; gap: 4px; }
+.ip-list li { display: flex; align-items: center; gap: 8px; min-height: var(--tap); padding: 0 4px 0 12px; border-radius: var(--r-sm); background: var(--surface-2); }
+.ip-list .ip { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ip-list .hint { flex: 1; min-width: 0; }
+.ip-add { display: flex; gap: 8px; }
+.ip-add input { flex: 1; min-width: 0; }
+.form-note code { overflow-wrap: anywhere; }

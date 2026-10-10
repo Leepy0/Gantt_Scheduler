@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 
 namespace GanttScheduler.Services;
 
-// Windows 서비스 등록·제거:  GanttScheduler.exe install [--port 80] [--name GanttScheduler] [--system]
+// Windows 서비스 등록·제거:  GanttScheduler.exe install [--port 80] [--name GanttScheduler] [--system] [--remoteip 10.0.0.0/8,...]
 //                           GanttScheduler.exe uninstall [--name GanttScheduler]
 // 스크립트(PowerShell)는 사내 실행 정책에 막힐 수 있어 실행 파일이 직접 한다.
 // 서비스는 전용 계정(NT SERVICE\<이름>)으로 돌린다. 사내망에 열려 있는 웹 서버를 SYSTEM 권한으로 돌리지 않기 위해서다.
@@ -43,6 +43,29 @@ public static class ServiceInstaller
         if (!sddl.StartsWith("D:", StringComparison.Ordinal)) throw new FormatException("서비스 보안 설명자 형식을 알 수 없습니다: " + sddl);
         var sacl = sddl.IndexOf("S:(", StringComparison.Ordinal);   // 감사 설정(SACL)이 있으면 그 앞에 넣는다
         return sacl < 0 ? sddl + ace : sddl[..sacl] + ace + sddl[sacl..];
+    }
+
+    // 방화벽 규칙의 원격 주소 제한(--remoteip). 쉼표로 구분한 CIDR·주소와 netsh 의 LocalSubnet 만 받는다.
+    // 잘못 쓴 값을 그대로 넘기면 규칙 추가가 실패해 방화벽이 열리지 않으므로 등록 전에 거른다
+    public static string? RemoteIp(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var list = new List<string>();
+        foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.Equals("LocalSubnet", StringComparison.OrdinalIgnoreCase)) list.Add("LocalSubnet");
+            else if (AccessOptions.TryParseNetwork(part, out var net)) list.Add(part.Contains('/') ? net.ToString() : net.BaseAddress.ToString());
+            else throw new ArgumentException($"--remoteip 의 '{part}' 을(를) 해석할 수 없습니다. 10.0.0.0/8,192.168.1.0/24 처럼 쉼표로 구분한 CIDR 이나 주소로 적어 주세요.");
+        }
+        return list.Count == 0 ? null : string.Join(",", list);
+    }
+
+    // 방화벽 인바운드 규칙 추가 명령(netsh 인자). remoteIp 가 없으면 모든 주소에서 받는다
+    public static string[] FirewallRule(string name, int port, string? remoteIp)
+    {
+        var args = new List<string> { "advfirewall", "firewall", "add", "rule", $"name={name}", "dir=in", "action=allow", "protocol=TCP", $"localport={port}" };
+        if (remoteIp != null) args.Add($"remoteip={remoteIp}");
+        return args.ToArray();
     }
 
     // "sc query" 출력에서 상태를 읽는다 (상태 이름은 Windows 언어와 상관없이 영문 상수다)
@@ -125,6 +148,7 @@ public static class ServiceInstaller
         if (!int.TryParse(Opt(args, "--port", DefaultPort.ToString()), out var port) || port is < 1 or > 65535)
             throw new ArgumentException("--port 에는 1~65535 사이의 숫자를 지정해 주세요.");
         var system = args.Contains("--system");
+        var remote = RemoteIp(Opt(args, "--remoteip", ""));
         var account = system ? "LocalSystem" : $"NT SERVICE\\{name}";
         var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var exe = Path.Combine(dir, "GanttScheduler.exe");
@@ -135,6 +159,7 @@ public static class ServiceInstaller
         Console.WriteLine($"  이름   {name}");
         Console.WriteLine($"  포트   {port}");
         Console.WriteLine($"  계정   {account}");
+        Console.WriteLine($"  허용   {remote ?? "모든 주소 (--remoteip 로 제한)"}");
         Console.WriteLine();
 
         var exists = Sc("query", name).Code == 0;
@@ -183,10 +208,10 @@ public static class ServiceInstaller
             });
         }
 
-        Step($"방화벽 인바운드 허용 (TCP {port})", () =>
+        Step($"방화벽 인바운드 허용 (TCP {port}{(remote != null ? ", " + remote : "")})", () =>
         {
             Exec("netsh.exe", "advfirewall", "firewall", "delete", "rule", $"name={name}");
-            Must(Exec("netsh.exe", "advfirewall", "firewall", "add", "rule", $"name={name}", "dir=in", "action=allow", "protocol=TCP", $"localport={port}"));
+            Must(Exec("netsh.exe", FirewallRule(name, port, remote)));
         }, required: false);
 
         var errorFile = Path.Combine(dir, "App_Data", StartupErrorFile);
@@ -218,6 +243,8 @@ public static class ServiceInstaller
         }
         Console.WriteLine("완료. 이 서버의 브라우저에서 확인: http://localhost" + (port == 80 ? "" : ":" + port) + "/");
         Console.WriteLine("다른 PC 에서는 http://<서버 이름 또는 IP>" + (port == 80 ? "" : ":" + port) + "/ 로 접속합니다.");
+        if (remote != null)
+            Console.WriteLine("앱에서도 같은 대역만 받으려면 appsettings.Production.json 의 Access:AllowedNetworks 에 같은 값을 적습니다.");
         return 0;
     }
 

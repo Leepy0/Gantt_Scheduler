@@ -121,6 +121,28 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.click('#zoom [data-zoom=week]');
     });
 
+    await step('내 이름 → 사용자 바꾸기 화면, 보안 헤더', async () => {
+        const res = await page.goto(BASE + '/Projects');
+        const h = res.headers();
+        assert(h['x-content-type-options'] === 'nosniff' && h['x-frame-options'] === 'SAMEORIGIN' && h['referrer-policy'] === 'same-origin',
+            '보안 헤더가 없음: ' + JSON.stringify(h));
+        await page.click('.top .me');
+        await page.waitForURL(/\/Welcome\?switch=1/);
+        const card = await page.locator('.welcome-card').innerText();
+        assert(card.includes('사용자 바꾸기') && card.includes('평영'), '지금 사용자가 표시되지 않음: ' + card);
+        assert(card.includes('동명이인'), '기존 이름 연결 안내가 없음');
+        await shot(page, 'd01b-switch-user');
+        // 취소하면 원래 화면으로
+        await page.locator('.welcome-card a.btn', { hasText: '취소' }).click();
+        await page.waitForURL(/\/Projects$/);
+        // 이 기기에 이미 연결된 자기 이름(관리자)은 다시 골라도 된다
+        await page.click('.top .me');
+        await page.fill('input[name=Name]', '평영');
+        await page.click('button[type=submit]');
+        await page.waitForURL(/\/Projects$/);
+        assert((await page.locator('.top .me').innerText()).includes('평영'), '사용자가 바뀜');
+    });
+
     await step('과제 목록·필터', async () => {
         await page.goto(BASE + '/Projects');
         assert((await page.locator('.ptable-row').count()) === 6, '진행 과제가 6건이 아님');
@@ -186,6 +208,9 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForSelector(SHEET);
         await page.fill(SHEET + ' input[name=title]', '안전 인증 서류 준비');
         await page.fill(SHEET + ' input[name=coOwner]', '신규담당');
+        // 목록에 없는 이름은 새 담당자로 등록된다고 알린다 (막지는 않는다)
+        assert(await page.locator(SHEET + ' [data-field=coOwner] [data-name-hint]').isVisible(), '새 담당자 안내가 없음');
+        assert(!(await page.locator(SHEET + ' [data-field=owner] [data-name-hint]').isVisible()), '등록된 담당자에 새 담당자 안내가 뜸');
         await shot(page, 'd05-work-sheet-new', false);
         await submitSheet(page);
         assert((await page.locator('#gantt .g-row.work').count()) === 4, '작업이 추가되지 않음');
@@ -274,10 +299,42 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         const href = await page.locator('#files a.row-title').getAttribute('href');
         const res = await desktop.request.get(new URL(href, BASE).toString());
         assert(res.ok() && (await res.body()).equals(png), '내려받은 파일이 올린 파일과 다름');
+        assert(res.headers()['x-content-type-options'] === 'nosniff', '내려받기에 nosniff 가 없음');
 
         await page.click('#files [data-preview]');
         await page.waitForSelector(SHEET + ' img.preview-img');
         await closeSheet(page);
+
+        // X-Frame-Options: SAMEORIGIN 이어도 같은 출처의 틀(iframe) 미리보기는 열린다
+        const framed = await page.evaluate(async (src) => {
+            const f = document.createElement('iframe');
+            f.src = src;
+            document.body.appendChild(f);
+            await new Promise((r) => { f.onload = r; setTimeout(r, 5000); });
+            const ok = !!(f.contentDocument && f.contentDocument.querySelector('img'));
+            f.remove();
+            return ok;
+        }, new URL(href + '&inline=true', BASE).toString());
+        assert(framed, '같은 출처 iframe 안에서 첨부가 열리지 않음');
+
+        // PDF 는 시트 안의 iframe 으로 미리 본다
+        const pdf = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+            '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n');
+        await page.setInputFiles('#file-input', { name: '검수표.pdf', mimeType: 'application/pdf', buffer: pdf });
+        await page.click('#upload-btn');
+        await page.waitForFunction(() => document.getElementById('files').innerText.includes('검수표.pdf'));
+        const pdfRow = page.locator('#files li', { hasText: '검수표.pdf' });
+        const [pdfRes] = await Promise.all([
+            page.waitForResponse((r) => r.url().includes('inline=true')),
+            pdfRow.locator('[data-preview]').click(),
+        ]);
+        await page.waitForSelector(SHEET + ' iframe.preview-frame');
+        assert(pdfRes.status() === 200 && pdfRes.headers()['x-frame-options'] === 'SAMEORIGIN', 'PDF 미리보기 응답이 이상함: ' + pdfRes.status());
+        await page.waitForTimeout(300);
+        await closeSheet(page);
+        await pdfRow.locator('[data-delete-file]').click();
+        await page.click(SHEET + ' [data-yes]');
+        await page.waitForFunction(() => !document.getElementById('files').innerText.includes('검수표.pdf'));
 
         // 받지 않는 형식은 화면에서 먼저 거른다
         await page.setInputFiles('#file-input', { name: 'run.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ') });
@@ -473,6 +530,27 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await submitSheet(page);
         await page.waitForFunction(() => [...document.querySelectorAll('.node')].some((n) => n.innerText.includes('신규담당') && n.innerText.includes('물류기술그룹 · 시뮬레이션파트')));
 
+        // 사용자별 접속 IP: 마지막 접속 표시, 직접 연결·해제 (지금 이 기기는 해제할 수 없다)
+        assert((await page.locator('.node', { hasText: '평영' }).innerText()).includes('최근 접속'), '마지막 접속일이 없음');
+        await page.locator('.node', { hasText: '평영' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' [data-ips]');
+        const ips = page.locator(SHEET + ' [data-ips]');
+        assert((await ips.innerText()).includes('지금 이 기기'), '지금 기기 표시가 없음');
+        assert((await ips.locator('[data-remove-ip]').count()) === 0, '지금 기기의 IP 에 해제 단추가 있음');
+        await page.fill(SHEET + ' input[name=newIp]', '10');
+        await page.click(SHEET + ' [data-add-ip]');
+        assert((await sheetError(page)).includes('IP 주소 형식'), '잘못된 IP 를 받음');
+        await page.fill(SHEET + ' input[name=newIp]', '10.20.30.40');
+        await page.press(SHEET + ' input[name=newIp]', 'Enter');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-ips]').innerText.includes('10.20.30.40'));
+        assert(await page.locator(SHEET).isVisible(), 'Enter 로 시트가 저장·닫힘');
+        await shot(page, 'd20b-admin-user-ip', false);
+        await ips.locator('[data-remove-ip="10.20.30.40"]').click();
+        await page.locator('dialog.sheet[open] [data-yes]').click();
+        await page.waitForFunction(() => !document.querySelector('dialog.sheet[open] [data-ips]').innerText.includes('10.20.30.40'));
+        await closeSheet(page);
+        assert((await page.locator('#no-admin').count()) === 0, '관리자가 있는데 관리자 없음 안내가 뜸');
+
         await page.click('#admin-tabs [data-kind=holiday]');
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('한글날'));
     });
@@ -649,6 +727,21 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await noOverflow('업데이트');
         await shot(m, 'm11-update');
         await shot(m, 'm11-admin');
+    });
+
+    await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
+        await m.goto(BASE + '/Welcome?switch=1');
+        await m.waitForSelector('.welcome-card input[name=Name]');
+        await noOverflow('사용자 바꾸기');
+        await shot(m, 'm11b-switch-user');
+        await m.goto(BASE + '/Admin');
+        await m.click('#admin-tabs [data-kind=user]');
+        await m.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('평영'));
+        await m.locator('.node', { hasText: '평영' }).locator('.node-main').click();
+        await m.waitForSelector(SHEET + ' [data-ips]');
+        await noOverflow('사용자 IP');
+        await shot(m, 'm11c-admin-user-ip', false);
+        await closeSheet(m);
     });
 
     await mobile.close();
