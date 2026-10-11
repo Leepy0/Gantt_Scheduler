@@ -689,4 +689,46 @@ public static class Rules
     public static bool StageLinkViolated(StageLink link, Stage predecessor, Stage successor, WorkCalendar cal) =>
         successor.CompletedDate == null && successor.TargetDate != null
         && StageLinkEarliest(link, predecessor, cal) is { } earliest && successor.TargetDate.Value < earliest;
+
+    // ── 보고 기준일(asOf) 판정 — 지난 주 보고 ─────────────────────────
+    // 지난 주 보고를 다시 열면 그 주 마지막 날(asOf) 기준으로 지연을 센다. asOf 뒤에 기록된 실적(단계 완료일·작업 실적 종료)은
+    // 그때 아직 없던 것으로 본다. 목표일은 지금 값이다 — 목표일 변경 이력을 거슬러 계산하지 않는다(근본 해결은 일별 스냅샷).
+    // asOf 가 오늘 이후면 지금 판정(DelayDays·IsLate)과 같다
+
+    // asOf 에 이미 끝나 있던 실적인가 (오늘 기준이면 기록된 실적은 모두 끝난 것)
+    public static bool DoneBy(DateOnly? date, DateOnly asOf, DateOnly today) => date != null && (asOf >= today || date.Value <= asOf);
+
+    // asOf 에 진행 중이던 과제: 지금 진행 중이거나, 지금은 완료지만 asOf 뒤에 마지막 단계를 끝낸 과제. 보류·중단은 언제 바뀌었는지 몰라 지금 상태로 본다
+    public static bool ActiveAsOf(Project p, DateOnly asOf, DateOnly today) =>
+        p.State == ProjectState.Active
+        || (p.State == ProjectState.Done && p.Stages.Any(s => !DoneBy(s.CompletedDate, asOf, today)));
+
+    // asOf 기준 단계 지연 일수 (지연이 아니면 0)
+    public static int StageLateDaysAsOf(Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(s.CompletedDate, asOf, today) && s.TargetDate != null && s.TargetDate.Value < asOf ? asOf.DayNumber - s.TargetDate.Value.DayNumber : 0;
+
+    // asOf 기준 작업 지연 일수. 그때 단계가 이미 완료돼 있었으면 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static int WorkLateDaysAsOf(WorkItem w, Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(w.ActualEnd, asOf, today) && !DoneBy(s.CompletedDate, asOf, today) && w.PlanEnd < asOf ? asOf.DayNumber - w.PlanEnd.DayNumber : 0;
+
+    // asOf 기준 과제 지연 일수 (DelayDays 와 같은 규칙 — 가장 오래 밀린 미완료 단계)
+    public static int DelayDaysAsOf(Project p, DateOnly asOf, DateOnly today)
+    {
+        if (!ActiveAsOf(p, asOf, today)) return 0;
+        var max = 0;
+        foreach (var s in p.Stages) max = Math.Max(max, StageLateDaysAsOf(s, asOf, today));
+        return max;
+    }
+
+    // ── 일정 변경 횟수 ──────────────────────────────────────────────────
+    // 일정 변경은 '결정' 단위로 센다. 연쇄 이동·선행 연동은 한 번의 결정으로 여러 행(같은 BatchId)을 남기므로
+    // 행 수로 세면 부풀려진다 — 묶음 없는 행은 하나씩, 묶음은 하나로 센다 (주간 보고·상세·Excel·PDF 공용)
+    public static int DecisionCount(IEnumerable<Guid?> batchIds)
+    {
+        var count = 0;
+        var seen = new HashSet<Guid>();
+        foreach (var b in batchIds)
+            if (b == null || seen.Add(b.Value)) count++;
+        return count;
+    }
 }

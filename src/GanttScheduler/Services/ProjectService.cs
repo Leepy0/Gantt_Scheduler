@@ -148,7 +148,8 @@ public partial class ProjectService
         // 활동은 과제 그래프에 싣지 않고 따로 센다·읽는다. 오래된 대형 과제는 활동이 수천 건이라 변경할 때마다 전부 보내면 응답이 무겁다
         var acts = _db.Activities.AsNoTracking().Where(a => a.ProjectId == id);
         var total = await acts.CountAsync();
-        var targetChanges = await acts.CountAsync(a => a.Type == ActivityType.TargetChanged);
+        // 목표일 변경은 결정 단위로 센다(연쇄 이동 묶음은 1회 — Rules.DecisionCount). 묶음 번호만 읽는다
+        var targetChanges = Rules.DecisionCount(await acts.Where(a => a.Type == ActivityType.TargetChanged).Select(a => a.BatchId).ToListAsync());
         var recent = await ActivityRowsAsync(acts, activityLimit);
         // 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서비스의 검사와 같은 판정(Rules.CanDelete…)을 지금 사용자로 계산해 싣는다
         var userId = _me.User?.Id;
@@ -1095,6 +1096,10 @@ public partial class ProjectService
 
     private void Touch(Project p) => p.UpdatedAt = _clock.UtcNow;
 
+    // 자동 상태 전환 활동의 문구. 주간 보고가 사람이 바꾼 상태와 구별해 '과제 완료'로 따로 센다(Reporting.IsAutoState) — 문구를 바꾸면 옛 기록도 함께 봐야 한다
+    public const string AutoDoneText = "상태 변경: 진행 → 완료 (모든 단계 완료)";
+    public const string AutoReopenText = "상태 변경: 완료 → 진행 (미완료 단계 있음)";
+
     // 모든 단계가 끝나면 완료로, 완료 과제에 미완료 단계가 생기면 다시 진행으로
     private void SyncState(Project p)
     {
@@ -1102,12 +1107,12 @@ public partial class ProjectService
         if (p.State == ProjectState.Active && allDone)
         {
             p.State = ProjectState.Done;
-            p.Activities.Add(NewActivity(ActivityType.StateChanged, "상태 변경: 진행 → 완료 (모든 단계 완료)"));
+            p.Activities.Add(NewActivity(ActivityType.StateChanged, AutoDoneText));
         }
         else if (p.State == ProjectState.Done && !allDone)
         {
             p.State = ProjectState.Active;
-            p.Activities.Add(NewActivity(ActivityType.StateChanged, "상태 변경: 완료 → 진행 (미완료 단계 있음)"));
+            p.Activities.Add(NewActivity(ActivityType.StateChanged, AutoReopenText));
         }
     }
 

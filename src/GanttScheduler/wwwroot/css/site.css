@@ -914,3 +914,19 @@ a.chip:hover { text-decoration: none; filter: brightness(.96); }
     .toolbar #replan { order: 1; flex: 1 1 calc(50% - 4px); }
     .toolbar #replan:not([hidden]) ~ #edit-schedule { flex-basis: calc(50% - 4px); }
 }
+
+/* ── 보고 정확성·기준 정보 ───────────────────────────────────── */
+/* 주간 보고: 요약 칸이 6개라 폭에 맞춰 줄을 나눈다 */
+.kpis.wide { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
+.weekly-count { display: block; color: var(--text-3); font-weight: 400; font-size: var(--fs-xs); }
+.weekly-fold { margin-top: 4px; }
+.weekly-fold > summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-xs); min-height: 24px; }
+.weekly-fold > .bullets { margin-top: 4px; color: var(--text-2); }
+.weekly-late { display: flex; flex-direction: column; gap: 4px; }
+.weekly-late > li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; overflow-wrap: anywhere; }
+.weekly-quiet { min-width: 640px; }
+.weekly-quiet td { vertical-align: top; }
+.weekly-quiet td .bullets { font-size: var(--fs-xs); }
+@media (max-width: 767px) {
+    .kpis.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -93,7 +93,7 @@ public class ServiceTests : IClassFixture<TestDb>
         var changes = p.Activities!.Where(a => a.Type == "targetChanged").ToList();
         Assert.Equal(3, changes.Count);
         Assert.All(changes, a => Assert.Equal("자료 보완", a.Reason));
-        Assert.Equal(3, p.TargetChanges);
+        Assert.Equal(1, p.TargetChanges);         // 연쇄 이동은 한 번의 결정 — 행 3개(같은 BatchId)를 1회로 센다
 
         using var check = _db.NewScope();
         var batches = await check.Db.Activities.Where(a => a.ProjectId == id && a.Type == ActivityType.TargetChanged).Select(a => a.BatchId).ToListAsync();

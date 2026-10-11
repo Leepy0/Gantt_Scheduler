@@ -136,7 +136,7 @@ public record ProjectView
     public List<ItemView>? Containers { get; init; }
     public List<ActivityView>? Activities { get; init; }
     public List<AttachmentView>? Attachments { get; init; }
-    public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수
+    public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수 (결정 단위 — 연쇄 이동 묶음은 1회, Rules.DecisionCount)
     public int ActivityTotal { get; init; }             // 활동 전체 건수 (Activities 는 최근 일부만 — ProjectService.ViewAsync)
     public string? CreatedBy { get; init; }
     public DateTime? CreatedAt { get; init; }
@@ -390,7 +390,7 @@ public static class Views
             Attachments = detail ? p.Attachments.OrderByDescending(a => a.UploadedAt).ThenByDescending(a => a.Id)
                 .Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Size, a.UploadedBy?.Name ?? "", a.UploadedAt, a.StageId,
                     PreviewTypes.Contains(a.ContentType))).ToList() : null,
-            TargetChanges = detail ? p.Activities.Count(a => a.Type == ActivityType.TargetChanged) : 0,
+            TargetChanges = detail ? Rules.DecisionCount(p.Activities.Where(a => a.Type == ActivityType.TargetChanged).Select(a => a.BatchId)) : 0,
             CreatedBy = detail ? p.CreatedBy?.Name : null,
             CreatedAt = detail ? p.CreatedAt : null,
             UpdatedAt = detail ? p.UpdatedAt : null,
