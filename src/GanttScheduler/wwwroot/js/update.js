@@ -12,6 +12,12 @@
     var waiting = null;        // 서버가 다시 뜨기를 기다리는 중이면 { text, since }
     var pollTimer = null;
     var esc = App.esc, icon = App.icon;
+    var backup = data.backup || null;   // 백업 설정·목록 (관리자에게만 온다)
+    var backupBusy = false;    // '지금 백업'을 누르고 기다리는 중
+    var backupFailure = null;  // 마지막 '지금 백업'의 실패 { message, fix }
+    var pendingApply = null;   // 적용 전 백업이 끝나면 교체가 시작된다 — 그때 보일 문구
+    var diag = null;           // 진단 정보 (열었을 때만 받아 온다)
+    var diagOpen = false;
 
     function size(bytes) { return bytes > 0 ? App.size(bytes) : ''; }
     function hours(h) { return (h < 10 ? '0' : '') + h + '시'; }
@@ -27,7 +33,10 @@
 
     function schemaWarn(changed) {
         if (!changed) return '';
-        return '<div class="form-note">' + icon('alert') + '<div><p>DB 구조가 바뀌는 업데이트입니다. 적용한 뒤에는 프로그램만 되돌릴 수 없으니 먼저 DB 를 백업해 주세요. 자동으로는 적용되지 않습니다.</p>' +
+        // 서버가 적용 전에 백업하도록 되어 있으면(Backup:BeforeSchemaUpdate) 그렇게 알린다 — 실패하면 적용하지 않는다
+        var auto = backup && backup.beforeSchemaUpdate;
+        return '<div class="form-note">' + icon('alert') + '<div><p>DB 구조가 바뀌는 업데이트입니다. 적용한 뒤에는 프로그램만 되돌릴 수 없습니다. ' +
+            (auto ? '적용을 누르면 먼저 DB 를 백업하고, 백업에 실패하면 적용하지 않습니다.' : '먼저 DB 를 백업해 주세요.') + ' 자동으로는 적용되지 않습니다.</p>' +
             (st.sqliteData ? '<p class="fix">지금은 미리보기용 SQLite DB 를 쓰고 있어, 적용하면 DB 가 새로 만들어지고 기존 데이터가 지워집니다.</p>' : '') + '</div></div>';
     }
 
@@ -74,7 +83,10 @@
         else if (st.error) h += fixBlock('form-error', st.error, st.errorFix);
         h += startFailureBlock();
 
-        if (st.phase === 'downloading' || uploading != null) {
+        if (st.phase === 'backing-up') {
+            h += '<div class="update-state" id="backing-up"><span class="spinner"></span><div class="grow"><p class="update-title">적용 전 DB 백업 중</p>' +
+                '<p class="muted">백업이 끝나면 이어서 새 버전으로 바꿉니다. 실패하면 적용하지 않고 이유를 보여 줍니다.</p></div></div>';
+        } else if (st.phase === 'downloading' || uploading != null) {
             var pct = uploading != null ? uploading : st.progress;
             h += '<div class="update-state"><span class="spinner"></span><div class="grow"><p class="update-title">' +
                 (uploading != null ? '배포 파일 올리는 중' : '새 버전 받는 중') + ' <span class="num">' + pct + '%</span></p>' +
@@ -178,10 +190,80 @@
             return '<tr><td class="num">' + esc(App.time(x.at)) + '</td><td>' + (x.kind === 'rollback' ? '되돌리기' : '업데이트') + '</td>' +
                 '<td class="num">v' + esc(x.from) + ' → v' + esc(x.to) + '</td><td>' + esc(x.by) + '</td>' +
                 '<td>' + (x.ok ? '<span class="chip ok">' + icon('check') + '성공</span>'
-                    : '<span class="chip alarm">' + icon('alert') + '실패</span> <span class="muted">' + esc(x.error || '') + '</span>') + '</td></tr>';
+                    : '<span class="chip alarm">' + icon('alert') + '실패</span> <span class="muted">' + esc(x.error || '') + '</span>' +
+                        (admin ? ' <button type="button" class="btn ghost small" data-act="diag-open">진단 정보</button>' : '')) +
+                (x.backup ? '<p class="hint num">적용 전 백업 ' + esc(x.backup) + '</p>' : '') + '</td></tr>';
         }).join('');
         return '<section class="card"><div class="card-head"><h2>적용 이력</h2></div><div class="table-scroll"><table class="simple-table">' +
             '<thead><tr><th>일시</th><th>종류</th><th>버전</th><th>실행</th><th>결과</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+    }
+
+    // ── 카드: DB 백업 (지금 백업·목록) ──────────────────────────────
+    var KINDS = { manual: '지금 백업', nightly: '야간', update: '업데이트 전' };
+
+    function backupCard() {
+        if (!backup) return '';
+        var b = backup;
+        var busy = backupBusy || b.running || st.phase === 'backing-up';
+        var h = '<section class="card" id="backup"><div class="card-head"><h2>DB 백업</h2><span class="spacer"></span>' +
+            (admin ? '<button type="button" class="btn small" data-act="backup"' + (busy || waiting ? ' disabled' : '') + '>' +
+                (busy ? '<span class="spinner"></span>백업 중…' : icon('download') + '지금 백업') + '</button>' : '') + '</div>';
+        h += '<dl class="dl">' +
+            '<dt>DB</dt><dd>' + (b.provider === 'SqlServer' ? 'SQL Server' : 'SQLite') + ' · <span class="path">' + esc(b.dbLocation) + '</span></dd>' +
+            '<dt>파일 묶음</dt><dd><span class="path">' + esc(b.filesPath) + '</span> <span class="muted">(첨부·암호화 키·운영 설정)</span></dd>' +
+            '<dt>보관</dt><dd>성공한 백업 최근 ' + b.keep + '개</dd>' +
+            '<dt>자동</dt><dd>야간 백업 ' + (b.nightly ? '켜짐 · 매일 ' + esc(b.nightlyAt) + ' (한국 시간)' : '꺼짐') +
+            ' · 구조가 바뀌는 업데이트 전 ' + (b.beforeSchemaUpdate ? '켜짐' : '꺼짐') + '</dd></dl>';
+        if (backupFailure) h += fixBlock('form-error', backupFailure.message, backupFailure.fix);
+        if (b.guide) h += fixBlock('form-note', b.guide, '');
+        if (b.list.length) {
+            var rows = b.list.map(function (e) {
+                var sizes = [e.dbSize != null ? 'DB ' + App.size(e.dbSize) : (e.ok ? 'DB 크기 모름' : ''), e.filesSize != null ? '묶음 ' + App.size(e.filesSize) : '']
+                    .filter(Boolean).join(' · ');
+                return '<tr data-backup="' + esc(e.name) + '"><td class="num">' + esc(App.time(e.at)) + '</td><td>' + esc(KINDS[e.kind] || e.kind) + '<p class="hint">' + esc(e.by) + '</p></td>' +
+                    '<td class="num backup-name">' + esc(e.name) + (e.note ? '<p class="hint">' + esc(e.note) + '</p>' : '') + '</td>' +
+                    '<td class="num">' + esc(sizes) + '</td>' +
+                    '<td>' + (e.ok ? '<span class="chip ok">' + icon('check') + '성공</span>'
+                        : '<span class="chip warn">' + icon('alert') + '실패</span><p class="hint">' + esc(e.error || '') + '</p>') + '</td></tr>';
+            }).join('');
+            h += '<div class="table-scroll"><table class="simple-table backup-table"><thead><tr><th>일시</th><th>종류</th><th>이름</th><th>크기</th><th>결과</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody></table></div>';
+        } else {
+            h += '<div class="empty">' + icon('download') + '아직 이 서버에서 만든 백업이 없습니다.</div>';
+        }
+        h += '<p class="hint">설정은 서버의 appsettings.Production.json 의 Backup:* 항목입니다. 복원 절차는 운영 문서(OPERATIONS.md)에 있습니다 — DB 백업과 같은 이름의 파일 묶음을 함께 복원해야 첨부가 열립니다.</p>';
+        return h + '</section>';
+    }
+
+    // ── 카드: 진단 정보 (apply.log 끝부분, startup-error.log, 상태 요약) ──
+    function diagCard() {
+        if (!admin) return '';
+        var h = '<section class="card" id="diagnostics"><div class="card-head"><h2>진단 정보</h2><span class="spacer"></span>' +
+            '<button type="button" class="btn small" data-act="diag" aria-expanded="' + diagOpen + '">' + icon(diagOpen ? 'up' : 'eye') + (diagOpen ? '접기' : '보기') + '</button>' +
+            '<a class="btn small" id="diag-download" href="' + esc(url + '?handler=DiagnosticsFile') + '">' + icon('download') + '내려받기</a></div>' +
+            '<p class="muted">업데이트가 실패했거나 새 버전이 시작되지 않았을 때 원인을 봅니다. 교체 기록(apply.log) 끝 60줄, 시작 오류(startup-error.log), 상태 요약입니다. 연결 문자열의 계정·비밀번호는 가립니다.</p>';
+        if (diagOpen) {
+            if (!diag) h += '<div class="loading"><span class="spinner"></span>불러오는 중…</div>';
+            else {
+                h += '<div class="field"><span class="label">상태 요약</span><pre class="notes diag" id="diag-state">' + esc(diag.state) + '</pre></div>' +
+                    '<div class="field"><span class="label">교체 기록 apply.log <span class="opt">(끝 60줄' + (diag.applyLogSize ? ' · 전체 ' + App.size(diag.applyLogSize) : '') + ')</span></span>' +
+                    '<pre class="notes diag" id="diag-apply">' + esc(diag.applyLog || '(기록 없음)') + '</pre></div>' +
+                    '<div class="field"><span class="label">시작 오류 startup-error.log' + (diag.startupErrorAt ? ' <span class="opt">(' + esc(App.time(diag.startupErrorAt)) + ')</span>' : '') + '</span>' +
+                    '<pre class="notes diag" id="diag-startup">' + esc(diag.startupError || '(기록 없음)') + '</pre></div>';
+                if (diag.logs.length) {
+                    h += '<div class="field"><span class="label">최근 업데이트·백업 경고</span><pre class="notes diag">' +
+                        esc(diag.logs.map(function (e) { return App.time(e.at) + ' ' + e.category + ': ' + e.message; }).join('\n')) + '</pre></div>';
+                }
+            }
+        }
+        return h + '</section>';
+    }
+
+    function loadDiag() {
+        diag = null;
+        render();
+        App.get(url + '?handler=Diagnostics').then(function (r) { diag = r.diagnostics; render(); })
+            .catch(function (err) { diagOpen = false; App.toast(err.message, 'error'); render(); });
     }
 
     function render() {
@@ -189,16 +271,32 @@
         var active = document.activeElement;
         if (active && active.closest && active.closest('#settings-form') && !waiting) return;
         root.innerHTML = '<div class="grid-2">' + currentCard() + nextCard() + '</div>' +
-            (waiting ? '' : '<div class="grid-2">' + uploadCard() + settingsCard() + '</div>' + rollbackCard()) + historyCard();
+            (waiting ? '' : '<div class="grid-2">' + uploadCard() + settingsCard() + '</div>' + rollbackCard() + backupCard()) + historyCard() +
+            (waiting ? '' : diagCard());
         schedulePoll();
+    }
+
+    // 응답의 최신 상태 반영 (백업 정보는 관리자 응답에만 있다)
+    function take(r) {
+        st = r.status;
+        if (r.backup !== undefined) backup = r.backup;
     }
 
     // 확인·받기처럼 서버에서 진행 중인 일이 있을 때만 상태를 다시 묻는다 (평소에는 요청을 만들지 않는다)
     function schedulePoll() {
         clearTimeout(pollTimer);
-        if (waiting || uploading != null || st.phase === 'idle') return;
+        if (waiting || uploading != null || (st.phase === 'idle' && !(backup && backup.running))) return;
         pollTimer = setTimeout(function () {
-            App.poll(url + '?handler=Status').then(function (r) { st = r.status; render(); }).catch(function () { schedulePoll(); });
+            App.poll(url + '?handler=Status').then(function (r) {
+                take(r);
+                if (pendingApply && st.phase === 'applying') { var text = pendingApply; pendingApply = null; waitRestart(text); return; }
+                if (pendingApply && st.phase === 'idle') pendingApply = null;   // 백업 실패 — 이유는 st.error 로 보인다
+                render();
+            }).catch(function () {
+                // 백업 뒤 교체가 시작돼 서버가 내려갔다
+                if (pendingApply) { var text = pendingApply; pendingApply = null; waitRestart(text); return; }
+                schedulePoll();
+            });
         }, 1000);
     }
 
@@ -210,7 +308,7 @@
 
     function act(name, body) {
         failure = null;
-        return App.post(url + '?handler=' + name, body).then(function (r) { st = r.status; render(); return r; });
+        return App.post(url + '?handler=' + name, body).then(function (r) { take(r); render(); return r; });
     }
 
     // 적용·되돌리기 뒤: 서버가 다른 빌드로 다시 뜰 때까지 기다렸다가 화면을 새로 연다
@@ -242,7 +340,11 @@
             verb: '적용'
         }).then(function (yes) {
             if (!yes) return;
-            act('Apply').then(function () { waitRestart('v' + s.version + ' 적용 중'); }).catch(fail);
+            // 구조가 바뀌는 업데이트는 서버가 먼저 백업한다(단계 backing-up) — 끝나고 교체가 시작되면 폴링이 재시작을 기다린다
+            act('Apply').then(function () {
+                if (st.phase === 'backing-up') pendingApply = 'v' + s.version + ' 적용 중';
+                else waitRestart('v' + s.version + ' 적용 중');
+            }).catch(fail);
         });
     }
 
@@ -268,6 +370,26 @@
             }
         } else if (name === 'apply') {
             applyStaged();
+        } else if (name === 'backup') {
+            backupBusy = true;
+            backupFailure = null;
+            render();
+            App.post(url + '?handler=Backup').then(function (r) {
+                take(r);
+                App.toast('백업했습니다: ' + (backup && backup.list.length ? backup.list[0].name : ''));
+            }).catch(function (err) {
+                backupFailure = { message: err.message, fix: err.data && err.data.fix };
+                // 실패 기록이 목록에 남으므로 다시 읽는다
+                return App.get(url + '?handler=Status').then(take).catch(function () { /* 그대로 */ });
+            }).then(function () { backupBusy = false; render(); });
+        } else if (name === 'diag') {
+            diagOpen = !diagOpen;
+            if (diagOpen) loadDiag(); else render();
+        } else if (name === 'diag-open') {
+            diagOpen = true;
+            loadDiag();
+            var el = document.getElementById('diagnostics');
+            if (el) el.scrollIntoView({ block: 'start' });
         } else if (name === 'rollback') {
             var p = st.previous;
             App.confirm({
@@ -317,7 +439,7 @@
             var body = null;
             try { body = JSON.parse(xhr.responseText); } catch (err) { /* JSON 이 아닌 응답 */ }
             if (xhr.status === 200 && body && body.ok) {
-                st = body.status;
+                take(body);
                 App.toast('v' + st.staged.version + ' 을 올렸습니다. 내용을 확인한 뒤 적용해 주세요.');
             } else {
                 failure = body && body.error ? { message: body.error, fix: body.fix }
@@ -334,4 +456,9 @@
     }
 
     render();
+    // 다른 화면(서버 상태·관리자 칩)에서 #backup 으로 들어오면 그 카드로 (화면을 스크립트가 그려 브라우저가 찾지 못한다)
+    if (location.hash) {
+        var target = document.getElementById(location.hash.slice(1));
+        if (target) target.scrollIntoView({ block: 'start' });
+    }
 })();

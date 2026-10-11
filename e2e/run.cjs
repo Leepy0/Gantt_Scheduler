@@ -24,6 +24,8 @@ const results = [];      // { name, ok, error, skipped, url, screen, texts }
 const problems = [];     // 콘솔 오류·실패한 요청
 // 일부러 404 를 받는 요청 (없는 과제 화면, 삭제된 과제의 변경 확인)
 const expected404 = ['/Projects/Detail?id=999999', 'handler=Stamp'];
+// 일부러 흉내 내는 서버 오류 (오류 번호 안내 점검 — 응답을 가로채 500 을 돌려준다)
+const expected5xx = ['/__e2e-error'];
 const ONLY = (process.env.ONLY || '').split('|').map((x) => x.trim()).filter(Boolean);
 // ONLY 와 관계없이 도는 단계 (이름 앞부분). 이름 등록이 없으면 다른 화면이 열리지 않는다
 const SETUP = ['처음 접속하면', '이름·소속'];
@@ -93,6 +95,7 @@ function watch(page, label) {
     page.on('response', (r) => {
         // 400·409 는 규칙 위반·동시 수정 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
         if (r.status() === 404 && expected404.some((u) => r.url().includes(u))) return;
+        if (r.status() >= 500 && expected5xx.some((u) => r.url().includes(u))) return;
         if (r.status() >= 500 || r.status() === 404) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
     });
 }
@@ -877,11 +880,50 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.locator('#items .item-row select').first().selectOption({ label: '컨베이어' });
         await page.locator('#items .item-row input[data-k=Quantity]').first().fill('3');
         await shot(page, 'd13-edit-form');
+
+        // 단계 목표일 초안: 유형의 기본 기간으로 채워지고, 기본 기간이 없는 입고는 비어 있으며 법인(베트남, 해상 12일)의 추천 입고일을 보인다
+        await page.waitForSelector('#draft .sched-row [data-apply-hint]');
+        const draftRows = page.locator('#draft .sched-row');
+        assert((await draftRows.count()) === 8, '초안 표가 8줄이 아님');
+        assert(/^\d{4}-\d{2}-\d{2}$/.test(await draftRows.nth(0).locator('input').inputValue()), '첫 단계 초안이 비어 있음');
+        assert((await draftRows.nth(0).locator('.sched-gap').innerText()).includes('+10근무일'), '간격이 기본 기간과 다름');
+        const inbound = draftRows.filter({ hasText: '입고' });
+        assert((await inbound.locator('input').inputValue()) === '', '기본 기간이 없는 입고가 채워짐');
+        const hint = (await inbound.locator('.sched-hint b').innerText()).trim();
+        await inbound.locator('[data-apply-hint]').click();
+        await page.waitForFunction((h) => [...document.querySelectorAll('#draft .sched-row')]
+            .some((r) => r.innerText.includes('입고') && r.querySelector('input').value === h && r.classList.contains('changed')), hint);
+        // 사람이 고친 날짜 뒤 단계(설치)는 고친 날짜부터 다시 센다
+        const before = await draftRows.nth(6).locator('input').inputValue();
+        const approval = await draftRows.nth(1).locator('input').inputValue();
+        await draftRows.nth(0).locator('input').fill(kstToday(30));
+        await page.waitForFunction((b) => document.querySelectorAll('#draft .sched-row')[1].querySelector('input').value !== b, approval);
+        assert((await draftRows.nth(6).locator('input').inputValue()) === before, '사람이 정한 입고 뒤의 설치가 움직임');
+        const firstTarget = await draftRows.nth(0).locator('input').inputValue();
+        await shot(page, 'd13b-edit-draft');
+        // 고친 날짜가 범위 밖이면 표는 그대로 두고 위에 이유만 보이며 그 칸을 가리킨다 (표를 지우면 고친 날짜가 등록할 때 빠진다)
+        const orderInput = draftRows.nth(2).locator('input');
+        const orderDate = await orderInput.inputValue();
+        await orderInput.fill('2099-12-31');
+        await page.waitForSelector('#draft [data-draft-error]');
+        assert((await draftRows.count()) === 8, '초안을 받지 못하자 표가 사라짐');
+        assert((await page.locator('#draft [data-draft-error]').innerText()).includes('사이로'), '범위 밖 이유가 보이지 않음');
+        assert((await draftRows.nth(2).locator('.field.invalid').count()) === 1, '범위 밖 칸을 가리키지 않음');
+        await shot(page, 'd13c-edit-draft-error', false);
+        await orderInput.fill(orderDate);
+        await page.waitForSelector('#draft [data-draft-error]', { state: 'detached' });
+        assert((await draftRows.nth(2).locator('.field.invalid').count()) === 0, '고친 뒤에도 오류 표시가 남음');
+
         await page.click('#edit-form button[type=submit]');
         await page.waitForSelector('#summary .summary-meta');
         assert((await page.locator('#stepper .step').count()) === 8, '기본 단계 8개가 만들어지지 않음');
         assert((await page.locator('#summary').innerText()).includes('베트남 · 냉장고 · 1라인'), '위치가 저장되지 않음');
         assert((await page.locator('#stepper .step').nth(4).innerText()).includes('체크 0/3'), '체크리스트 템플릿이 복사되지 않음');
+        assert((await page.locator('#stepper .step').nth(0).innerText()).includes('목표 ' + firstTarget.slice(5)), '초안 목표일로 등록되지 않음');
+        assert((await page.locator('#stepper .step').nth(5).innerText()).includes('목표 ' + hint.slice(5)), '추천 입고일이 등록되지 않음');
+        await page.click('.tabs [data-tab=activity]');
+        assert((await page.locator('#feed').innerText()).includes('[검토] 목표일 설정 ' + firstTarget), '목표일 설정 이력이 없음');
+        await page.click('.tabs [data-tab=schedule]');
     });
 
     await step('과제 수정 화면에 기존 값 표시', async () => {
@@ -923,6 +965,66 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.click('.tabs [data-tab=info]');
         const info = await page.locator('#tab-info').innerText();
         assert(info.includes('대성물류') && info.includes('다른 화면에서 쓴 설명'), '다시 저장한 내용이 아님');
+    });
+
+    await step('단계 일정 편집 — 한 시트에서 여러 단계, 기존 목표일을 바꾸면 사유 한 번, 동시 수정 뒤 같은 시트에서 다시 저장', async () => {
+        // 앞 단계가 등록한 '베트남 냉장고 1라인 컨베이어 개선'(목표일 초안으로 등록)의 상세에 있다 (정보 탭이 열려 있다)
+        await page.click('.tabs [data-tab=schedule]');
+        const url = page.url().split('#')[0];
+        await page.click('#edit-schedule');
+        await page.waitForSelector(SHEET + ' .sched-row');
+        const rows = page.locator(SHEET + ' .sched-row');
+        assert((await rows.count()) === 8, '단계 일정 표가 8줄이 아님');
+        assert((await rows.nth(1).locator('[data-gap]').innerText()).includes('+10근무일'), '간격(서버 계산)이 보이지 않음');
+
+        // 다른 화면이 같은 표로 검토·품의 목표일을 먼저 바꾼다
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await other.goto(url);
+        await other.click('#edit-schedule');
+        await other.waitForSelector(SHEET + ' .sched-row');
+        const otherRows = other.locator(SHEET + ' .sched-row');
+        const otherReview = kstToday(33), otherApproval = kstToday(60);
+        await otherRows.nth(0).locator('input[name^=target]').fill(otherReview);
+        await otherRows.nth(1).locator('input[name^=target]').fill(otherApproval);
+        await other.fill(SHEET + ' textarea[name=reason]', '다른 화면의 일정 조정');
+        await submitSheet(other);
+        await other.close();
+        active = page;
+
+        // 이 화면: 검토(이미 정한 목표일)와 안정화를 바꾼다 → 바꾼 줄 표시와 사유 칸
+        const mine = kstToday(35);
+        await rows.nth(0).locator('input[name^=target]').fill(mine);
+        await rows.nth(7).locator('input[name^=target]').fill(kstToday(400));
+        await page.waitForSelector(SHEET + ' [data-reason]:not([hidden])');
+        assert((await rows.nth(0).getAttribute('class')).includes('changed'), '바꾼 줄 표시가 없음');
+        assert((await page.locator(SHEET + ' [data-reason-note]').innerText()).includes('검토, 안정화'), '사유가 필요한 단계 안내가 아님');
+        await page.waitForFunction(() => !document.querySelector('dialog.sheet[open] [data-rows]').hasAttribute('aria-busy'));   // 간격 미리보기 응답
+        await shot(page, 'd42b-schedule-sheet', false);
+
+        // 저장 → 그사이 바뀐 검토가 있어 409. 둘 다 바꾼 검토는 내 값을 두고, 손대지 않은 품의는 최신 값으로 맞춘다
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('다른 사용자가 먼저 수정'), '충돌 안내가 아님');
+        const reviewNote = await page.locator(SHEET + ' .sched-row').nth(0).locator('[data-conflict-note]').innerText();
+        assert(reviewNote.includes(otherReview) && !reviewNote.includes('그 값으로'), '둘 다 바꾼 칸 안내가 아님: ' + reviewNote);
+        assert((await page.locator(SHEET + ' .sched-row').nth(0).locator('input[name^=target]').inputValue()) === mine, '내 입력이 사라짐');
+        const approvalNote = await page.locator(SHEET + ' .sched-row').nth(1).locator('[data-conflict-note]').innerText();
+        assert(approvalNote.includes('그 값으로 바꿨습니다'), '손대지 않은 칸을 최신 값으로 맞추지 않음: ' + approvalNote);
+        assert((await page.locator(SHEET + ' .sched-row').nth(1).locator('input[name^=target]').inputValue()) === otherApproval, '품의가 최신 값이 아님');
+        await shot(page, 'd42c-schedule-conflict', false);
+
+        // 다시 저장: 이미 정한 목표일을 바꾸므로 사유 없이는 거절, 사유를 넣으면 저장
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('사유'), '사유 없이 저장됨');
+        await page.fill(SHEET + ' textarea[name=reason]', '고객 요청으로 일정 재조정');
+        await submitSheet(page);
+
+        assert((await page.locator('#stepper .step').nth(0).innerText()).includes('목표 ' + mine.slice(5)), '검토 목표일이 저장되지 않음');
+        assert((await page.locator('#stepper .step').nth(1).innerText()).includes('목표 ' + otherApproval.slice(5)), '다른 화면의 품의 변경을 되돌림');
+        await page.click('.tabs [data-tab=activity]');
+        const feed = await page.locator('#feed').innerText();
+        assert(feed.includes('고객 요청으로 일정 재조정') && feed.includes('[안정화] 목표일'), '변경 이력·사유가 없음');
+        await page.click('.tabs [data-tab=schedule]');
     });
 
     await step('내 할 일', async () => {
@@ -1046,6 +1148,33 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('한글날'));
     });
 
+    await step('관리 — 단계 템플릿 기본 기간(근무일) 입력', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#admin-tabs [data-kind=category]');
+        await page.waitForSelector('.columns .node');
+        await page.locator('.column').first().locator('.node-main', { hasText: 'Simulation' }).click();
+        const node = page.locator('.column').nth(1).locator('.node', { hasText: '검증' });
+        await page.waitForFunction(() => document.querySelectorAll('.column')[1].innerText.includes('기본 10근무일'));
+        await node.locator('.node-actions [data-edit]').click();
+        await page.waitForSelector(SHEET + ' input[name=defaultWorkDays]');
+        assert((await page.inputValue(SHEET + ' input[name=defaultWorkDays]')) === '10', '기본 기간이 채워지지 않음');
+        assert(await page.locator(SHEET + ' [data-lead-hint]').isVisible(), '과거 평균 안내가 없음');
+        await page.fill(SHEET + ' input[name=defaultWorkDays]', '1.5');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('정수'), '정수가 아닌 기본 기간을 받음');
+        await page.fill(SHEET + ' input[name=defaultWorkDays]', '12');
+        await shot(page, 'd18b-admin-default-days', false);
+        await submitSheet(page);
+        await page.waitForFunction(() => document.querySelectorAll('.column')[1].innerText.includes('기본 12근무일'));
+
+        // 등록 화면 초안에 바로 쓰인다
+        await page.goto(BASE + '/Projects/Edit');
+        await page.locator('.choice', { hasText: 'Simulation' }).click();
+        await page.waitForSelector('#draft .sched-row');
+        await page.waitForFunction(() => document.querySelector('#draft').innerText.includes('기본 12근무일'));
+        assert((await page.locator('#draft .sched-row').nth(2).locator('.sched-gap').innerText()).includes('+12근무일'), '바꾼 기본 기간이 초안에 쓰이지 않음');
+    });
+
     await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
         await page.goto(BASE + '/Admin');
         await page.click('a[href$="/Admin/Update"]');
@@ -1084,7 +1213,8 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
             const s = (await r.json()).status;
             return { on: s.signatureCheck, keyId: s.keyId || '', canApply: s.canApply };
         });
-        const sigText = await page.locator('.update-body dl').innerText();
+        // 첫 카드(현재 버전)의 목록 — 아래에 백업 카드의 목록도 있다
+        const sigText = await page.locator('.update-body dl').first().innerText();
         if (sig.on) assert(sigText.includes('켜짐') && sigText.includes(sig.keyId), '서명 검증 켜짐·공개키 표시가 없음: ' + sigText);
         else assert(sigText.includes('서명 검증 꺼짐'), '서명 검증 꺼짐 안내가 없음: ' + sigText);
         assert((await page.locator('#upload-form input[type=file]').getAttribute('multiple')) !== null, '배포 정보·서명 파일을 함께 고를 수 없음');
@@ -1105,6 +1235,79 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.unroute('**/Admin/Update?handler=Check');
         await page.click('.start-failure [data-act=dismiss-failure]');
         await page.waitForSelector('.start-failure', { state: 'detached' });
+    });
+
+    await step('서버 상태 — 관리 화면에서 들어가 점검 결과·첨부 대조·최근 경고를 보고, 첫 설정이 덜 됐으면 점검표', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#status-link');
+        await page.waitForSelector('#checks');
+        for (const key of ['db', 'schema', 'disk', 'folders', 'pdf', 'holidays', 'backup', 'setup'])
+            assert((await page.locator(`#checks tr[data-check=${key}]`).count()) === 1, '점검 항목이 없음: ' + key);
+        assert((await page.locator('#checks tr[data-check=db] .chip').innerText()).includes('정상'), 'DB 연결 점검이 정상이 아님');
+        assert((await page.locator('#attachments').innerText()).includes('기록'), '첨부 대조가 없음');
+        // 샘플 데이터는 첫 설정이 끝난 상태라 점검표가 없다
+        assert((await page.locator('#setup').count()) === 0, '첫 설정이 끝났는데 점검표가 보임');
+        await page.click('#logs [data-logs=error]');
+        await page.waitForSelector('#logs [data-logs=error].on');
+        await page.click('#logs [data-logs=all]');
+        // 전체 화면 캡처는 고정 머리글이 지금 스크롤 위치에 찍히므로 맨 위로 올린 뒤 찍는다
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await shot(page, 'd43-status');
+        // 처음 설치한 서버처럼 법인·내년 공휴일이 없다고 답하게 해 점검표를 그린다
+        await page.route('**/Admin/Status?handler=Data', async (route) => {
+            const res = await route.fetch();
+            const body = await res.json();
+            body.report.setupDone = false;
+            body.report.setup.forEach((x) => { if (x.key === 'corp' || x.key === 'holiday-next') { x.done = false; x.detail = '0개'; } });
+            await route.fulfill({ response: res, json: body });
+        });
+        await page.click('#status-refresh');
+        await page.waitForSelector('#setup');
+        const setup = await page.locator('#setup').innerText();
+        assert(setup.includes('첫 설정 점검표') && setup.includes('법인·위치'), '첫 설정 점검표가 없음: ' + setup);
+        assert((await page.locator('#setup [data-setup=corp] a').getAttribute('href')).endsWith('/Admin#location'), '법인 설정 바로 가기가 없음');
+        await shot(page, 'd43b-status-setup');
+        await page.unroute('**/Admin/Status?handler=Data');
+        // 점검표의 바로 가기는 관리 화면의 그 탭을 연다
+        await page.click('#setup [data-setup=corp] a');
+        await page.waitForSelector('#admin-tabs [data-kind=location].on');
+        await page.goto(BASE + '/Admin#holiday');
+        await page.waitForSelector('#admin-tabs [data-kind=holiday].on');
+    });
+
+    await step('업데이트 — 지금 백업하면 목록에 남고, 진단 정보를 보고 내려받음', async () => {
+        await page.goto(BASE + '/Admin/Update#backup');
+        await page.waitForSelector('#backup');
+        const before = await page.locator('#backup tr[data-backup]').count();
+        await page.click('#backup [data-act=backup]');
+        await page.waitForSelector('.toast');
+        await page.waitForFunction((n) => document.querySelectorAll('#backup tr[data-backup]').length === n + 1, before);
+        const row = await page.locator('#backup tr[data-backup]').first().innerText();
+        assert(row.includes('지금 백업') && row.includes('성공') && row.includes('평영'), '백업 목록이 이상함: ' + row);
+        assert(/gantt-\d{8}-\d{6}/.test(row), '백업 이름이 없음: ' + row);
+        await page.click('#diagnostics [data-act=diag]');
+        await page.waitForSelector('#diag-state');
+        assert((await page.locator('#diag-state').innerText()).includes('지금 버전'), '진단 상태 요약이 없음');
+        const [download] = await Promise.all([page.waitForEvent('download'), page.click('#diag-download')]);
+        const file = path.join(EXPORTS, '업데이트진단.txt');
+        await download.saveAs(file);
+        const text = fs.readFileSync(file, 'utf8');
+        assert(text.includes('== 상태 요약 ==') && text.includes('apply.log'), '진단 파일 내용이 이상함');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await shot(page, 'd44-update-backup');
+    });
+
+    await step('오류 번호 — 서버 오류 안내와 오류 화면에 번호를 보임', async () => {
+        await page.goto(BASE + '/Projects');
+        // 서버가 오류 번호 머리글과 함께 500 을 준 경우 (본문이 JSON 이 아니어도)
+        await page.route('**/__e2e-error', (r) => r.fulfill({ status: 500, contentType: 'text/plain', headers: { 'X-Error-Id': '0HE2E:00000042' }, body: 'boom' }));
+        const message = await page.evaluate(() => App.get(App.url('/__e2e-error')).then(() => '', (e) => e.message));
+        assert(message.includes('500') && message.includes('오류 번호 0HE2E:00000042'), '오류 번호가 안내에 없음: ' + message);
+        await page.unroute('**/__e2e-error');
+        await page.goto(BASE + '/Error');
+        const id = (await page.locator('#error-id code').innerText()).trim();
+        assert(id.length > 4, '오류 화면에 오류 번호가 없음');
+        await shot(page, 'd45-error-number', false);
     });
 
     await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
@@ -1254,6 +1457,35 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
+    await step('모바일 단계 일정 편집 — 하단 시트, 날짜 두 칸과 간격', async () => {
+        await m.click('#edit-schedule');
+        await m.waitForSelector(SHEET + ' .sched-row');
+        const w = await m.evaluate(() => document.querySelector('dialog.sheet[open]').getBoundingClientRect().width);
+        assert(w >= 389, '모바일 시트가 화면 폭 전체가 아님: ' + w);
+        const over = await m.evaluate(() => { const b = document.querySelector('dialog.sheet[open] .sheet-body'); return b.scrollWidth - b.clientWidth; });
+        assert(over <= 0, '시트가 가로로 넘침 ' + over);
+        const gapBefore = await m.locator(SHEET + ' .sched-row').nth(6).locator('[data-gap]').innerText();
+        await m.locator(SHEET + ' .sched-row').nth(6).locator('input[name^=target]').fill(kstToday(200));
+        await m.waitForSelector(SHEET + ' [data-reason]:not([hidden])');
+        // 간격은 서버가 다시 계산해 준다 (미리보기 응답 뒤에 바뀐다)
+        await m.waitForFunction((b) => {
+            const rows = document.querySelector('dialog.sheet[open] [data-rows]');
+            return !rows.hasAttribute('aria-busy') && rows.querySelectorAll('.sched-row')[6].querySelector('[data-gap]').innerText !== b;
+        }, gapBefore);
+        await shot(m, 'm07c-schedule-sheet', false);
+        await discardSheet(m);
+    });
+
+    await step('모바일 과제 등록 — 단계 목표일 초안', async () => {
+        await m.goto(BASE + '/Projects/Edit');
+        await m.locator('.choice', { hasText: '물류 자동화' }).click();
+        await m.waitForSelector('#draft .sched-row');
+        await noOverflow('과제 등록 초안');
+        await m.locator('#draft-field').scrollIntoViewIfNeeded();
+        await shot(m, 'm11e-edit-draft');
+        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
+    });
+
     await step('모바일 자료·분석·과제 등록·관리 화면', async () => {
         await m.click('.tabs [data-tab=files]');
         await noOverflow('자료');
@@ -1289,6 +1521,20 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await noOverflow('업데이트 시작 실패 안내');
         await shot(m, 'm11d-update-start-failure');
         await m.unroute('**/Admin/Update?handler=Check');
+    });
+
+    await step('모바일 서버 상태·백업·진단 정보', async () => {
+        await m.goto(BASE + '/Admin/Status');
+        await m.waitForSelector('#checks');
+        await noOverflow('서버 상태');
+        await shot(m, 'm12-status');
+        await m.goto(BASE + '/Admin/Update#backup');
+        await m.waitForSelector('#backup tr[data-backup]');
+        await m.click('#diagnostics [data-act=diag]');
+        await m.waitForSelector('#diag-state');
+        await noOverflow('업데이트 백업·진단');
+        await m.evaluate(() => window.scrollTo(0, 0));
+        await shot(m, 'm12b-update-backup');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {

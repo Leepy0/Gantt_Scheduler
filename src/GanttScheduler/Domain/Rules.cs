@@ -124,11 +124,17 @@ public static class Rules
     public static bool AllStagesDone(Project p) => p.Stages.Count > 0 && p.Stages.All(s => s.CompletedDate != null);
 
     // 입고 추천일 = 검수 단계 일자(완료일 우선, 없으면 목표일) + 법인 해상 운송 소요일
-    public static DateOnly? InboundRecommendation(Project p, int oceanLeadDays)
+    public static DateOnly? InboundRecommendation(Project p, int oceanLeadDays) => InboundRecommendation(Ordered(p), oceanLeadDays);
+
+    // 순서대로 놓인 단계로 계산한다 — 단계 일정 표·등록 초안처럼 아직 저장하지 않은 날짜로 추천일을 다시 볼 때
+    public static DateOnly? InboundRecommendation(IEnumerable<Stage> ordered, int oceanLeadDays)
     {
-        var inspection = Ordered(p).LastOrDefault(s => s.Kind == StageKind.Inspection);
+        var inspection = ordered.LastOrDefault(s => s.Kind == StageKind.Inspection);
         var baseDate = inspection?.CompletedDate ?? inspection?.TargetDate;
-        return baseDate?.AddDays(oceanLeadDays);
+        if (baseDate == null) return null;
+        // 아직 검증하지 않은 날짜(초안·미리보기의 9999-12-31 같은 오타)로도 부르므로 DateOnly 범위를 넘으면 추천하지 않는다
+        var day = (long)baseDate.Value.DayNumber + oceanLeadDays;
+        return day < DateOnly.MinValue.DayNumber || day > DateOnly.MaxValue.DayNumber ? null : DateOnly.FromDayNumber((int)day);
     }
 
     // ── 기준선 ───────────────────────────────────────────────────────────
@@ -439,4 +445,54 @@ public static class Rules
 
     public static bool CanDeleteAttachment(Attachment a, int? projectOwnerId, int? userId, bool isAdmin) =>
         isAdmin || (userId != null && (a.UploadedById == userId || projectOwnerId == userId));
+
+    // ── 단계 일정 계획: 목표일 초안·근무일 간격 ─────────────────────────
+    // 기본 기간(StageTemplate.DefaultWorkDays)·초안·간격·리드타임 힌트가 모두 같은 거리를 쓴다:
+    // "앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지의 근무일 거리(WorkCalendar.Distance)".
+    // 그래서 초안을 그대로 두면 단계 일정 표의 간격이 기본 기간과 같고, 과거 리드타임 평균을 기본 기간에 그대로 옮겨 쓸 수 있다
+
+    public const int MaxDefaultWorkDays = 999;
+
+    public static void ValidateDefaultWorkDays(int? days)
+    {
+        if (days is int d && (d < 0 || d > MaxDefaultWorkDays))
+            throw new RuleException($"기본 기간은 0~{MaxDefaultWorkDays} 근무일로 입력해 주세요. 정하지 않으려면 비워 둡니다.", "defaultWorkDays");
+    }
+
+    // 단계 목표일 초안 (단계 순서대로). 앞 단계 목표일(첫 단계는 착수일)에서 근무일 기본 기간만큼 뒤로 잡는다.
+    // 기본 기간이 없는 단계는 비우고, 그다음 단계는 앞에서 정해진 마지막 목표일(없으면 착수일)부터 센다 — 간트의 목표 막대와 같은 기준.
+    // fixedAt(순서 위치 → 날짜)에 있는 단계는 사람이 정한 값(빈 값 포함)을 그대로 두고 그 뒤 단계만 거기서 이어 센다.
+    // 초안은 제안일 뿐이다 — 저장은 사람이 확인하고 고친 뒤에 한다(규칙 1)
+    public static List<DateOnly?> DraftTargets(DateOnly start, IReadOnlyList<int?> workDays, WorkCalendar cal,
+                                               IReadOnlyDictionary<int, DateOnly?>? fixedAt = null)
+    {
+        var result = new List<DateOnly?>(workDays.Count);
+        var anchor = start;
+        for (var i = 0; i < workDays.Count; i++)
+        {
+            DateOnly? target = fixedAt != null && fixedAt.TryGetValue(i, out var kept) ? kept
+                : workDays[i] is int days ? cal.AddWorkingDays(anchor, Math.Clamp(days, 0, MaxDefaultWorkDays))
+                : null;
+            result.Add(target);
+            if (target != null) anchor = target.Value;
+        }
+        return result;
+    }
+
+    public static List<DateOnly?> DraftTargets(DateOnly start, IEnumerable<StageTemplate> templates, WorkCalendar cal) =>
+        DraftTargets(start, templates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).Select(t => t.DefaultWorkDays).ToList(), cal);
+
+    // 단계 목표일 사이의 근무일 간격 (단계 순서대로). 앞에서 정해진 마지막 목표일(첫 단계는 착수일)부터 이 단계 목표일까지.
+    // 목표일이 없으면 null, 앞 단계보다 이르면 음수(순서가 뒤바뀐 일정 — 화면이 경고한다)
+    public static List<int?> TargetGaps(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    {
+        var result = new List<int?>(targets.Count);
+        var anchor = start;
+        foreach (var t in targets)
+        {
+            result.Add(t == null ? null : cal.Distance(anchor, t.Value));
+            if (t != null) anchor = t.Value;
+        }
+        return result;
+    }
 }

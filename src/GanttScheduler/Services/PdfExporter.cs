@@ -304,24 +304,15 @@ public class PdfExporter
         lock (Gate)
         {
             if (_fontReady) return;
-            var windows = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-            var regular = FirstExisting(_cfg["Pdf:Font"],
-                Path.Combine(windows, "malgun.ttf"),
-                "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-                "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf")
+            // 찾는 규칙은 서버 상태 점검과 같다 (PdfFonts)
+            var (found, bold) = PdfFonts.Find(_cfg);
+            var regular = found
                 ?? throw new RuleException("PDF 에 쓸 한글 글꼴(TTF)을 찾지 못했습니다. 설정 Pdf:Font 에 글꼴 파일 경로를 지정해 주세요.");
-            var bold = FirstExisting(_cfg["Pdf:FontBold"],
-                Path.Combine(windows, "malgunbd.ttf"),
-                "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
-                "/usr/share/fonts/truetype/nanum/NanumBarunGothicBold.ttf");
 
             GlobalFontSettings.FontResolver = new FileFontResolver(File.ReadAllBytes(regular), bold == null ? null : File.ReadAllBytes(bold));
             _fontReady = true;
         }
     }
-
-    private static string? FirstExisting(params string?[] paths) =>
-        paths.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p));
 
     // 어떤 글꼴 이름을 요청받아도 준비한 한글 글꼴 하나로 답한다
     private sealed class FileFontResolver : IFontResolver

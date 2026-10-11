@@ -93,6 +93,17 @@
         <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("description") ?? "")" />
     </label>
 
+    @if (Model.IsNew)
+    {
+        @* 단계 목표일 초안: 유형·착수일(·법인)을 고르면 stage-draft.js 가 서버에서 초안을 받아 그린다. 수정 화면에는 없다(상세의 단계 일정 편집) *@
+        <div class="field" id="draft-field" data-field="stageTargets">
+            <span class="label">단계 목표일 <span class="opt">선택</span></span>
+            <div id="draft"></div>
+            <div id="draft-fields" hidden></div>
+            <span class="hint">유형의 단계별 기본 기간(근무일)으로 계산한 초안입니다. 날짜를 고치면 그 뒤 단계는 고친 날짜부터 다시 계산합니다. 비우면 목표일 미정으로 등록됩니다.</span>
+        </div>
+    }
+
     <div class="form-actions">
         <a class="btn" href="@(Model.IsNew ? Url.Page("/Projects/Index") : Url.Page("/Projects/Detail", new { id = Model.Id }))">취소</a>
         <button type="submit" class="btn primary">@(Model.IsNew ? "등록" : "저장")</button>
@@ -109,4 +120,8 @@
 <script id="page-data" type="application/json">@Html.Raw(Model.MetaJson)</script>
 @section Scripts {
     <script src="~/js/edit.js" asp-append-version="true"></script>
+    @if (Model.IsNew)
+    {
+        <script src="~/js/stage-draft.js" asp-append-version="true"></script>
+    }
 }

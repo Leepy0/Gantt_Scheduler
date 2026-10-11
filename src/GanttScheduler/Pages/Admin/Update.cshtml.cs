@@ -16,11 +16,18 @@ public class UpdateModel : PageModel
 
     private readonly UpdateService _updates;
     private readonly CurrentUser _me;
+    private readonly BackupService? _backup;
+    private readonly FileLog? _log;
+    private readonly IHostApplicationLifetime? _lifetime;
 
-    public UpdateModel(UpdateService updates, CurrentUser me)
+    // 백업·로그는 선택 인자다 (업데이트 시험이 페이지를 직접 만들 때 없어도 되게)
+    public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null, IHostApplicationLifetime? lifetime = null)
     {
         _updates = updates;
         _me = me;
+        _backup = backup;
+        _log = log;
+        _lifetime = lifetime;
     }
 
     public bool IsAdmin => _me.IsAdmin;
@@ -28,7 +35,10 @@ public class UpdateModel : PageModel
 
     public record SettingsInput(bool AutoCheck, bool AutoApply, int WindowFrom, int WindowTo, int IdleMinutes);
 
-    public void OnGet() => DataJson = AppJson.Serialize(new { status = _updates.Status(), admin = IsAdmin });
+    public void OnGet() => DataJson = AppJson.Serialize(new { status = _updates.Status(), admin = IsAdmin, backup = BackupStatus() });
+
+    // 백업 경로·목록은 서버 경로가 보이므로 관리자에게만 준다
+    private BackupStatus? BackupStatus() => IsAdmin ? _backup?.Status() : null;
 
     public IActionResult OnGetStatus() => StatusJson();
 
@@ -43,6 +53,37 @@ public class UpdateModel : PageModel
     public Task<IActionResult> OnPostRollbackAsync() => Run(() => _updates.Rollback(_me.Name));
 
     public Task<IActionResult> OnPostDismissFailureAsync() => Run(() => _updates.DismissFailure());
+
+    // 지금 백업 — 끝날 때까지 기다린다(보통 몇 초~몇 분). 실패하면 이유를 돌려주고 목록에도 실패 기록이 남는다.
+    // 요청 취소 토큰(RequestAborted)에 묶지 않는다: 기다리다 다른 화면으로 가거나 탭을 닫아도 백업은 서버에서 끝까지 돈다
+    // (다시 열면 화면이 '백업 중'을 보고 끝날 때까지 상태를 묻는다). 서버가 내려갈 때만 멈추고, 멈춘 것도 목록에 남는다
+    public Task<IActionResult> OnPostBackupAsync() => Run(async () =>
+    {
+        if (_backup == null) throw new UpdateException("백업을 쓸 수 없는 서버입니다.", "서버를 다시 시작해 주세요.");
+        var entry = await _backup.RunAsync(BackupKinds.Manual, _me.Name, _lifetime?.ApplicationStopping ?? CancellationToken.None);
+        if (!entry.Ok)
+            throw new UpdateException("백업하지 못했습니다: " + entry.Error,
+                "백업 경로(Backup:Path, Backup:FilesPath)와 쓰기 권한·디스크 여유를 확인하세요. 아래 목록에 실패 기록이 남습니다.");
+    });
+
+    // 진단 정보: 교체 기록(apply.log) 끝부분, 시작 오류(startup-error.log), 상태 요약, 최근 업데이트·백업 경고
+    public IActionResult OnGetDiagnostics()
+    {
+        if (!_me.IsAdmin) return Denied();
+        return new JsonResult(new { ok = true, diagnostics = _updates.Diagnostics(_log?.Recent()) });
+    }
+
+    // 같은 내용을 텍스트 파일 하나로 (관리자가 메일·메신저로 전달하기 쉽게). 연결 문자열의 계정·비밀번호는 가린다
+    public IActionResult OnGetDiagnosticsFile()
+    {
+        if (!_me.IsAdmin) return Denied();
+        var text = _updates.DiagnosticsText(_log?.Recent());
+        return File(System.Text.Encoding.UTF8.GetBytes(text), "text/plain; charset=utf-8",
+            $"업데이트진단_{KoreaClock.ToKst(DateTime.UtcNow):yyyyMMdd-HHmm}.txt");
+    }
+
+    private static JsonResult Denied() =>
+        new(new { ok = false, error = "관리자만 업데이트를 다룰 수 있습니다." }) { StatusCode = StatusCodes.Status403Forbidden };
 
     public Task<IActionResult> OnPostSettingsAsync([FromBody] SettingsInput input) =>
         Run(() => _updates.SaveSettings(new UpdateSettings(input.AutoCheck, input.AutoApply, input.WindowFrom, input.WindowTo, input.IdleMinutes)));
@@ -82,8 +123,7 @@ public class UpdateModel : PageModel
     // 실행 → 최신 상태. 실패는 원인과 해결 방법을 같이 돌려준다
     private async Task<IActionResult> Run(Func<Task> action)
     {
-        if (!_me.IsAdmin)
-            return new JsonResult(new { ok = false, error = "관리자만 업데이트를 다룰 수 있습니다." }) { StatusCode = StatusCodes.Status403Forbidden };
+        if (!_me.IsAdmin) return Denied();
         try
         {
             await action();
@@ -99,5 +139,5 @@ public class UpdateModel : PageModel
         }
     }
 
-    private JsonResult StatusJson() => new(new { ok = true, status = _updates.Status() });
+    private JsonResult StatusJson() => new(new { ok = true, status = _updates.Status(), backup = BackupStatus() });
 }

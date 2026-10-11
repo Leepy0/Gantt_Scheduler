@@ -66,9 +66,10 @@ public record StagedUpdate(string Version, string Dir, string Sha256, string? Sc
 
 public record PreviousVersion(string Version, string Schema, string Dir, DateTime At);
 
-public record UpdateLog(DateTime At, string Kind, string From, string To, string By, bool Ok, string? Error);
+// Backup: 적용 전에 만든 DB 백업 이름 (구조가 바뀌는 업데이트 — 되돌리려면 이 백업을 복원한다). 나중에 추가한 항목이다
+public record UpdateLog(DateTime At, string Kind, string From, string To, string By, bool Ok, string? Error, string? Backup = null);
 
-public record PendingSwap(string Kind, string From, string To, string FromSchema, string By, DateTime At);
+public record PendingSwap(string Kind, string From, string To, string FromSchema, string By, DateTime At, string? Backup = null);
 
 // 적용한 새 버전이 시작되지 않은 일. 교체 도우미가 기록한다(RolledBack: 이전 버전으로 자동으로 되돌렸는지).
 // 이 버전은 자동으로 다시 받거나 적용하지 않는다 — 관리자가 화면에서 '다시 시도'할 수 있다
@@ -97,6 +98,9 @@ public class UpdateState
     public string? SkipAuto { get; set; }        // 되돌린 버전 — 자동으로는 다시 받거나 적용하지 않는다 (직접 누르면 가능)
     public List<UpdateLog> History { get; set; } = new();
     public StartFailure? StartFailure { get; set; }   // 적용했지만 시작되지 않은 버전 (교체 도우미가 기록)
+    public DateTime? LastCheckOkAt { get; set; }      // 마지막으로 확인에 성공한 시각 — 확인이 계속 실패하는지 알리기 위해
+    public DateTime? CheckFailedSince { get; set; }   // 확인이 실패하기 시작한 시각 (성공하면 비운다)
+    public DateTime? FailureDismissedAt { get; set; } // 시작 실패 안내를 닫은 시각 — 그 전의 실패 이력은 관리자 칩으로 다시 알리지 않는다
 }
 
 // ── 새 버전을 어디서 찾을지 (Update:Source) ──────────────────────────────

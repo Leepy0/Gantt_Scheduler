@@ -20,14 +20,16 @@
 src/GanttScheduler/
   Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
   Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
-  Services/    ProjectService, Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
+  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안), Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
                MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
                Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateKey(배포 파일 서명 확인),
                UpdateApplier(파일 교체 도우미 모드 — 새 버전 시작 확인·자동 되돌리기 포함),
-               ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅)
+               ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅),
+               BackupService(DB 백업·파일 묶음·야간 백업), OpsChecks(서버 점검·첫 설정·첨부 대조·관리자 알림 OpsAlerts),
+               FileLog(파일 로그·최근 경고), RequestDiagnostics(느린 요청·오류 번호), PdfFonts(PDF 글꼴 탐색)
   Pages/       Index(대시보드), My/Index, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
-               Admin/{Index,Update}, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,edit,admin,org,update}.js
+               Admin/{Index,Update,Status}, Welcome
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,edit,stage-draft,admin,org,update,status}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)
@@ -89,6 +91,7 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 설계는 `docs/DESIGN.md` 8장. 운영 형태는 Windows 서비스(`GanttScheduler.exe install`, 전용 계정 `NT SERVICE\<이름>`). 서버는 릴리스의 `GanttScheduler.json`(매니페스트)으로 새 버전을 알고 zip 을 받아 스스로 바뀐다.
 
 - 요청을 받기 전에 해야 하는 일은 `Program.cs` 본문이 아니라 `StartupWork`(호스트 시작 단계)에 넣는다. 본문에서 오래 걸리면 서비스 시작이 30초 제한에 걸린다.
+- 백업·복원·서버 이전·로그는 `docs/OPERATIONS.md`. 서버를 점검하는 새 항목은 `OpsChecks` 한 곳에 `CheckResult` 로 더한다(서버 상태 화면·`/health/ready`·관리자 칩이 같이 쓴다). 백업 목록(`backups.json`)도 state.json 처럼 항목은 추가만 한다.
 
 - 서버가 보는 곳은 공개 레포 `Leepy0/Gantt_Scheduler_Release` 의 릴리스다(이 레포는 비공개라 서버가 읽지 못한다). `appsettings.json` 의 `Update:Source` 와 `release.yml` 의 `RELEASE_REPO` 가 같은 레포를 가리켜야 한다.
 - 정식 배포: `GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋·push → **그 커밋의 CI 가 통과한 것을 확인한 뒤** `gh workflow run release.yml -R Leepy0/Gantt_Scheduler --ref main -f release=true`. 워크플로도 첫 단계에서 그 커밋의 CI 결과를 확인한다(실행 중이면 기다리고, 실패·없음이면 태그를 만들기 전에 멈춘다). 이 환경에서 태그 push 는 막혀 있으므로(403) 워크플로가 태그를 만들게 한다. 버전을 올리지 않으면 서버가 새 버전으로 보지 않는다.

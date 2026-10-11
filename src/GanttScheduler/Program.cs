@@ -36,6 +36,10 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 if (serviceName != null) WindowsServiceSupport.Use(builder, serviceName);
 var config = builder.Configuration;
 
+// 파일 로그(App_Data/logs, 일자별)와 최근 경고·오류 200건 (Services/FileLog.cs). 컨테이너가 만들어 서버가 내려갈 때 남은 줄을 쓰고 닫는다
+builder.Services.AddSingleton(_ => FileLog.From(config, builder.Environment.ContentRootPath));
+builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLog>());
+
 // DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택, Data/DbSetup.cs)
 builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
@@ -68,6 +72,12 @@ builder.Services.AddSingleton<UpdateService>();
 builder.Services.AddHostedService<StartupWork>();
 builder.Services.AddHostedService<UpdateWorker>();
 
+// 백업·운영 점검 (Services/BackupService.cs, OpsChecks.cs). 야간 자동 백업은 Backup:Nightly 일 때만 돈다
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<OpsAlerts>();
+builder.Services.AddScoped<OpsChecks>();
+builder.Services.AddHostedService<BackupWorker>();
+
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);
 Directory.CreateDirectory(keyDir);
@@ -88,6 +98,8 @@ var updates = app.Services.GetRequiredService<UpdateService>();
 
 // 모든 응답에 보안 헤더 (nosniff, 같은 출처에서만 틀 안에 표시, 다른 사이트로 주소를 넘기지 않음)
 app.UseSecurityHeaders();
+// 느린 요청 경고(Logs:SlowRequestMs)와 5xx 응답의 오류 번호 머리글 (Services/RequestDiagnostics.cs)
+app.UseMiddleware<RequestTimingMiddleware>();
 
 // 리버스 프록시(Codespaces, nginx 등) 뒤에서 실제 접속 IP 를 쓰려면 켠다
 if (config.GetValue<bool>("TrustForwardedHeaders"))
@@ -113,6 +125,8 @@ app.Use(async (ctx, next) =>
         pages.Enabled = false;
     await next();
 });
+// 화면이 JSON 으로 묻는 요청의 예기치 않은 예외는 오류 번호가 든 JSON 으로 돌려준다 (예외 처리기 뒤에 있어야 먼저 잡는다)
+app.UseMiddleware<JsonErrorMiddleware>();
 
 app.UseStaticFiles();
 app.UseRouting();
@@ -129,6 +143,16 @@ app.Use(async (ctx, next) =>
 app.UseMiddleware<UserGateMiddleware>();
 app.MapRazorPages();
 app.MapGet("/health", () => Results.Text("ok"));
+// 감시 도구용: DB 왕복과 디스크 여유를 보고, 서버를 쓸 수 없으면 503. 사용자 조회(UserGate) 없이 답한다(/health 아래).
+// 누구나 부를 수 있는 주소라 원인 문구 대신 항목과 수준만 준다 (자세한 내용은 관리 > 서버 상태와 로그)
+app.MapGet("/health/ready", async (HttpContext ctx, OpsChecks ops) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store";
+    var checks = await ops.ReadyAsync(ctx.RequestAborted);
+    var ok = checks.All(c => c.Level != CheckLevel.Fail);
+    return Results.Json(new { status = ok ? "ok" : "fail", checks = checks.Select(c => new { name = c.Key, level = c.Level }) },
+        statusCode: ok ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+});
 // 열려 있는 화면이 서버가 새 버전으로 바뀌었는지 확인하는 주소
 // today: 한국 날짜. 오래 열어 둔 화면이 날짜가 바뀐 것을 알아채고 다시 그린다(DB 를 읽지 않는다)
 app.MapGet("/version", (HttpContext ctx, IClock clock) =>

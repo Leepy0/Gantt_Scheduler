@@ -42,6 +42,7 @@
             <button type="button" class="btn small toggle" id="show-baseline" aria-pressed="false"><svg class="ic"><use href="#i-pin" /></svg>기준선</button>
             <button type="button" class="btn small toggle" id="show-links" aria-pressed="false"><svg class="ic"><use href="#i-link" /></svg>의존선</button>
             <span class="spacer"></span>
+            <button type="button" class="btn small" id="edit-schedule"><svg class="ic"><use href="#i-calendar" /></svg>단계 일정 편집</button>
             <button type="button" class="btn small" id="add-stage"><svg class="ic"><use href="#i-plus" /></svg>단계</button>
             <button type="button" class="btn small primary" id="add-work"><svg class="ic"><use href="#i-plus" /></svg>작업</button>
         </div>
@@ -97,5 +98,6 @@
 <script id="page-data" type="application/json">@Html.Raw(Model.DataJson)</script>
 @section Scripts {
     <script src="~/js/gantt.js" asp-append-version="true"></script>
+    <script src="~/js/schedule.js" asp-append-version="true"></script>
     <script src="~/js/detail.js" asp-append-version="true"></script>
 }

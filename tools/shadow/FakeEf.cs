@@ -54,6 +54,16 @@ namespace Microsoft.EntityFrameworkCore
         public static IEnumerable<string> GetMigrations(this DatabaseFacade db) => Array.Empty<string>();
         public static Task<IEnumerable<string>> GetPendingMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
         public static Task<IEnumerable<string>> GetAppliedMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        public static void SetCommandTimeout(this DatabaseFacade db, TimeSpan? timeout) { }
+
+        // 백업(BackupService)이 쓰는 SQL. 메모리 DB 라 실제 사본은 없고, VACUUM INTO 는 그 자리에 표시 파일만 만든다 —
+        // 화면 점검이 백업 목록·크기 표시까지 따라갈 수 있게 하기 위해서다
+        public static Task<int> ExecuteSqlRawAsync(this DatabaseFacade db, string sql, IEnumerable<object> parameters, CancellationToken ct = default)
+        {
+            if (sql.TrimStart().StartsWith("VACUUM INTO", StringComparison.OrdinalIgnoreCase) && parameters.FirstOrDefault() is string path)
+                File.WriteAllText(path, "fake sqlite backup (shadow build)");
+            return Task.FromResult(0);
+        }
     }
 
     public class DbContext : IDisposable, IAsyncDisposable
