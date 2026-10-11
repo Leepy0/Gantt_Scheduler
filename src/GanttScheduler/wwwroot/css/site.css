@@ -930,3 +930,6 @@ a.chip:hover { text-decoration: none; filter: brightness(.96); }
 @media (max-width: 767px) {
     .kpis.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* 리드타임: 열이 늘어 표 최소 폭을 넓힌다 */
+.lead-table { min-width: 960px; }
+.lead-note { flex: 1 1 480px; margin: 0; }

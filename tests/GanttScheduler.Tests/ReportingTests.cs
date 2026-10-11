@@ -155,6 +155,64 @@ public class WeeklyReportTests
     }
 }
 
+// 리드타임: 근무일 열, 0일 표본, 처음 목표·기준선 대비
+public class LeadTimeTests
+{
+    private static DateOnly Day(int month, int day) => new(2026, month, day);
+
+    private static Project Done(int id, ProjectState state, params Stage[] stages)
+    {
+        var p = new Project { Id = id, CategoryId = 1, Category = new Category { Id = 1, Name = "물류" }, State = state, StartDate = Day(10, 1) };
+        var order = 0;
+        foreach (var s in stages) { s.SortOrder = ++order; p.Stages.Add(s); }
+        return p;
+    }
+
+    [Fact]
+    public void 리드타임은_근무일과_처음_목표_기준선_대비를_함께_내고_0일_표본을_따로_센다()
+    {
+        var review1 = new Stage { Id = 11, Name = "검토", CompletedDate = Day(10, 7), TargetDate = Day(10, 6), BaselineDate = Day(10, 5) };
+        var report1 = new Stage { Id = 12, Name = "보고", CompletedDate = Day(10, 7), TargetDate = Day(10, 9) };      // 앞 단계와 같은 날 완료 — 0일 표본
+        var review2 = new Stage { Id = 21, Name = "검토", CompletedDate = Day(10, 9), TargetDate = Day(10, 9) };
+        var all = new List<Project>
+        {
+            Done(1, ProjectState.Done, review1, report1),
+            Done(2, ProjectState.Active, review2, new Stage { Id = 22, Name = "보고" }),
+        };
+        var firsts = new Dictionary<int, DateOnly> { [11] = Day(10, 2) };   // 검토(과제 1)는 처음에 10-02 로 정했다가 미뤘다
+
+        var group = Assert.Single(Reporting.LeadTimes(all, WorkCalendar.WeekendsOnly, firsts));
+        var review = group.Rows[0];
+        Assert.Equal(("검토", 2), (review.Stage, review.Count));
+        Assert.Equal(7, review.AvgDays);                  // 달력일 6 · 8
+        Assert.Equal(5, review.AvgWorkDays);              // 근무일 4 · 6 (주말 제외)
+        Assert.Equal((6, 8), (review.MinDays, review.MaxDays));
+        Assert.Equal((0.5, 1, 2), (review.AvgOver!.Value, review.LateCount, review.OverCount));   // 지금 목표 대비 +1 · 0
+        Assert.Equal((2.5, 2), (review.AvgOverFirst!.Value, review.FirstCount));                // 처음 목표 대비 +5 · 0 (바꾼 적 없으면 지금 목표)
+        Assert.Equal((2.0, 1), (review.AvgOverBaseline!.Value, review.BaselineCount));          // 기준선이 있는 단계만
+
+        var report = group.Rows[1];
+        Assert.Equal((1, 1, 0.0), (report.Count, report.ZeroCount, report.AvgDays));
+        Assert.Equal(-2, report.AvgOver);                 // 목표 대비는 0일 표본도 센다
+
+        // 0일 표본 제외: 소요일 평균·표본에서 빠지고 0일 표본 수는 그대로 보인다
+        var excluded = Reporting.LeadTimes(all, WorkCalendar.WeekendsOnly, firsts, excludeZero: true).Single().Rows[1];
+        Assert.Equal((0, 1), (excluded.Count, excluded.ZeroCount));
+        Assert.Equal(-2, excluded.AvgOver);
+    }
+
+    [Fact]
+    public void 순서를_거슬러_완료한_단계_뒤는_가장_늦은_완료일부터_센다()
+    {
+        var p = Done(1, ProjectState.Done,
+            new Stage { Id = 1, Name = "검토", CompletedDate = Day(10, 14) },
+            new Stage { Id = 2, Name = "보고", CompletedDate = Day(10, 6) },
+            new Stage { Id = 3, Name = "적용", CompletedDate = Day(10, 16) });
+        var samples = Reporting.LeadSamples(p, WorkCalendar.WeekendsOnly);
+        Assert.Equal(new[] { (13, 9, false), (0, -6, true), (2, 2, false) }, samples.Select(x => (x.Days, x.WorkDays, x.Zero)).ToArray());
+    }
+}
+
 // 보고 정확성(DB): 주간 보고·상세 목표일 변경 수가 실제 저장 경로의 묶음과 맞는지
 public class WeeklyServiceTests : IClassFixture<TestDb>
 {
