@@ -164,7 +164,13 @@ public record ProjectView
     // 위반한 과제 간 단계 연결 수. 연결을 읽은 경로(상세 — ProjectService.ViewAsync)에서만 센다. 대시보드·목록은 연결을 읽지 않으므로
     // null(모름)이다 — 0(위반 없음)과 구별해, 그 경로의 위험 판정에 쓰려면 연결을 읽어 Views.Project 에 넘겨야 함을 드러낸다
     public int? LinkViolations { get; init; }
+    // 기준선 차수 이력(최신 순)과 지금 '기준선 대비'를 센 차수. CompareNo 가 null 이면 최신 차수 기준 (상세에서만 채운다)
+    public List<BaselineView>? Baselines { get; init; }
+    public int? CompareNo { get; init; }
 }
+
+// 기준선 한 차수 (상세의 기준선 이력·비교 기준 고르기)
+public record BaselineView(int No, DateTime At, string User, string? Reason);
 
 // 대시보드 간트 한 행: 대시보드·간트(gantt.js)가 실제로 쓰는 값만 싣는다. 진행 과제가 수백 건이면 ProjectView 전체(빈 목록·null 포함)는
 // 페이지가 수 MB 가 된다. 값은 Views.Project 가 계산한 것을 그대로 옮긴다(계산 규칙은 한 곳)
@@ -391,7 +397,7 @@ public static class Views
             CurrentStage = current?.Name, CurrentTarget = current?.TargetDate,
             WorkCount = p.Stages.Sum(s => s.Works.Count), OceanLeadDays = lead,
             BaselineAt = p.BaselineAt, BaselineEnd = baselineEnd,
-            SlipDays = baselineEnd == null || endTarget == null ? null : endTarget.Value.DayNumber - baselineEnd.Value.DayNumber,
+            SlipDays = Rules.SlipDays(endTarget, baselineEnd),
             CriticalCount = stages.Sum(s => s.Works.Count(w => w.Critical)),
             Stages = stages,
             Links = withWorks ? p.Links.OrderBy(l => l.Id).Select(l => new LinkView(l.Id, l.PredecessorId, l.SuccessorId, l.LagDays, Key(l.Type))).ToList() : new List<LinkView>(),

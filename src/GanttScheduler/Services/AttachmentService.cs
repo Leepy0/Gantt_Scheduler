@@ -67,7 +67,7 @@ public class AttachmentService
         if (length <= 0) throw new RuleException("빈 파일은 올릴 수 없습니다.", "file");
         if (length > MaxBytes) throw new RuleException($"파일은 {MaxMB}MB 이하만 올릴 수 있습니다.", "file");
 
-        var project = await _db.Projects.Include(p => p.Stages).FirstOrDefaultAsync(p => p.Id == projectId)
+        var project = await _db.LiveProjects.Include(p => p.Stages).FirstOrDefaultAsync(p => p.Id == projectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         var stage = stageId == null ? null : project.Stages.FirstOrDefault(s => s.Id == stageId.Value);
 
@@ -102,7 +102,8 @@ public class AttachmentService
     // 내려받기·미리보기용: 실제 파일 경로와 정보
     public async Task<(string Path, Attachment File)?> FindAsync(int id)
     {
-        var a = await _db.Attachments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+        // 휴지통에 있는 과제의 첨부는 내려받을 수 없다(과제 화면이 없으므로 — 복원하면 다시 열린다)
+        var a = await _db.Attachments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.Project!.DeletedAt == null);
         if (a == null) return null;
         var path = Path.Combine(FolderOf(a.ProjectId), a.StoredName);
         return File.Exists(path) ? (path, a) : null;
@@ -110,7 +111,7 @@ public class AttachmentService
 
     public async Task<int> DeleteAsync(int id)
     {
-        var a = await _db.Attachments.Include(x => x.Project).FirstOrDefaultAsync(x => x.Id == id)
+        var a = await _db.Attachments.Include(x => x.Project).FirstOrDefaultAsync(x => x.Id == id && x.Project!.DeletedAt == null)
             ?? throw new RuleException("첨부 파일을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
         if (!Rules.CanDeleteAttachment(a, a.Project?.OwnerId, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("첨부 삭제는 올린 사람·과제 담당자 또는 관리자만 할 수 있습니다.");

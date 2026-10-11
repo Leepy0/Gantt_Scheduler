@@ -34,6 +34,7 @@ public class DetailModel : PageModel
     public record ToggleInput(int Id, bool Done, int? Version = null);
     // 기준선 확정·다시 확정 (다시 확정은 사유 필수, 담당자·관리자만)
     public record BaselineInput(int Id, string? Reason = null, int? Version = null);
+    public record DeleteInput(int Id, string? Reason = null, int? Version = null);
     public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
     public record WatchInput(int ProjectId, bool On);
 
@@ -74,7 +75,7 @@ public class DetailModel : PageModel
 
     public async Task<IActionResult> OnGetDataAsync(int id)
     {
-        var view = await _projects.ViewAsync(id);
+        var view = await _projects.ViewAsync(id, compare: Compare);
         return view == null ? Missing() : new JsonResult(new { ok = true, project = view, today = _clock.Today });
     }
 
@@ -95,6 +96,9 @@ public class DetailModel : PageModel
         var stamp = await _projects.StampAsync(id);
         return stamp == null ? Missing() : new JsonResult(new { ok = true, updatedAt = stamp });
     }
+
+    // 화면이 고른 기준선 비교 차수(?compare=n). 상세 화면은 모든 요청 주소에 붙여 보내므로, 저장 뒤 돌려주는 과제도 같은 기준으로 센다
+    private int? Compare => int.TryParse(Request.Query["compare"], out var n) ? n : null;
 
     // 화면이 JSON 으로 묻는 과제가 없을 때 (삭제됨) — 본문 없는 404 대신 이유를 알린다
     private static JsonResult Missing() =>
@@ -277,13 +281,17 @@ public class DetailModel : PageModel
         }
     }
 
-    public async Task<IActionResult> OnPostDeleteAsync([FromBody] IdInput input)
+    // 과제 삭제 = 휴지통으로 보내기(첨부 파일도 그대로 둔다 — 영구 삭제는 관리 > 휴지통). 사유는 선택
+    public async Task<IActionResult> OnPostDeleteAsync([FromBody] DeleteInput input)
     {
         try
         {
-            await _projects.DeleteAsync(input.Id);
-            _files.RemoveProjectFiles(input.Id);     // 실패해도 예외 없이 경고만 남긴다 (과제 삭제는 이미 커밋됨)
+            await _projects.DeleteAsync(input.Id, input.Reason, input.Version);
             return new JsonResult(new { ok = true, redirect = Url.Page("/Projects/Index") });
+        }
+        catch (ConflictException ex)
+        {
+            return ConflictJson(ex.ProjectId, ex.Message);
         }
         catch (RuleException ex)
         {
@@ -298,7 +306,7 @@ public class DetailModel : PageModel
         {
             var id = await action();
             // today: 화면을 오래 열어 두면 날짜가 바뀐다. 응답마다 한국 날짜를 실어 화면의 '오늘'을 맞춘다
-            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(id), today = _clock.Today });
+            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(id, compare: Compare), today = _clock.Today });
         }
         catch (ConflictException ex)
         {

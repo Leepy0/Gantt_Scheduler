@@ -180,12 +180,14 @@ public class DigestService
             ct.ThrowIfCancellationRequested();
             var pending = await _db.Notifications.Include(n => n.Activity).ThenInclude(a => a!.User)
                 .Where(n => n.UserId == u.Id && n.ReadAt == null && n.EmailedAt == null)
+                // 휴지통에 있는 과제의 알림은 싣지 않는다(화면 알림 목록과 같은 기준 — NotificationService.Live)
+                .Where(n => _db.Projects.Any(p => p.Id == n.ProjectId && p.DeletedAt == null))
                 .OrderByDescending(n => n.Id).Take(MaxNotifications).ToListAsync(ct);
             var my = Reporting.My(projects, u.Id, today);
             var soon = my.Soon.Where(w => w.Soon).ToList();
             if (pending.Count == 0 && my.Late.Count == 0 && soon.Count == 0) continue;
             foreach (var pid in pending.Select(n => n.ProjectId).Distinct().Where(id => !titles.ContainsKey(id)))
-                titles[pid] = await _db.Projects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync(ct);
+                titles[pid] = await _db.LiveProjects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync(ct);
 
             var mail = Compose(u.Name, u.Email!, today, pending, titles, my.Late, soon);
             try

@@ -35,6 +35,14 @@ public class AppDb : DbContext
     public DbSet<ProjectWatch> ProjectWatches => Set<ProjectWatch>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ActivityMention> ActivityMentions => Set<ActivityMention>();
+    public DbSet<Baseline> Baselines => Set<Baseline>();
+    public DbSet<BaselineItem> BaselineItems => Set<BaselineItem>();
+    public DbSet<DeletedProjectLog> DeletedProjectLogs => Set<DeletedProjectLog>();
+
+    // 휴지통에 있지 않은 과제와 그 활동. 지운 과제는 모든 조회에서 이것으로 뺀다 — 전역 필터(HasQueryFilter)는 섀도 빌드의 가짜 EF 에 없어
+    // 조회마다 명시적으로 고른다. 휴지통·영구 삭제·이전 작업만 Projects 를 그대로 쓴다
+    public IQueryable<Project> LiveProjects => Projects.Where(p => p.DeletedAt == null);
+    public IQueryable<Activity> LiveActivities => Activities.Where(a => a.Project!.DeletedAt == null);
 
     // 저장 직전·직후에 끼어드는 일 — 요청 범위의 활동 기록(Services/Notifications.cs 의 ActivityLog)이 등록해,
     // 활동과 그 알림을 같은 SaveChanges 로 저장한다. 어느 서비스가 저장하든 빠지지 않게 저장 한 곳에서 부른다
@@ -143,6 +151,10 @@ public class AppDb : DbContext
             e.HasOne(x => x.Location).WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Owner).WithMany().HasForeignKey(x => x.OwnerId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.CreatedBy).WithMany().HasForeignKey(x => x.CreatedById).OnDelete(DeleteBehavior.Restrict);
+            // 휴지통: 지운 사람(사용자 FK 는 Restrict), 사유. 보관 기간 정리는 DeletedAt 으로 고른다
+            e.HasOne(x => x.DeletedBy).WithMany().HasForeignKey(x => x.DeletedById).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.DeleteReason).HasMaxLength(Limits.Reason);
+            e.HasIndex(x => x.DeletedAt);
         });
 
         b.Entity<ProjectEquipment>(e =>
@@ -264,6 +276,30 @@ public class AppDb : DbContext
             e.HasOne(x => x.Activity).WithMany(a => a.Mentions).HasForeignKey(x => x.ActivityId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.ActivityId, x.UserId }).IsUnique();
+        });
+
+        // ── 기준선 차수 이력·휴지통 정리 기록 ──
+        b.Entity<Baseline>(e =>
+        {
+            e.Property(x => x.Reason).HasMaxLength(Limits.Reason);
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.ProjectId, x.No }).IsUnique();
+        });
+
+        b.Entity<BaselineItem>(e =>
+        {
+            // 단계·작업 Id 는 FK 없는 참조 — 단계·작업을 지워도 그 차수의 기록은 남는다(과제 → 차수 → 항목 한 길로만 cascade)
+            e.HasOne(x => x.Baseline).WithMany(x => x.Items).HasForeignKey(x => x.BaselineId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<DeletedProjectLog>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(Limits.ProjectTitle).IsRequired();
+            e.Property(x => x.DeletedBy).HasMaxLength(Limits.UserName);
+            e.Property(x => x.Reason).HasMaxLength(Limits.Reason);
+            e.Property(x => x.PurgedBy).HasMaxLength(Limits.UserName).IsRequired();
+            e.HasIndex(x => x.PurgedAt);
         });
     }
 }

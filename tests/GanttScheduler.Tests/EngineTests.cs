@@ -833,8 +833,13 @@ public class EngineServiceTests : IClassFixture<TestDb>
         var r0a = await AddWorkAsync(r, rs[0].Id, "셋째 A", Day(10, 12), Day(10, 14));
         await AddWorkAsync(r, rs[0].Id, "셋째 B", Day(10, 15), Day(10, 16), pre: r0a);
         await AddWorkAsync(r, rs[1].Id, "셋째 C", Day(10, 19), Day(10, 20), pre: r0a);
+        // 휴지통으로 보내면 연결은 남지만(복원하면 돌아온다) 상대 과제에서는 보이지도 위반으로 세지도 않는다
         using (var s = _db.NewScope())
             await s.Projects.DeleteAsync(r);
+        Assert.Equal(1, await CountAsync());
+        Assert.All((await ViewAsync(q)).Stages, st => Assert.Empty(st.CrossLinks));
+        using (var s = _db.NewScope())
+            await s.Projects.PurgeAsync(r);
         Assert.Equal(0, await CountAsync());
         using (var s = _db.NewScope())
         {

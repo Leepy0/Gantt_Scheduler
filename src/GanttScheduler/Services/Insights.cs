@@ -109,7 +109,7 @@ public class InsightService
     // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다.
     // excludeZero: 근무일 0 이하 표본(몰아서 완료 처리한 기록)을 소요일 평균에서 뺀다
     public async Task<List<LeadGroup>> LeadTimesAsync(bool excludeZero = false) =>
-        Reporting.LeadTimes(await _db.Projects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
+        Reporting.LeadTimes(await _db.LiveProjects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
             .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync(),
             await _projects.CalendarAsync(), await FirstTargetsAsync(), excludeZero);
 
@@ -117,7 +117,7 @@ public class InsightService
     // 목표일 변경 행만 열 몇 개로 읽는다
     public async Task<Dictionary<int, DateOnly>> FirstTargetsAsync()
     {
-        var rows = await _db.Activities.AsNoTracking()
+        var rows = await _db.LiveActivities.AsNoTracking()
             .Where(a => a.Type == ActivityType.TargetChanged && a.StageId != null && a.Project!.State != ProjectState.Dropped)
             .Select(a => new { a.StageId, a.OldValue, a.At, a.Id }).ToListAsync();
         var result = new Dictionary<int, DateOnly>();
@@ -139,7 +139,7 @@ public class InsightService
         var (from, to) = Reporting.WeekOf(day ?? _clock.Today);
         var start = KoreaClock.StartOfDayUtc(from);
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
-        var activities = await _db.Activities.AsNoTracking().Include(a => a.User)
+        var activities = await _db.LiveActivities.AsNoTracking().Include(a => a.User)
             .Where(a => a.At >= start && a.At < end).ToListAsync();
         // 보고에 오르는 과제: 그 주가 끝나기 전에 등록했고, 진행 중이었거나 그 주에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly).
         // 지난 주라면 그 뒤에 마지막 단계를 끝낸 완료 과제도 그때는 진행 중이었다. 나머지 완료·중단 과제는 읽지 않는다
@@ -163,7 +163,7 @@ public class InsightService
         string? projectTitle = null;
         if (f.ProjectId is int pid)
         {
-            projectTitle = await _db.Projects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync();
+            projectTitle = await _db.LiveProjects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync();
         }
 
         var to = f.To ?? _clock.Today;
@@ -178,7 +178,8 @@ public class InsightService
         var start = KoreaClock.StartOfDayUtc(from);
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
 
-        var range = _db.Activities.AsNoTracking().Where(a => a.At >= start && a.At < end);
+        // 휴지통에 있는 과제의 이력은 보이지 않는다(복원하면 돌아온다)
+        var range = _db.LiveActivities.AsNoTracking().Where(a => a.At >= start && a.At < end);
         if (f.ProjectId is int projectId) range = range.Where(a => a.ProjectId == projectId);
 
         // 사용자 고르기 목록: 이 기간(·과제)에 이력을 남긴 사람
@@ -229,7 +230,7 @@ public class InsightService
     // 과제의 가장 오래된 활동 날짜(한국 날짜). 활동이 없으면 to
     private async Task<DateOnly> FirstActivityDayAsync(int projectId, DateOnly to)
     {
-        var first = await _db.Activities.AsNoTracking().Where(a => a.ProjectId == projectId)
+        var first = await _db.LiveActivities.AsNoTracking().Where(a => a.ProjectId == projectId)
             .OrderBy(a => a.At).Select(a => (DateTime?)a.At).FirstOrDefaultAsync();
         return first == null ? to : KoreaClock.KstDate(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc));
     }
@@ -250,7 +251,7 @@ public static class Reporting
         ActivityType.Comment or ActivityType.CommentChanged => "comment",
         ActivityType.TargetChanged or ActivityType.WorkPlanChanged or ActivityType.BaselineSet => "schedule",
         ActivityType.StageCompleted or ActivityType.StageReopened or ActivityType.WorkEdited or ActivityType.CheckChanged => "progress",
-        ActivityType.StateChanged or ActivityType.Created or ActivityType.Cloned => "state",
+        ActivityType.StateChanged or ActivityType.Created or ActivityType.Cloned or ActivityType.ProjectDeleted or ActivityType.ProjectRestored => "state",
         ActivityType.AttachmentAdded or ActivityType.AttachmentRemoved => "file",
         _ => "structure",
     };

@@ -227,13 +227,17 @@ public class NotificationService
     }
 
     // 읽지 않은 알림 수 — 헤더의 종이 1분마다 묻는다(UserId·ReadAt 색인 하나로 센다)
-    public Task<int> UnreadAsync() => _db.Notifications.AsNoTracking().CountAsync(n => n.UserId == _me.Id && n.ReadAt == null);
+    public Task<int> UnreadAsync() => Live(_db.Notifications.AsNoTracking()).CountAsync(n => n.UserId == _me.Id && n.ReadAt == null);
+
+    // 휴지통에 있는 과제의 알림은 세지도 보이지도 않는다(지우지 않으므로 복원하면 돌아온다). 알림의 ProjectId 는 FK 없는 참조라 EXISTS 로 고른다
+    private IQueryable<Notification> Live(IQueryable<Notification> q) =>
+        q.Where(n => _db.Projects.Any(p => p.Id == n.ProjectId && p.DeletedAt == null));
 
     // 최근 순 한 쪽. beforeId: 화면의 마지막 알림 다음부터. unreadOnly: 읽지 않은 것만
     public async Task<NotificationPage> ListAsync(int? beforeId = null, bool unreadOnly = false, int take = PageSize)
     {
         take = Math.Clamp(take, 1, 200);
-        var q = _db.Notifications.AsNoTracking().Where(n => n.UserId == _me.Id);
+        var q = Live(_db.Notifications.AsNoTracking()).Where(n => n.UserId == _me.Id);
         if (unreadOnly) q = q.Where(n => n.ReadAt == null);
         if (beforeId != null) q = q.Where(n => n.Id < beforeId.Value);
         var rows = await q.OrderByDescending(n => n.Id).Take(take + 1)
@@ -266,7 +270,7 @@ public class NotificationService
     // 모두 읽음. 읽음 처리한 수
     public async Task<int> ReadAllAsync()
     {
-        var list = await _db.Notifications.Where(n => n.UserId == _me.Id && n.ReadAt == null).ToListAsync();
+        var list = await Live(_db.Notifications).Where(n => n.UserId == _me.Id && n.ReadAt == null).ToListAsync();
         foreach (var n in list) n.ReadAt = _clock.UtcNow;
         if (list.Count > 0) await _db.SaveChangesAsync();
         return list.Count;

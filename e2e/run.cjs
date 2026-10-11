@@ -589,7 +589,30 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await submitSheet(page);
         await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('기준선 유지'));
         const act = (await projectData(page)).activities.find((a) => a.type === 'baselineSet');
-        assert(act && act.text.includes('기준선 다시 확정 (목표 종료') && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
+        assert(act && /기준선 다시 확정 \(\d+차, 목표 종료/.test(act.text) && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
+    });
+
+    await step('기준선 차수 이력 — 정보 탭에 차수·시각·사람·사유, 이전 차수를 고르면 그 차수 대비 +n일로 다시 그림', async () => {
+        await page.click('.tabs [data-tab=info]');
+        await page.waitForSelector('#baseline-card .baseline-list li');
+        const P = await projectData(page);
+        assert(P.baselines.length >= 2, '차수가 둘 이상이 아님: ' + P.baselines.length);
+        assert(P.baselines[0].reason === '계약 범위 변경', '최신 차수 사유가 이상함');
+        assert(await page.locator('#baseline-card li.on').count() === 1, '비교 중 차수 표시가 없음');
+        await page.selectOption('#baseline-compare', '1');
+        await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('1차 기준선'));
+        assert((await page.locator('#baseline-card li.on').getAttribute('data-baseline-no')) === '1', '1차가 비교 중으로 표시되지 않음');
+        // 고른 차수는 저장 뒤에도 유지된다(요청 주소에 붙여 보냄)
+        await page.click('.tabs [data-tab=activity]');
+        await page.fill('#comment-text', '차수 비교 중 댓글');
+        await page.click('#comment-btn');
+        await page.waitForFunction(() => document.querySelector('#feed') && document.querySelector('#feed').innerText.includes('차수 비교 중 댓글'));
+        assert((await page.locator('#summary .summary-chips').innerText()).includes('1차 기준선'), '저장 뒤 비교 차수가 풀림');
+        await page.click('.tabs [data-tab=info]');
+        await shot(page, 'd08h-baseline-history');
+        await page.selectOption('#baseline-compare', '');
+        await page.waitForFunction(() => !document.querySelector('#summary .summary-chips').innerText.includes('1차 기준선'));
+        await page.click('.tabs [data-tab=schedule]');
     });
 
     await step('목록 보기·정보·활동 탭', async () => {
@@ -601,7 +624,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert((await page.locator('#tab-info').innerText()).includes('물류기술그룹 · 자동화파트'), '담당 소속이 보이지 않음');
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '검수 일정 협력사와 재협의 완료');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => document.getElementById('feed').innerText.includes('재협의 완료'));
         const feed = await page.locator('#feed').innerText();
         assert(feed.includes('연쇄 이동'), '연쇄 이동 이력이 없음');
@@ -800,7 +823,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         // 내가 저장한 직후에는 띠가 뜨지 않는다
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '내가 남긴 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => document.getElementById('feed').innerText.includes('내가 남긴 메모'));
         await page.evaluate(() => App.checkVersion());
         await page.waitForTimeout(500);
@@ -1300,7 +1323,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert(firstIds.every((t, i) => allTexts[i] === t), '처음 50건 순서가 바뀜');
         // 새 활동을 남기면 받아 둔 옛 활동을 잃지 않고 맨 위에 더해진다
         await page.fill('#comment-text', '더 보기 뒤 남긴 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length === k, added.total + 1);
         assert((await page.locator('#feed > li .feed-text').first().innerText()).includes('더 보기 뒤 남긴 메모'), '새 메모가 맨 위가 아님');
 
@@ -1324,7 +1347,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
             }
         }, gap);
         await page.fill('#comment-text', '빈틈 확인 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => (document.querySelector('#feed > li .feed-text') || {}).textContent === '빈틈 확인 메모');
         const expectedTotal = added.total + 1 + gap + 1;
         assert((await page.locator('#feed > li').count()) === 50, '이어지지 않는 옛 목록이 남음: ' + (await page.locator('#feed > li').count()));
@@ -1982,8 +2005,10 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await other.waitForSelector('#summary .summary-meta');
         await page.click('.tabs [data-tab=info]');
         await page.click('#btn-delete');
-        await page.waitForSelector(SHEET + ' [data-yes]');
-        await page.click(SHEET + ' [data-yes]');
+        await page.waitForSelector(SHEET + ' textarea[name=reason]');
+        await page.fill(SHEET + ' textarea[name=reason]', '중복 등록');
+        await shot(page, 'd48-delete-sheet', false);
+        await page.locator(SHEET + ' button[type=submit]').click();
         await page.waitForURL(/\/Projects(\?|$)/);
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 0, '삭제되지 않음');
@@ -1992,6 +2017,27 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await other.waitForSelector('#change-banner.alarm:not([hidden])');
         assert((await other.locator('#change-banner').innerText()).includes('삭제'), '삭제됨 안내가 아님');
         await other.close();
+        active = page;
+    });
+
+    await step('휴지통 — 관리 화면에서 지운 사람·사유를 보고 복원하면 목록·상세가 돌아옴', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#trash-link');
+        await page.waitForSelector('#trash-list');
+        const row = page.locator('.trash-row', { hasText: '컨베이어 개선' });
+        assert(await row.count() === 1, '휴지통에 지운 과제가 없음');
+        const text = await row.innerText();
+        assert(text.includes('평영') && text.includes('사유: 중복 등록') && text.includes('영구 삭제 예정'), '지운 사람·사유·예정일이 없음: ' + text);
+        await shot(page, 'd48b-trash');
+        await row.locator('[data-restore]').click();
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForFunction(() => !document.querySelector('.trash-row') || !document.body.innerText.includes('컨베이어 개선'));
+        await page.goto(BASE + '/Projects?state=all');
+        assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 1, '복원했는데 목록에 없음');
+        await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
+        const P = await projectData(page);
+        assert(P.activities.some((a) => a.type === 'projectDeleted' && a.reason === '중복 등록'), '삭제 기록이 없음');
+        assert(P.activities.some((a) => a.type === 'projectRestored'), '복원 기록이 없음');
     });
 
     await desktop.close();
@@ -2259,6 +2305,29 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await noOverflow('업데이트 백업·진단');
         await m.evaluate(() => window.scrollTo(0, 0));
         await shot(m, 'm12b-update-backup');
+    });
+
+    await step('모바일 과제 삭제·휴지통 — 하단 시트로 지우고, 휴지통에서 영구 삭제하면 기록에 남음', async () => {
+        await openProject(m, '베트남 냉장고 1라인 컨베이어 개선');
+        await m.click('.tabs [data-tab=info]');
+        await m.click('#btn-delete');
+        await m.waitForSelector(SHEET + ' textarea[name=reason]');
+        await noOverflow('과제 삭제 시트');
+        await shot(m, 'm14-delete-sheet', false);
+        await m.locator(SHEET + ' button[type=submit]').click();
+        await m.waitForURL(/\/Projects(\?|$)/);
+        await m.goto(BASE + '/Admin/Trash');
+        await m.waitForSelector('#trash-list');
+        await noOverflow('휴지통');
+        const box = await m.locator('.trash-row [data-purge]').first().boundingBox();
+        assert(box && box.height >= 44, '휴지통 단추가 터치 크기보다 작음');
+        await shot(m, 'm14b-trash');
+        await m.locator('.trash-row', { hasText: '컨베이어 개선' }).locator('[data-purge]').click();
+        await m.locator('dialog[open] [data-yes]').click();
+        await m.waitForFunction(() => !document.querySelector('#trash-list') || !document.querySelector('#trash-list').innerText.includes('컨베이어 개선'));
+        assert((await m.locator('#purge-log').innerText()).includes('컨베이어 개선'), '영구 삭제 기록이 없음');
+        await noOverflow('휴지통 기록');
+        await shot(m, 'm14c-trash-log');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
