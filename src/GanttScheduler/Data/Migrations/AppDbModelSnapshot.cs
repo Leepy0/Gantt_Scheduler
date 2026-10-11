@@ -58,6 +58,9 @@ namespace GanttScheduler.Data.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<int?>("ReasonCode")
+                        .HasColumnType("int");
+
                     b.Property<int?>("StageId")
                         .HasColumnType("int");
 
@@ -350,6 +353,30 @@ namespace GanttScheduler.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("ContainerTypes", "pm");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.DelayReason", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DelayReasons", "pm");
                 });
 
             modelBuilder.Entity("GanttScheduler.Domain.DeletedProjectLog", b =>
@@ -719,6 +746,69 @@ namespace GanttScheduler.Data.Migrations
                     b.ToTable("ProjectEquipments", "pm");
                 });
 
+            modelBuilder.Entity("GanttScheduler.Domain.ProjectSnapshot", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("AtRisk")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("CategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CorporationId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CurrentStage")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<int>("DelayDays")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly?>("EndTarget")
+                        .HasColumnType("date");
+
+                    b.Property<int?>("OrgUnitId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("OwnerId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Progress")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ProjectId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RiskDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("SlipDays")
+                        .HasColumnType("int");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date");
+
+                    b.HasIndex("ProjectId", "Date")
+                        .IsUnique();
+
+                    b.ToTable("ProjectSnapshots", "pm");
+                });
+
             modelBuilder.Entity("GanttScheduler.Domain.ProjectVisit", b =>
                 {
                     b.Property<int>("Id")
@@ -905,6 +995,43 @@ namespace GanttScheduler.Data.Migrations
                     b.HasIndex("StageTemplateId");
 
                     b.ToTable("TemplateCheckItems", "pm");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.TemplateWork", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("DurationWorkDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("OffsetWorkDays")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PredecessorTemplateWorkId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StageTemplateId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PredecessorTemplateWorkId");
+
+                    b.HasIndex("StageTemplateId");
+
+                    b.ToTable("TemplateWorks", "pm");
                 });
 
             modelBuilder.Entity("GanttScheduler.Domain.UserAddress", b =>
@@ -1311,6 +1438,17 @@ namespace GanttScheduler.Data.Migrations
                     b.Navigation("Project");
                 });
 
+            modelBuilder.Entity("GanttScheduler.Domain.ProjectSnapshot", b =>
+                {
+                    b.HasOne("GanttScheduler.Domain.Project", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
             modelBuilder.Entity("GanttScheduler.Domain.ProjectVisit", b =>
                 {
                     b.HasOne("GanttScheduler.Domain.Project", "Project")
@@ -1397,6 +1535,24 @@ namespace GanttScheduler.Data.Migrations
                         .HasForeignKey("StageTemplateId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("StageTemplate");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.TemplateWork", b =>
+                {
+                    b.HasOne("GanttScheduler.Domain.TemplateWork", "PredecessorTemplateWork")
+                        .WithMany()
+                        .HasForeignKey("PredecessorTemplateWorkId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("GanttScheduler.Domain.StageTemplate", "StageTemplate")
+                        .WithMany("Works")
+                        .HasForeignKey("StageTemplateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PredecessorTemplateWork");
 
                     b.Navigation("StageTemplate");
                 });
@@ -1509,6 +1665,8 @@ namespace GanttScheduler.Data.Migrations
             modelBuilder.Entity("GanttScheduler.Domain.StageTemplate", b =>
                 {
                     b.Navigation("CheckItems");
+
+                    b.Navigation("Works");
                 });
 #pragma warning restore 612, 618
         }

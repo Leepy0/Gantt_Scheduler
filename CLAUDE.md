@@ -28,9 +28,9 @@ src/GanttScheduler/
                BackupService(DB 백업·파일 묶음·야간 백업), OpsChecks(서버 점검·첫 설정·첨부 대조·관리자 알림 OpsAlerts),
                FileLog(파일 로그·최근 경고), RequestDiagnostics(느린 요청·오류 번호), PdfFonts(PDF 글꼴 탐색),
                Notifications(ActivityLog — 활동 기록과 알림 계산, 저장 훅), Notify(메일 요약 NotifyWorker·SMTP)
-  Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,Trend,Changes,Load,History},
+  Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files,Import}, Insights/{LeadTime,Weekly,Trend,Changes,Load,History},
                Admin/{Index,Update,Status,Trash}, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,admin,org,update,status}.js
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,admin,org,update,status,works-paste,location-picker,import}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)
