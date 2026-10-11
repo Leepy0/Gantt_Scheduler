@@ -8,7 +8,10 @@ public class AppDb : DbContext
 {
     public const string Schema = "pm";
 
-    public AppDb(DbContextOptions<AppDb> options) : base(options) { }
+    // version: 상황판의 데이터 버전(싱글턴). 없으면(시험·admin 명령) 세지 않는다
+    public AppDb(DbContextOptions<AppDb> options, GanttScheduler.Services.DataVersion? version = null) : base(options) => _version = version;
+
+    private readonly GanttScheduler.Services.DataVersion? _version;
 
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<UserAddress> UserAddresses => Set<UserAddress>();
@@ -59,11 +62,26 @@ public class AppDb : DbContext
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         foreach (var h in _hooks) await h.BeforeSaveAsync(cancellationToken);
+        // 과제 그래프가 바뀌는 저장인지 저장 전에 본다(저장하면 상태가 Unchanged 로 돌아간다)
+        var touched = _version != null && TouchesProjectGraph();
         var n = await base.SaveChangesAsync(cancellationToken);
         // 저장 뒤에야 Id 가 정해지는 것(새 과제의 활동)은 한 번 더 저장한다
         foreach (var h in _hooks)
             if (await h.AfterSaveAsync(cancellationToken)) n += await base.SaveChangesAsync(cancellationToken);
+        // 저장이 성공한 뒤에만 올린다 — 실패한 저장(409 등)에 상황판이 괜히 다시 받지 않게
+        if (touched) _version!.Bump();
         return n;
+    }
+
+    // 과제·단계·작업·체크·의존·과제 간 연결·첨부·활동 중 하나라도 추가·수정·삭제되는가.
+    // 마지막 접속 시각(UserAddress)·방문·알림 읽음 같은 개인 기록은 상황판에 보이지 않으므로 세지 않는다
+    private bool TouchesProjectGraph()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var e in ChangeTracker.Entries())
+            if (e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted && GanttScheduler.Services.DataVersion.Watches(e.Entity))
+                return true;
+        return false;
     }
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
@@ -327,6 +345,9 @@ public class AppDb : DbContext
         });
 
         b.Entity<DelayReason>(e => e.Property(x => x.Name).HasMaxLength(Limits.DelayReasonName).IsRequired());
+
+        // ── 과제 종료일 (완료·중단 연도 조건) ──
+        b.Entity<Project>(e => e.HasIndex(x => x.ClosedOn));
     }
 }
 

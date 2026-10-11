@@ -640,6 +640,18 @@ public static class Rules
     public static DateOnly? CompletedOn(Project p) =>
         AllStagesDone(p) ? p.Stages.Max(s => s.CompletedDate!.Value) : null;
 
+    // 과제 종료일(Project.ClosedOn에 저장하는 값): 완료면 마지막 단계 완료일, 중단이면 중단 처리일 — 이미 적힌 값을 지키고
+    // 없으면 오늘(중단으로 바꾼 날). 진행·보류는 없다. 상태가 바뀌거나 완료 과제의 단계 완료일이 바뀔 때마다 다시 계산한다
+    public static DateOnly? ClosedOn(Project p, DateOnly today) => p.State switch
+    {
+        ProjectState.Done => CompletedOn(p),
+        ProjectState.Dropped => p.ClosedOn ?? today,
+        _ => null,
+    };
+
+    // 연도 조건(목록의 완료·중단 탭, 리드타임)의 날짜 범위 — DB 에서 ClosedOn 을 범위 비교로 거르기 위해(두 DB 에서 같게 번역된다)
+    public static (DateOnly From, DateOnly To) YearRange(int year) => (new DateOnly(year, 1, 1), new DateOnly(year, 12, 31));
+
     // 미완료 단계 중 목표일이 오늘부터 days 일 안(오늘 포함)인 것이 있는가 (대시보드 'n일 내 목표'·다가오는 일정과 목록의 조건)
     public static bool HasStageDueWithin(Project p, DateOnly today, int days) =>
         p.Stages.Any(s => s.CompletedDate == null && s.TargetDate != null && DaysLeft(s.TargetDate.Value, today) is var d && d >= 0 && d <= days);

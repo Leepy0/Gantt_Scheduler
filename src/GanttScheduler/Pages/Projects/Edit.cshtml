@@ -10,6 +10,11 @@
     <h1>@(Model.IsNew ? "과제 등록" : "과제 수정")</h1>
 </div>
 
+@if (Model.NeedsSetup)
+{
+    <div class="edit-setup"><partial name="_SetupNeeded" model="Model.IsAdmin" /></div>
+}
+
 <form method="post" class="card form edit-form" id="edit-form" novalidate>
     <input type="hidden" asp-for="Id" />
     <input type="hidden" asp-for="Form.LocationId" id="location-id" />
