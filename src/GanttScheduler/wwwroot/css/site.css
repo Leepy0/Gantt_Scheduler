@@ -1141,3 +1141,36 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .tw-panel { margin-top: 16px; min-height: 0; border-right: 0; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-1); overflow: hidden; }
 .tw-panel > .hint { padding: 8px 16px 0; }
 .tw-foot { padding: 8px 16px 16px; }
+/* 붙여넣기·가져오기 미리보기 표: 문제 있는 줄은 기존 오류 모양(form-error)으로 그 줄 아래에 적는다 — 지연 칩(빨강)과 헷갈리지 않게 칩을 쓰지 않는다 */
+.paste-preview { display: flex; flex-direction: column; gap: 8px; }
+.paste-preview:empty { display: none; }
+.paste-preview[aria-busy=true] { opacity: .5; }
+.rows-table td { vertical-align: top; }
+.rows-table .num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rows-table tr.row-bad > td { border-bottom: 0; }
+.rows-table tr.row-bad > td:first-child { box-shadow: inset 3px 0 0 var(--alarm); }
+.rows-table tr.row-bad-detail > td { padding-top: 0; }
+.row-issue { padding: 4px 8px; font-weight: 400; font-size: var(--fs-xs); }
+.row-issue + .row-issue { margin-top: 4px; }
+.row-issue b { font-weight: 600; }
+/* 과제 가져오기 화면 */
+.import { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+.import-step .card-head h2 { display: flex; align-items: center; gap: 8px; }
+.step-no { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 12px; background: var(--accent-weak); color: var(--accent); font-size: var(--fs-xs); }
+.form-actions.start { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
+.import-sub { margin: 16px 0 8px; }
+#import-preview { display: flex; flex-direction: column; gap: 8px; }
+#import-actions { margin-top: 16px; }
+@media (max-width: 767px) {
+    /* 좁은 화면: 줄마다 이름표(data-label)를 붙인 카드로 쌓는다 */
+    .rows-table thead { display: none; }
+    .rows-table, .rows-table tbody, .rows-table tr, .rows-table td { display: block; }
+    .rows-table tr { padding: 8px 0; border-top: 1px solid var(--line); }
+    .rows-table tr.row-bad-detail { border-top: 0; padding-top: 0; }
+    .rows-table td { display: flex; gap: 8px; padding: 2px 0; border: 0; }
+    .rows-table td[data-label]::before { content: attr(data-label); flex: 0 0 72px; color: var(--text-3); font-size: var(--fs-xs); }
+    .rows-table tr.row-bad > td:first-child { box-shadow: none; }
+    .rows-table tr.row-bad { box-shadow: inset 3px 0 0 var(--alarm); padding-left: 8px; }
+    .rows-table tr.row-bad-detail td { display: block; }
+    .form-actions.start .btn { min-height: 48px; }
+}
