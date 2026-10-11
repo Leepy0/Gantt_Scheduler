@@ -4,12 +4,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GanttScheduler.Services;
 
-// 관리 화면 공통 노드 — 종류(kind)마다 쓰는 부가 필드만 채운다
+// 관리 화면 공통 노드 — 종류(kind)마다 쓰는 부가 필드만 채운다.
+// DefaultWorkDays·Lead: 단계 템플릿의 기본 기간과 그 옆에 보이는 과거 리드타임 힌트(Reporting.StageLeadHints — 표본이 적으면 null)
 public record MasterNode(
     int Id, int? ParentId, int Level, string Name, bool Active, int Sort,
     string? Country = null, int? OceanLeadDays = null, string? Kind = null,
     string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null,
-    DateOnly? LastSeen = null, List<UserIpView>? Addresses = null);
+    DateOnly? LastSeen = null, List<UserIpView>? Addresses = null,
+    int? DefaultWorkDays = null, StageLeadHint? Lead = null);
 
 // 사용자에 연결된 접속 IP. LastSeen 은 한국 날짜, Current 는 지금 이 화면을 연 기기
 public record UserIpView(string Ip, DateOnly LastSeen, bool Current);
@@ -19,7 +21,8 @@ public record MasterIp(int UserId, string? Ip);
 
 public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
-    string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date);
+    string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date,
+    int? DefaultWorkDays = null);
 
 public record MasterRef(string Kind, int Level, int Id, int Dir);
 
@@ -54,13 +57,15 @@ public class MasterService
             case "category":
             {
                 var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery().ToListAsync();
+                var hints = await LeadHintsAsync();
                 var nodes = new List<MasterNode>();
                 foreach (var c in cats.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
                 {
                     nodes.Add(new MasterNode(c.Id, null, 1, c.Name, c.IsActive, c.SortOrder, Kind: Views.Key(c.Kind)));
                     foreach (var t in c.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id))
                     {
-                        nodes.Add(new MasterNode(t.Id, c.Id, 2, t.Name, true, t.SortOrder, Kind: Views.Key(t.Kind)));
+                        nodes.Add(new MasterNode(t.Id, c.Id, 2, t.Name, true, t.SortOrder, Kind: Views.Key(t.Kind),
+                            DefaultWorkDays: t.DefaultWorkDays, Lead: hints.GetValueOrDefault((c.Id, t.Name))));
                         foreach (var k in t.CheckItems.OrderBy(k => k.SortOrder).ThenBy(k => k.Id))
                             nodes.Add(new MasterNode(k.Id, t.Id, 3, k.Text, true, k.SortOrder));
                     }
@@ -193,8 +198,10 @@ public class MasterService
                     _db.StageTemplates.Add(e);
                 }
                 else e = await _db.StageTemplates.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Rules.ValidateDefaultWorkDays(input.DefaultWorkDays);
                 e.Name = name;
                 e.Kind = ParseEnum(input.SubKind, StageKind.Normal);
+                e.DefaultWorkDays = input.DefaultWorkDays;
                 break;
             }
 
@@ -487,6 +494,14 @@ public class MasterService
         if (i < 0 || j < 0 || j >= ordered.Count) return;
         (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
         for (var k = 0; k < ordered.Count; k++) setSort(ordered[k], k + 1);
+    }
+
+    // 단계 템플릿 기본 기간 옆의 참고값 — 완료된 과제의 같은 유형·같은 이름 단계 리드타임(근무일). 완료 과제만 읽는다
+    private async Task<Dictionary<(int CategoryId, string Stage), StageLeadHint>> LeadHintsAsync()
+    {
+        var done = await _db.Projects.AsNoTracking().Include(p => p.Stages).Where(p => p.State == ProjectState.Done).ToListAsync();
+        var cal = new WorkCalendar((await _db.Holidays.AsNoTracking().ToListAsync()).Select(h => h.Date));
+        return Reporting.StageLeadHints(done, cal);
     }
 
     private static int NextSort(IEnumerable<int> existing) => existing.DefaultIfEmpty(0).Max() + 1;

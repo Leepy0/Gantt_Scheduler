@@ -262,4 +262,39 @@ public static class Reporting
             ordered.Where(w => !w.Late && !w.Soon && w.PlanStart > today).ToList(),
             stages.OrderBy(s => s.Target ?? DateOnly.MaxValue).ToList());
     }
+
+    // ── 단계 기본 기간 힌트 ─────────────────────────────────────────────
+
+    // 표본이 이보다 적으면 평균이 우연에 좌우되므로 힌트를 보이지 않는다
+    public const int LeadHintMinSamples = 3;
+
+    // 관리 화면의 단계 템플릿 기본 기간 옆에 보이는 참고값: 같은 유형·같은 이름 단계가 완료된 과제에서 실제로 걸린 근무일의 평균.
+    // 기본 기간과 같은 거리로 잰다 — 앞 단계 완료일(첫 단계는 착수일)부터 이 단계 완료일까지의 근무일(WorkCalendar.Distance).
+    // - 완료된 과제(모든 단계 완료)만 본다. 진행 중 과제의 완료 단계는 뒤 단계가 어떻게 될지 몰라 표본이 치우친다.
+    // - 앞 단계와 같은 날 또는 먼저 완료한 단계(0 이하)는 뺀다 — 몰아서 완료 처리한 기록이라 실제 기간을 알 수 없다.
+    //   기준점은 지금까지 가장 늦은 완료일로 둬, 순서를 거슬러 완료한 단계 뒤의 단계가 길게 잡히지 않게 한다.
+    // - 한 과제에 같은 이름의 단계가 여럿이면 처음 것만 센다(표본 수 = 과제 수).
+    public static Dictionary<(int CategoryId, string Stage), StageLeadHint> StageLeadHints(IEnumerable<Project> projects, WorkCalendar cal)
+    {
+        var samples = new Dictionary<(int, string), List<int>>();
+        foreach (var p in projects.Where(p => p.State == ProjectState.Done && Rules.AllStagesDone(p)))
+        {
+            var prev = p.StartDate;
+            var seen = new HashSet<string>();
+            foreach (var s in Rules.Ordered(p))
+            {
+                var done = s.CompletedDate!.Value;
+                var days = cal.Distance(prev, done);
+                if (done > prev) prev = done;
+                if (!seen.Add(s.Name) || days <= 0) continue;
+                if (!samples.TryGetValue((p.CategoryId, s.Name), out var list)) samples[(p.CategoryId, s.Name)] = list = new List<int>();
+                list.Add(days);
+            }
+        }
+        return samples.Where(kv => kv.Value.Count >= LeadHintMinSamples)
+            .ToDictionary(kv => kv.Key, kv => new StageLeadHint(Math.Round(kv.Value.Average(), 1), kv.Value.Count));
+    }
 }
+
+// 단계 기본 기간 힌트: 과거 평균 근무일과 표본(완료 과제) 수
+public record StageLeadHint(double AvgWorkDays, int Count);

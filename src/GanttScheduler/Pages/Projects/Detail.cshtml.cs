@@ -30,6 +30,7 @@ public class DetailModel : PageModel
     public record MoveInput(int Id, int Dir);
     public record StateInput(int ProjectId, string? State, string? Reason, int? Version);
     public record ToggleInput(int Id, bool Done);
+    public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
 
     public ProjectView Project { get; private set; } = null!;
     public string DataJson { get; private set; } = "{}";
@@ -92,6 +93,23 @@ public class DetailModel : PageModel
 
     public Task<IActionResult> OnPostSaveStageAsync([FromBody] StageInput input) =>
         Run(input.ProjectId, async () => { await _projects.SaveStageAsync(input); return input.ProjectId; });
+
+    // 단계 일정 표: 여러 단계의 목표일·완료일을 한 번에 저장한다
+    public Task<IActionResult> OnPostSaveScheduleAsync([FromBody] StageScheduleInput input) =>
+        Run(input.ProjectId, async () => { await _projects.SaveStageScheduleAsync(input); return input.ProjectId; });
+
+    // 단계 일정 표에서 날짜를 고치는 동안 근무일 간격·추천 입고일을 다시 계산한다(저장하지 않는다)
+    public async Task<IActionResult> OnPostSchedulePreviewAsync([FromBody] PreviewInput input)
+    {
+        try
+        {
+            return new JsonResult(new { ok = true, rows = await _projects.SchedulePreviewAsync(input.ProjectId, input.Rows) });
+        }
+        catch (RuleException ex)
+        {
+            return Fail(ex);
+        }
+    }
 
     public Task<IActionResult> OnPostMoveStageAsync([FromBody] MoveInput input) =>
         Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir));

@@ -30,6 +30,14 @@ public class EditModel : PageModel
         public string? Note { get; set; }
     }
 
+    // 등록 화면의 단계 목표일 한 줄. Kept: 사람이 고친 값(초안을 다시 계산할 때 그대로 둔다 — 오류로 다시 그린 화면에서도 지킨다)
+    public class StageTargetRow
+    {
+        public int TemplateId { get; set; }
+        public DateOnly? TargetDate { get; set; }
+        public bool Kept { get; set; }
+    }
+
     public class FormModel
     {
         public string? Title { get; set; }
@@ -43,6 +51,7 @@ public class EditModel : PageModel
         // 화면을 연 시점의 값(JSON). 다른 사람이 먼저 저장해 충돌했을 때 '그 사람이 바꾼 항목'만 골라 보여 주는 데만 쓴다
         public string? Base { get; set; }
         public List<ItemRow> Items { get; set; } = new();
+        public List<StageTargetRow> StageTargets { get; set; } = new();   // 등록할 때만 (수정은 상세의 단계 일정 표)
     }
 
     [BindProperty(SupportsGet = true)] public int? Id { get; set; }
@@ -102,7 +111,8 @@ public class EditModel : PageModel
 
         var items = Form.Items.Select(i => new ItemInput(i.TypeId, i.Quantity, i.Note)).ToList();
         var input = new ProjectInput(Form.Title, Form.CategoryId, Form.LocationId, Form.Owner, Form.StartDate,
-            Form.Vendor, Form.Description, items, items, Form.Version);
+            Form.Vendor, Form.Description, items, items, Form.Version,
+            IsNew ? Form.StageTargets.Select(t => new StageTargetInput(t.TemplateId, t.TargetDate)).ToList() : null);
         try
         {
             var id = Id;
@@ -129,6 +139,26 @@ public class EditModel : PageModel
             ErrorField = ex.Field;
             await LoadMetaAsync();
             return Page();
+        }
+    }
+
+    // 등록 화면의 단계 목표일 초안. keep 은 사람이 고친 줄('템플릿Id:yyyy-MM-dd', 비웠으면 '템플릿Id:') — 그 뒤 단계만 거기서 이어 센다
+    public async Task<IActionResult> OnGetDraftAsync(int categoryId, DateOnly? start, int? locationId, string[]? keep)
+    {
+        var kept = new Dictionary<int, DateOnly?>();
+        foreach (var k in keep ?? Array.Empty<string>())
+        {
+            var parts = k.Split(':', 2);
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var templateId)) continue;
+            kept[templateId] = DateOnly.TryParseExact(parts[1], "yyyy-MM-dd", out var d) ? d : null;
+        }
+        try
+        {
+            return new JsonResult(new { ok = true, draft = await _projects.DraftAsync(categoryId, start, locationId, kept) });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
         }
     }
 
@@ -285,7 +315,7 @@ public class EditModel : PageModel
             locations,
             equipment,
             containers,
-            form = new { categoryId = Form.CategoryId, locationId = Form.LocationId, items = Form.Items },
+            form = new { categoryId = Form.CategoryId, locationId = Form.LocationId, items = Form.Items, stageTargets = Form.StageTargets },
             errorField = ErrorField,
         });
     }
