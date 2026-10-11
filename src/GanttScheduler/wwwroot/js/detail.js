@@ -1151,6 +1151,13 @@
 
     $('go-today').addEventListener('click', function () { if (gantt) gantt.scrollToToday(); });
     $('add-stage').addEventListener('click', function () { openStageSheet(null); });
+    // 단계 일정 표: 모든 단계의 목표일·완료일을 한 시트에서 고친다 (schedule.js)
+    $('edit-schedule').addEventListener('click', function () {
+        StageSchedule.open({
+            project: function () { return P; }, api: api, previewUrl: detailUrl('SchedulePreview'), mergeField: mergeField, conflict: CONFLICT,
+            isOff: isOff, holidays: holidays, userToday: userToday
+        });
+    });
     $('add-work').addEventListener('click', function () {
         var current = P.stages.filter(function (s) { return !s.completedDate; })[0] || P.stages[P.stages.length - 1];
         openWorkSheet(null, current ? current.id : null);

@@ -37,7 +37,10 @@
     function extraText(n) {
         if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일'].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 1) return n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '';
-        if (kind === 'category' && n.level === 2) return n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '';
+        if (kind === 'category' && n.level === 2) {
+            return [n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '',
+                n.defaultWorkDays != null ? '기본 ' + n.defaultWorkDays + '근무일' : ''].filter(Boolean).join(' · ');
+        }
         if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속'].filter(Boolean).join(' · ');
         if (kind === 'holiday') return n.date;
         return '';
@@ -151,7 +154,19 @@
                 '<span class="hint">입고 단계의 추천일(검수일 + 소요일) 계산에 사용합니다. 국내는 0.</span>';
         }
         if (kind === 'category' && level === 1) html += field('subKind', '내역 입력', '<select name="subKind">' + options(CATEGORY_KINDS, n.kind) + '</select>');
-        if (kind === 'category' && level === 2) html += field('subKind', '단계 성격', '<select name="subKind">' + options(STAGE_KINDS, n.kind) + '</select>');
+        if (kind === 'category' && level === 2) {
+            html += field('subKind', '단계 성격', '<select name="subKind">' + options(STAGE_KINDS, n.kind) + '</select>') +
+                field('defaultWorkDays', '기본 기간(근무일) <span class="opt">선택</span>',
+                    '<input name="defaultWorkDays" type="number" min="0" max="999" step="1" inputmode="numeric" value="' + (n.defaultWorkDays != null ? n.defaultWorkDays : '') + '"' +
+                    (isAdmin ? '' : ' disabled') + ' />') +
+                '<span class="hint">앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지의 근무일. 과제 등록 화면의 목표일 초안에 씁니다. 비워 두면 초안을 비웁니다.</span>' +
+                // 참고값: 같은 유형·같은 이름 단계의 과거 리드타임(완료 과제, 서버가 표본이 충분할 때만 준다)
+                (n.lead
+                    ? '<div class="form-note" data-lead-hint>' + icon('chart') + '<span>완료 과제 ' + n.lead.count + '건의 평균 <b>' + n.lead.avgWorkDays + '근무일</b>' +
+                      ' <span class="muted">(앞 단계 완료일부터 이 단계 완료일까지)</span></span>' +
+                      (isAdmin ? '<button type="button" class="btn small" data-apply-lead="' + Math.round(n.lead.avgWorkDays) + '">평균 적용</button>' : '') + '</div>'
+                    : '<span class="hint" data-lead-hint>완료된 과제가 쌓이면 이 단계의 과거 평균 기간을 함께 보여 줍니다.</span>');
+        }
         if (kind === 'holiday') html += field('date', '날짜', '<input name="date" type="date" required value="' + n.date + '" />');
         if (kind === 'user') {
             html += '<div class="field" data-field="orgUnitId" data-org-field><span class="label">소속</span><div class="field-row">' +
@@ -186,6 +201,11 @@
                 }
             },
             onOpen: function (form, sheet) {
+                var lead = form.querySelector('[data-apply-lead]');
+                if (lead) lead.addEventListener('click', function () {
+                    form.elements.defaultWorkDays.value = lead.dataset.applyLead;
+                    form.elements.defaultWorkDays.dispatchEvent(new Event('input', { bubbles: true }));
+                });
                 if (kind !== 'user') return;
                 OrgPicker.bind(orgs, form.querySelector('[data-org-group]'), form.querySelector('[data-org-part]'),
                     form.elements.orgUnitId, form.querySelector('[data-org-field]'), n.orgUnitId);
@@ -193,6 +213,12 @@
             },
             onSubmit: async function (form) {
                 var f = form.elements;
+                var days = f.defaultWorkDays ? f.defaultWorkDays.value.trim() : '';
+                if (days !== '' && !/^\d+$/.test(days)) {
+                    var bad = new Error('기본 기간은 0 이상의 정수(근무일)로 입력해 주세요.');
+                    bad.field = 'defaultWorkDays';
+                    throw bad;
+                }
                 await change('Save', {
                     kind: kind, level: level, id: id, parentId: n.parentId,
                     name: f.name.value,
@@ -201,7 +227,8 @@
                     subKind: f.subKind ? f.subKind.value : null,
                     orgUnitId: f.orgUnitId && f.orgUnitId.value ? +f.orgUnitId.value : null,
                     isAdmin: f.isAdmin ? f.isAdmin.checked : null,
-                    date: f.date ? f.date.value : null
+                    date: f.date ? f.date.value : null,
+                    defaultWorkDays: days === '' ? null : +days
                 });
                 App.toast('저장했습니다.');
             }

@@ -6,9 +6,11 @@ namespace GanttScheduler.Services;
 
 public record ItemInput(int TypeId, int Quantity, string? Note);
 
+// StageTargets: 등록할 때 함께 정하는 단계 목표일(단계 템플릿 Id 별 — 등록 화면의 목표일 초안을 사람이 고친 값). 수정에서는 쓰지 않는다
 public record ProjectInput(
     string? Title, int CategoryId, int LocationId, string? Owner, DateOnly? StartDate,
-    string? Vendor, string? Description, List<ItemInput>? Equipments, List<ItemInput>? Containers, int? Version = null);
+    string? Vendor, string? Description, List<ItemInput>? Equipments, List<ItemInput>? Containers, int? Version = null,
+    List<StageTargetInput>? StageTargets = null);
 
 // CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다
 public record StageInput(
@@ -44,8 +46,8 @@ public class ConflictException : RuleException
         : base("다른 사용자가 먼저 수정했습니다. 최신 내용으로 바꿨으니 확인한 뒤 다시 시도해 주세요.") => ProjectId = projectId;
 }
 
-// 과제·단계·작업의 조회와 변경. 변경은 모두 활동 이력을 남긴다
-public class ProjectService
+// 과제·단계·작업의 조회와 변경. 변경은 모두 활동 이력을 남긴다 (단계 일정 계획은 ProjectService.Schedule.cs)
+public partial class ProjectService
 {
     private readonly AppDb _db;
     private readonly IClock _clock;
@@ -157,17 +159,30 @@ public class ProjectService
         // 아직 저장 전인 새 담당자(Id 0)는 내비게이션으로 연결해 과제와 함께 저장한다
         if (owner.Id == 0) p.Owner = owner;
 
-        // 단계 템플릿(체크리스트 포함)을 그 시점 그대로 복사 — 이후 템플릿이 바뀌어도 기존 과제는 영향 없음
+        // 단계 템플릿(체크리스트 포함)을 그 시점 그대로 복사 — 이후 템플릿이 바뀌어도 기존 과제는 영향 없음.
+        // 등록 화면에서 정한 목표일(초안을 사람이 확인한 값)이 있으면 함께 넣는다
+        var targets = InitialTargets(input.StageTargets);
+        var targeted = new List<Stage>();
         foreach (var t in category.StageTemplates.OrderBy(t => t.SortOrder))
         {
             var stage = new Stage { Name = t.Name, Kind = t.Kind, SortOrder = t.SortOrder };
             foreach (var c in t.CheckItems.OrderBy(c => c.SortOrder))
                 stage.Checks.Add(new CheckItem { Text = c.Text, SortOrder = c.SortOrder });
+            if (targets.TryGetValue(t.Id, out var target))
+            {
+                Rules.ValidateDate(target, p.StartDate, $"'{t.Name}' 목표일", $"stageTargets.{t.Id}");
+                stage.TargetDate = target;
+                targeted.Add(stage);
+            }
             p.Stages.Add(stage);
         }
 
         await ApplyItemsAsync(p, category.Kind, input);
         p.Activities.Add(NewActivity(ActivityType.Created, "과제 등록"));
+        // 처음 정하는 목표일이므로 사유 없이 기록만 남긴다(규칙 5). 단계 Id 는 저장 뒤에 정해지므로 단계명으로 남긴다
+        var initial = Guid.NewGuid();
+        foreach (var stage in targeted)
+            p.Activities.Add(NewActivity(ActivityType.Edited, $"[{stage.Name}] 목표일 설정 {Fmt(stage.TargetDate)}", newValue: Fmt(stage.TargetDate), batch: initial));
 
         _db.Projects.Add(p);
         await _db.SaveChangesAsync();
@@ -403,14 +418,7 @@ public class ProjectService
             // 바뀐 날짜만 범위를 본다 — 범위가 생기기 전에 들어간 값이 남아 있어도 다른 수정은 막지 않는다
             if (s.TargetDate != input.TargetDate) Rules.ValidateDate(input.TargetDate, p.StartDate, "목표일", "targetDate");
             if (s.CompletedDate != input.CompletedDate) Rules.ValidateDate(input.CompletedDate, p.StartDate, "완료일", "completedDate");
-            var completing = s.CompletedDate == null && input.CompletedDate != null;
-            if (completing)
-            {
-                // 체크리스트를 모두 끝내야 완료할 수 있다
-                var open = s.Checks.Count(c => !c.IsDone);
-                if (open > 0)
-                    throw new RuleException($"체크리스트 {open}개 항목이 남아 있어 완료할 수 없습니다.", "completedDate");
-            }
+            if (s.CompletedDate == null && input.CompletedDate != null) EnsureCanComplete(s, "completedDate");
             var changed = false;
 
             if (s.Name != name)
@@ -425,19 +433,14 @@ public class ProjectService
                 changed = true;
                 if (s.TargetDate == null)
                 {
-                    // 처음 정하는 목표일은 사유 없이 기록만 남긴다
-                    p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 목표일 설정 {Fmt(input.TargetDate)}", stageId: s.Id,
-                        newValue: Fmt(input.TargetDate)));
-                    s.TargetDate = input.TargetDate;
+                    SetTarget(p, s, input.TargetDate, reason, null);
                 }
                 else
                 {
                     if (reason == null) throw new RuleException("목표일을 바꿀 때는 변경 사유를 입력해 주세요.", "reason");
                     var batch = Guid.NewGuid();
                     var old = s.TargetDate.Value;
-                    p.Activities.Add(NewActivity(ActivityType.TargetChanged, $"[{s.Name}] 목표일 {Fmt(old)} → {Fmt(input.TargetDate)}", reason,
-                        s.Id, oldValue: Fmt(old), newValue: Fmt(input.TargetDate), batch: batch));
-                    s.TargetDate = input.TargetDate;
+                    SetTarget(p, s, input.TargetDate, reason, batch);
 
                     var cal = await CalendarAsync();
                     var delta = input.TargetDate == null ? 0 : cal.Distance(old, input.TargetDate.Value);
@@ -478,34 +481,9 @@ public class ProjectService
             if (s.CompletedDate != input.CompletedDate)
             {
                 changed = true;
-                Guid? reopened = null;
-                if (completing)
-                {
-                    var batch = Guid.NewGuid();
-                    p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(input.CompletedDate)})", stageId: s.Id,
-                        newValue: Fmt(input.CompletedDate), batch: batch));
-                    if (input.CloseWorks) CloseOpenWorks(p, s, input.CompletedDate!.Value, batch);
-                }
-                else if (input.CompletedDate == null)
-                {
-                    reopened = Guid.NewGuid();
-                    p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate),
-                        batch: reopened));
-                }
-                else
-                    p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(input.CompletedDate)}", stageId: s.Id));
-                s.CompletedDate = input.CompletedDate;
-
-                // 완료돼 있는 동안 이 단계의 미착수 작업은 밀기 대상이 아니었다(규칙 3). 다시 열면 그 사이 늦어진 선행에 맞춰
-                // 밀어 둔다 — 그대로 두면 위반이 드러난 채 남고, 그 작업의 일정을 고칠 때마다 사람이 직접 풀어야 한다
-                if (reopened != null)
-                {
-                    var cal = await CalendarAsync();
-                    var plan = new PlanBatch();
-                    foreach (var m in Rules.Reschedule(p, cal, s.Works.ToList()))
-                        plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", "단계 완료 취소로 선행 일정에 맞춤");
-                    CommitPlan(p, plan, reopened.Value, "completedDate");
-                }
+                var batch = Guid.NewGuid();
+                if (SetCompleted(p, s, input.CompletedDate, input.CloseWorks, batch))
+                    await RealignReopenedAsync(p, new[] { s }, batch, "completedDate");
             }
 
             if (changed) s.Version++;
@@ -514,6 +492,69 @@ public class ProjectService
         SyncState(p);
         Touch(p);
         await _db.SaveChangesAsync();
+    }
+
+    // ── 단계 목표일·완료일 변경 (단계 시트·단계 일정 표 공통) ──────────────
+
+    // 체크리스트를 모두 끝내야 완료할 수 있다. named: 여러 단계를 한 번에 저장할 때 어느 단계인지 문구에 넣는다
+    private static void EnsureCanComplete(Stage s, string field, bool named = false)
+    {
+        var open = s.Checks.Count(c => !c.IsDone);
+        if (open > 0)
+            throw new RuleException((named ? $"'{s.Name}' 단계는 " : "") + $"체크리스트 {open}개 항목이 남아 있어 완료할 수 없습니다.", field);
+    }
+
+    // 목표일을 바꾸고 활동을 남긴다. 처음 정하는 목표일은 사유 없이 '목표일 설정'으로 기록만 남기고(규칙 5),
+    // 이미 정한 목표일을 바꾸거나 지울 때는 사유가 있어야 한다
+    private void SetTarget(Project p, Stage s, DateOnly? target, string? reason, Guid? batch)
+    {
+        if (s.TargetDate == target) return;
+        if (s.TargetDate == null)
+        {
+            p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 목표일 설정 {Fmt(target)}", stageId: s.Id, newValue: Fmt(target), batch: batch));
+        }
+        else
+        {
+            if (reason == null) throw new RuleException("목표일을 바꿀 때는 변경 사유를 입력해 주세요.", "reason");
+            p.Activities.Add(NewActivity(ActivityType.TargetChanged, $"[{s.Name}] 목표일 {Fmt(s.TargetDate)} → {Fmt(target)}", reason,
+                s.Id, oldValue: Fmt(s.TargetDate), newValue: Fmt(target), batch: batch));
+        }
+        s.TargetDate = target;
+    }
+
+    // 완료일을 바꾸고 활동을 남긴다(체크리스트 검사는 값을 바꾸기 전에 EnsureCanComplete 로 따로 한다).
+    // 완료를 취소했으면 true — 호출한 쪽이 RealignReopenedAsync 로 그 단계의 작업을 선행에 맞춘다
+    private bool SetCompleted(Project p, Stage s, DateOnly? completed, bool closeWorks, Guid batch)
+    {
+        if (s.CompletedDate == completed) return false;
+        var reopened = false;
+        if (s.CompletedDate == null)
+        {
+            p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(completed)})", stageId: s.Id,
+                newValue: Fmt(completed), batch: batch));
+            if (closeWorks) CloseOpenWorks(p, s, completed!.Value, batch);
+        }
+        else if (completed == null)
+        {
+            reopened = true;
+            p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate), batch: batch));
+        }
+        else
+            p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(completed)}", stageId: s.Id, batch: batch));
+        s.CompletedDate = completed;
+        return reopened;
+    }
+
+    // 완료돼 있는 동안 그 단계의 미착수 작업은 밀기 대상이 아니었다(규칙 3). 다시 열면 그 사이 늦어진 선행에 맞춰
+    // 밀어 둔다 — 그대로 두면 위반이 드러난 채 남고, 그 작업의 일정을 고칠 때마다 사람이 직접 풀어야 한다.
+    // 여러 단계를 한 번에 다시 열어도 한 번에 계산해 작업당 활동 1건(같은 BatchId)을 지킨다
+    private async Task RealignReopenedAsync(Project p, IEnumerable<Stage> stages, Guid batch, string field)
+    {
+        var cal = await CalendarAsync();
+        var plan = new PlanBatch();
+        foreach (var m in Rules.Reschedule(p, cal, stages.SelectMany(s => s.Works).ToList()))
+            plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", "단계 완료 취소로 선행 일정에 맞춤");
+        CommitPlan(p, plan, batch, field);
     }
 
     // 단계를 완료하면서 실적 종료가 없는 작업을 완료일로 닫는다. 실적 시작이 없으면 목표 시작일(완료일보다 늦으면 완료일)로 둔다

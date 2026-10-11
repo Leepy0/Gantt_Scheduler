@@ -63,6 +63,7 @@ public record StageView
     public bool DoneLate { get; init; }                 // 목표일보다 늦게 완료 (Rules.IsDoneLate)
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (Views.StageChip)
     public ChipView? DueChip { get; init; }             // 목표일 임박 칩 (미완료·미지연이고 Rules.SoonDays 안일 때만)
+    public int? GapWorkDays { get; init; }              // 앞 단계 목표일(첫 단계는 착수일)부터의 근무일 간격 (Rules.TargetGaps — 단계 일정 표)
 }
 
 public record ActivityView(
@@ -248,7 +249,11 @@ public static class Views
             }
         }
 
-        foreach (var s in Rules.Ordered(p))
+        // 단계 일정 표의 근무일 간격 (목표일 초안·기본 기간과 같은 기준)
+        var orderedStages = Rules.Ordered(p).ToList();
+        var gaps = Rules.TargetGaps(p.StartDate, orderedStages.Select(x => x.TargetDate).ToList(), cal);
+
+        foreach (var (s, index) in orderedStages.Select((x, i) => (x, i)))
         {
             var status = Rules.StatusOf(s, p, today);
 
@@ -291,6 +296,7 @@ public static class Views
                 DueChip = (status is StageStatus.Current or StageStatus.Planned) && s.TargetDate != null
                           && Rules.IsSoon(Rules.DaysLeft(s.TargetDate.Value, today))
                     ? DueChip(Rules.DaysLeft(s.TargetDate.Value, today), late: false) : null,
+                GapWorkDays = gaps[index],
             });
 
             if (s.TargetDate != null) prevTarget = s.TargetDate;

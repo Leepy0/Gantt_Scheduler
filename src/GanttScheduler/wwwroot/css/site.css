@@ -773,3 +773,40 @@ dialog.sheet:focus { outline: none; }
     .step { box-shadow: none; border-left: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     a { color: inherit; }
 }
+
+/* ── 단계 일정 계획: 상세의 단계 일정 표 · 등록 화면의 목표일 초안 ── */
+.sched { display: flex; flex-direction: column; }
+.sched-head, .sched-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 120px minmax(0, 1fr); gap: 4px 12px; align-items: start; }
+.sched.draft .sched-head, .sched.draft .sched-row { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 120px; }
+.sched-head { padding: 0 0 8px 12px; border-bottom: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; }
+.sched-row { padding: 8px 0 8px 12px; border-bottom: 1px solid var(--line); }
+/* 바꾼 줄(상세) · 직접 고친 줄(등록) — 왼쪽 띠만 그려 열이 움직이지 않게 */
+.sched-row.changed { box-shadow: inset 3px 0 0 var(--accent); }
+.sched-name { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: var(--tap); }
+.sched-title { font-weight: 600; overflow-wrap: anywhere; }
+.sched-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sched-row .field > .label { display: none; }
+.sched-gap { display: flex; align-items: center; gap: 4px; min-height: var(--tap); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sched-gap .warn, .sched-notes .warn { color: var(--warn); font-weight: 600; }
+.sched-gap .ic, .sched-notes .hint .ic { width: 12px; height: 12px; }
+.sched-notes { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.sched-notes:empty { display: none; }
+.sched-notes .hint { display: flex; align-items: center; gap: 4px; }
+.sched[aria-busy=true] .sched-gap { opacity: .5; }
+.sched-gap-label { display: none; color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; }
+.sched-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 8px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); }
+@media (max-width: 767px) {
+    .sched-head { display: none; }
+    .sched-row, .sched.draft .sched-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sched-name { grid-column: 1 / -1; min-height: 0; }
+    .sched-row .field > .label { display: block; }
+    .sched-gap { order: 1; grid-column: 1 / -1; min-height: 0; }
+    .sched-gap-label { display: inline; }
+    .sched.draft .sched-gap { order: 0; grid-column: auto; align-self: end; min-height: var(--tap); }
+    .sched.draft .sched-gap-label { display: none; }
+    .sched-notes { order: 2; }
+    /* 상세 도구 모음: 단계 일정 편집은 한 줄을 다 쓰는 단추로 맨 아래에 (단계·작업 추가 단추 줄을 밀어내지 않게) */
+    .toolbar #edit-schedule { order: 1; flex: 1 1 100%; }
+    /* 넓은 시트(단계 일정 편집·미리보기)도 모바일에서는 화면 폭 전체의 하단 시트로 (넓은 시트 폭 규칙이 모바일 규칙을 덮던 문제) */
+    dialog.sheet.wide { width: 100vw; max-width: 100vw; }
+}

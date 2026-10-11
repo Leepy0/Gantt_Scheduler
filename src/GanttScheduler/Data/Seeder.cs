@@ -95,16 +95,21 @@ public static class Seeder
                 ("검수", StageKind.Inspection), ("입고", StageKind.Inbound), ("설치", StageKind.Normal), ("안정화", StageKind.Normal));
             Checks(automation, "검수", "FAT 성적서 확인", "주행 시험 결과 승인", "안전 점검 완료");
             Checks(automation, "입고", "통관 서류 확인", "수량·외관 검수");
+            var general = Cat("물류", CategoryKind.General, 2,
+                ("검토", StageKind.Normal), ("보고", StageKind.Normal), ("적용", StageKind.Normal));
+            var container = Cat("용기", CategoryKind.Container, 3,
+                ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
+                ("입고", StageKind.Normal), ("적용", StageKind.Normal));
+            var simulation = Cat("Simulation", CategoryKind.General, 4,
+                ("데이터 수집", StageKind.Normal), ("모델링", StageKind.Normal), ("검증", StageKind.Normal), ("보고", StageKind.Normal));
 
-            db.Categories.AddRange(
-                automation,
-                Cat("물류", CategoryKind.General, 2,
-                    ("검토", StageKind.Normal), ("보고", StageKind.Normal), ("적용", StageKind.Normal)),
-                Cat("용기", CategoryKind.Container, 3,
-                    ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
-                    ("입고", StageKind.Normal), ("적용", StageKind.Normal)),
-                Cat("Simulation", CategoryKind.General, 4,
-                    ("데이터 수집", StageKind.Normal), ("모델링", StageKind.Normal), ("검증", StageKind.Normal), ("보고", StageKind.Normal)));
+            // 기본 기간(근무일) — 등록 화면의 목표일 초안. 해외 입고는 법인마다 운송 기간이 달라 비워 두고 추천 입고일(검수일 + 해상 운송)을 쓴다
+            Durations(automation, 10, 10, 5, 40, 5, null, 10, 20);
+            Durations(general, 10, 5, 15);
+            Durations(container, 5, 10, 5, 20, 10, 10);
+            Durations(simulation, 10, 15, 10, 5);
+
+            db.Categories.AddRange(automation, general, container, simulation);
         }
 
         if (!await db.EquipmentTypes.AnyAsync())
@@ -144,6 +149,12 @@ public static class Seeder
         var i = 0;
         foreach (var text in items)
             template.CheckItems.Add(new TemplateCheckItem { Text = text, SortOrder = ++i });
+    }
+
+    private static void Durations(Category category, params int?[] days)
+    {
+        var templates = category.StageTemplates.OrderBy(t => t.SortOrder).ToList();
+        for (var i = 0; i < templates.Count && i < days.Length; i++) templates[i].DefaultWorkDays = days[i];
     }
 
     private static Category Cat(string name, CategoryKind kind, int order, params (string Name, StageKind Kind)[] stages)
