@@ -513,6 +513,50 @@ namespace GanttScheduler.Data.Migrations
                     b.ToTable("Locations", "pm");
                 });
 
+            modelBuilder.Entity("GanttScheduler.Domain.MasterChange", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("EntityId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("NewValue")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("OldValue")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("MasterChanges", "pm");
+                });
+
             modelBuilder.Entity("GanttScheduler.Domain.Notification", b =>
                 {
                     b.Property<int>("Id")
@@ -614,6 +658,9 @@ namespace GanttScheduler.Data.Migrations
                     b.Property<int>("CategoryId")
                         .HasColumnType("int");
 
+                    b.Property<DateOnly?>("ClosedOn")
+                        .HasColumnType("date");
+
                     b.Property<int>("CorporationId")
                         .HasColumnType("int");
 
@@ -670,6 +717,8 @@ namespace GanttScheduler.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId");
+
+                    b.HasIndex("ClosedOn");
 
                     b.HasIndex("CorporationId");
 
@@ -1320,6 +1369,16 @@ namespace GanttScheduler.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Parent");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.MasterChange", b =>
+                {
+                    b.HasOne("GanttScheduler.Domain.AppUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("GanttScheduler.Domain.Notification", b =>

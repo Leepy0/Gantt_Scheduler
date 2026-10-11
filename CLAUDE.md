@@ -27,10 +27,11 @@ src/GanttScheduler/
                ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅),
                BackupService(DB 백업·파일 묶음·야간 백업), OpsChecks(서버 점검·첫 설정·첨부 대조·관리자 알림 OpsAlerts),
                FileLog(파일 로그·최근 경고), RequestDiagnostics(느린 요청·오류 번호), PdfFonts(PDF 글꼴 탐색),
-               Notifications(ActivityLog — 활동 기록과 알림 계산, 저장 훅), Notify(메일 요약 NotifyWorker·SMTP)
+               Notifications(ActivityLog — 활동 기록과 알림 계산, 저장 훅), Notify(메일 요약 NotifyWorker·SMTP),
+               Board(TV 상황판·데이터 버전), ClosedDates(과제 종료일 채우기), MasterChanges(관리 변경 이력), UserAdminService(사용자 병합·이관·사용 현황)
   Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files,Import}, Insights/{LeadTime,Weekly,Trend,Changes,Load,History},
-               Admin/{Index,Update,Status,Trash}, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,admin,org,update,status,works-paste,location-picker,import}.js
+               Admin/{Index,Update,Status,Trash}, Board(상황판), Help(도움말), Welcome
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,admin,org,update,status,works-paste,location-picker,import,board,admin-people}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)
