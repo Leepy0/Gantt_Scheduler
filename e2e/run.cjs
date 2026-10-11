@@ -307,14 +307,14 @@ function fillTemplate(template, sheets) {
 
     await step('이름·소속(그룹 → 파트) 등록 후 대시보드 표시', async () => {
         await page.fill('input[name=Name]', '평영');
-        await page.selectOption('#org-group', { label: '물류기술그룹' });
+        await page.selectOption('#org-group', { label: '운영기술그룹' });
         await page.selectOption('#org-part', { label: '자동화파트' });
         await shot(page, 'd00-welcome');
         await page.click('button[type=submit]');
         await page.waitForSelector('.kpis');
         assert((await page.locator('#gantt .g-row').count()) >= 5, '간트 행이 5개 미만');
         assert((await page.locator('.kpi.alarm .kpi-value').innerText()).trim() === '2', '지연 KPI 가 2 가 아님');
-        assert((await page.locator('.top .me').getAttribute('title')).includes('물류기술그룹 · 자동화파트'), '소속이 저장되지 않음');
+        assert((await page.locator('.top .me').getAttribute('title')).includes('운영기술그룹 · 자동화파트'), '소속이 저장되지 않음');
         await shot(page, 'd01-dashboard');
     });
 
@@ -356,7 +356,7 @@ function fillTemplate(template, sheets) {
         await page.locator('.state-tab', { hasText: '지연' }).click();
         await page.waitForURL(/state=delayed/);
         assert((await page.locator('.ptable-row').count()) === 2, '지연 과제가 2건이 아님');
-        await page.goto(BASE + '/Projects?state=all&q=' + encodeURIComponent('베트남'));
+        await page.goto(BASE + '/Projects?state=all&q=' + encodeURIComponent('동남아'));
         assert((await page.locator('.ptable-row').count()) === 2, '검색 결과가 2건이 아님');
     });
 
@@ -395,7 +395,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('과제 상세 간트 — 기준선·의존선 표시', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         assert((await page.locator('#gantt .g-row.stage').count()) === 8, '단계 행이 8개가 아님');
         assert((await page.locator('#gantt .g-row.work').count()) === 3, '작업 행이 3개가 아님');
         assert((await page.locator('#gantt .g-links svg > path').count()) >= 1, '의존선이 없음');
@@ -631,7 +631,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('재계획 — 시작일이 지난 미착수 작업이 있으면 단추가 보이고, 오늘 기준 예측으로 옮겨질 작업을 표로 보임', async () => {
-        await openProject(page, '베트남 세탁기 2라인 AMR 확대');
+        await openProject(page, '동남아 C제품 2라인 AMR 확대');
         await page.waitForSelector('#replan:not([hidden])');
         assert(Number(await page.locator('#replan-count').innerText()) >= 1, '재계획 대상 수가 없음');
         // 간트: 시작 전 작업은 예상 일정(서버 전진 계산)에 노랑 점선
@@ -645,24 +645,24 @@ function fillTemplate(template, sheets) {
     });
 
     await step('과제 간 연결 — 단계 시트에서 다른 과제 단계에 이으면 어긋날 때 두 과제의 단계에 경고 칩, 칩을 누르면 상대 과제', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         const P = await projectData(page);
         const stage = P.stages.find((s) => s.name === '입고');
         // 상대 과제에서 이 단계 목표일보다 늦은 미완료 단계를 선행으로 고르면 어긋난다
         const targets = await page.evaluate(async (id) => (await App.get(App.url('/Projects/Detail?handler=LinkTargets&id=' + id +
-            '&q=' + encodeURIComponent('멕시코 에어컨')))).projects, P.id);
+            '&q=' + encodeURIComponent('미주 B제품')))).projects, P.id);
         const other = targets[0].stages.find((s) => !s.completedDate && s.targetDate && s.targetDate > stage.targetDate);
         assert(other, '고를 상대 단계가 없음');
         await stageRow(page, '입고').click();
         await page.waitForSelector(SHEET + ' [data-cross]');
         await page.click(SHEET + ' [data-cross-open]');
         await page.selectOption(SHEET + ' [data-cross-role]', 'pred');
-        await page.fill(SHEET + ' [data-cross-q]', '멕시코 에어컨');
+        await page.fill(SHEET + ' [data-cross-q]', '미주 B제품');
         await page.waitForSelector(SHEET + ' [data-cross-stage] option[value="' + other.id + '"]', { state: 'attached' });
         await page.selectOption(SHEET + ' [data-cross-stage]', String(other.id));
         await page.click(SHEET + ' [data-cross-save]');
         await page.waitForSelector(SHEET + ' [data-cross-list] li.bad');
-        assert((await page.locator(SHEET + ' [data-cross-list]').innerText()).includes('멕시코 에어컨 용기 표준화'), '연결 목록에 상대 과제가 없음');
+        assert((await page.locator(SHEET + ' [data-cross-list]').innerText()).includes('미주 B제품 용기 표준화'), '연결 목록에 상대 과제가 없음');
         await page.locator(SHEET + ' [data-cross]').scrollIntoViewIfNeeded();
         await shot(page, 'd08e-cross-link', false);
         await closeSheet(page);
@@ -670,13 +670,13 @@ function fillTemplate(template, sheets) {
         // 목록 보기의 단계 카드 칩 → 상대 과제로 이동, 상대 과제 단계에도 경고
         await page.click('#view-mode [data-view=list]');
         await page.locator('#schedule-list .stage-card', { hasText: '입고' }).locator('[data-cross-chip].warn').click();
-        await page.waitForFunction(() => document.getElementById('p-title') && document.getElementById('p-title').textContent.includes('멕시코 에어컨'));
-        await page.locator('#schedule-list [data-cross-chip].warn', { hasText: '광주 냉장고 3라인' }).waitFor();
+        await page.waitForFunction(() => document.getElementById('p-title') && document.getElementById('p-title').textContent.includes('미주 B제품'));
+        await page.locator('#schedule-list [data-cross-chip].warn', { hasText: '본사 A제품 3라인' }).waitFor();
         // 연결 위반은 위험(노랑)이다 — 자기 일정에 문제가 없는 선행 쪽 과제에 지연(빨강) 칩이 붙지 않는다
         assert(await page.locator('#schedule-list [data-cross-chip].alarm').count() === 0, '과제 간 연결 위반이 빨강으로 보임');
         await shot(page, 'd08f-cross-warn');
         await page.click('#view-mode [data-view=gantt]');
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
     });
 
     await step('기준선 다시 확정 — 사유를 받고 직전·새 목표 종료를 이력에 남김', async () => {
@@ -722,7 +722,7 @@ function fillTemplate(template, sheets) {
         await shot(page, 'd09-detail-list');
         await page.click('.tabs [data-tab=info]');
         assert((await page.locator('#tab-info .simple-table tbody tr').count()) === 1, '기기 내역이 1행이 아님');
-        assert((await page.locator('#tab-info').innerText()).includes('물류기술그룹 · 자동화파트'), '담당 소속이 보이지 않음');
+        assert((await page.locator('#tab-info').innerText()).includes('운영기술그룹 · 자동화파트'), '담당 소속이 보이지 않음');
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '검수 일정 협력사와 재협의 완료');
         await page.click('#comment-btn');
@@ -815,7 +815,7 @@ function fillTemplate(template, sheets) {
 
         const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
-        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await openProject(other, '본사 A제품 3라인 AGV 도입');
         await other.locator('#stepper .step', { hasText: '설치' }).click();
         await other.waitForSelector(SHEET);
         await other.fill(SHEET + ' input[name=name]', '설치·시운전');
@@ -856,7 +856,7 @@ function fillTemplate(template, sheets) {
         // 다른 화면: 새 작업 X 를 만들고 W 의 선행으로 건다 (X 는 W 보다 먼저 끝난다)
         const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
-        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await openProject(other, '본사 A제품 3라인 AGV 도입');
         await other.click('#add-work');
         await other.waitForSelector(SHEET);
         await other.fill(SHEET + ' input[name=title]', X);
@@ -907,7 +907,7 @@ function fillTemplate(template, sheets) {
 
         const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
-        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await openProject(other, '본사 A제품 3라인 AGV 도입');
         await other.click('.tabs [data-tab=activity]');
         await other.fill('#comment-text', '다른 화면에서 남긴 메모');
         await other.click('#comment-form button[type=submit]');
@@ -978,7 +978,7 @@ function fillTemplate(template, sheets) {
         const p2 = active = await abroad.newPage();
         watch(p2, 'abroad');
         p2.setDefaultTimeout(10000);
-        await openProject(p2, '광주 냉장고 3라인 AGV 도입');
+        await openProject(p2, '본사 A제품 3라인 AGV 도입');
         await workRow(p2, '안전 인증 서류 준비').locator('.g-name').click();
         await p2.waitForSelector(SHEET);
         await p2.click(SHEET + ' [data-quick-start]');
@@ -996,7 +996,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('인쇄 — 메뉴·도구 없이, 간트는 월 배율로 종이 한 폭에 (상세·대시보드·내 할 일)', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         assert(await page.locator('#summary [data-print]').isVisible(), '상세에 인쇄 단추가 없음');
         const zoomBefore = await page.evaluate(() => document.querySelector('#gantt').dataset.zoom);
         await page.emulateMedia({ media: 'print' });
@@ -1036,13 +1036,13 @@ function fillTemplate(template, sheets) {
     });
 
     await step('과제 복제', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         await page.click('#btn-clone');
         await page.waitForSelector(SHEET);
-        await page.fill(SHEET + ' input[name=title]', '광주 냉장고 5라인 AGV 도입');
+        await page.fill(SHEET + ' input[name=title]', '본사 A제품 5라인 AGV 도입');
         await page.fill(SHEET + ' input[name=startDate]', kstToday(30));
         await page.locator(SHEET + ' button[type=submit]').click();
-        await page.waitForFunction(() => document.getElementById('p-title').textContent === '광주 냉장고 5라인 AGV 도입');
+        await page.waitForFunction(() => document.getElementById('p-title').textContent === '본사 A제품 5라인 AGV 도입');
         assert((await page.locator('#stepper .step').count()) === 8, '단계가 복사되지 않음');
         assert((await page.locator('#gantt .g-row.work').count()) === 4, '작업이 복사되지 않음');
         assert((await page.locator('#gantt .g-links svg > path').count()) === 2, '의존 관계가 복사되지 않음');
@@ -1050,7 +1050,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('연쇄 이동 — 이후 단계의 미착수 작업도 같은 근무일만큼 이동(선택)', async () => {
-        await openProject(page, '광주 2공장 물류 동선 Simulation');
+        await openProject(page, '본사 2공장 물류 동선 Simulation');
         // 이후 단계(검증)에 아직 시작하지 않은 작업을 하나 둔다
         await page.click('#add-work');
         await page.waitForSelector(SHEET);
@@ -1144,7 +1144,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('모든 단계 완료 시 자동으로 완료 상태', async () => {
-        await openProject(page, '폴란드 세탁기 창고 입출고 개선');
+        await openProject(page, '유럽 C제품 창고 입출고 개선');
         for (let i = 0; i < 3; i++) {
             await page.locator('#stepper .step').nth(i).click();
             await page.waitForSelector(SHEET);
@@ -1156,7 +1156,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('상태 변경 — 보류', async () => {
-        await openProject(page, '멕시코 냉장고 AGV 도입 검토');
+        await openProject(page, '미주 A제품 AGV 도입 검토');
         await page.click('#btn-state');
         await page.waitForSelector(SHEET);
         await page.fill(SHEET + ' textarea[name=reason]', '투자 심의 일정 미확정');
@@ -1166,17 +1166,17 @@ function fillTemplate(template, sheets) {
 
     await step('과제 등록 — 위치 연쇄 선택, 기기 내역', async () => {
         await page.goto(BASE + '/Projects/Edit');
-        await page.fill('input[name="Form.Title"]', '베트남 냉장고 1라인 컨베이어 개선');
+        await page.fill('input[name="Form.Title"]', '동남아 A제품 1라인 컨베이어 개선');
         await page.locator('.choice', { hasText: '물류 자동화' }).click();
-        await page.locator('#cascade select[data-level="1"]').selectOption({ label: '베트남' });
-        await page.locator('#cascade select[data-level="2"]').selectOption({ label: '냉장고' });
+        await page.locator('#cascade select[data-level="1"]').selectOption({ label: '동남아' });
+        await page.locator('#cascade select[data-level="2"]').selectOption({ label: 'A제품' });
         // 하위가 하나뿐인 라인은 자동 선택된다
         assert((await page.locator('#cascade select[data-level="3"]').inputValue()) !== '', '라인이 자동 선택되지 않음');
         await page.locator('#items .item-row select').first().selectOption({ label: '컨베이어' });
         await page.locator('#items .item-row input[data-k=Quantity]').first().fill('3');
         await shot(page, 'd13-edit-form');
 
-        // 단계 목표일 초안: 유형의 기본 기간으로 채워지고, 기본 기간이 없는 입고는 비어 있으며 법인(베트남, 해상 12일)의 추천 입고일을 보인다
+        // 단계 목표일 초안: 유형의 기본 기간으로 채워지고, 기본 기간이 없는 입고는 비어 있으며 법인(동남아, 해상 12일)의 추천 입고일을 보인다
         await page.waitForSelector('#draft .sched-row [data-apply-hint]');
         const draftRows = page.locator('#draft .sched-row');
         assert((await draftRows.count()) === 8, '초안 표가 8줄이 아님');
@@ -1212,7 +1212,7 @@ function fillTemplate(template, sheets) {
         await page.click('#edit-form button[type=submit]');
         await page.waitForSelector('#summary .summary-meta');
         assert((await page.locator('#stepper .step').count()) === 8, '기본 단계 8개가 만들어지지 않음');
-        assert((await page.locator('#summary').innerText()).includes('베트남 · 냉장고 · 1라인'), '위치가 저장되지 않음');
+        assert((await page.locator('#summary').innerText()).includes('동남아 · A제품 · 1라인'), '위치가 저장되지 않음');
         assert((await page.locator('#stepper .step').nth(4).innerText()).includes('체크 0/3'), '체크리스트 템플릿이 복사되지 않음');
         assert((await page.locator('#stepper .step').nth(0).innerText()).includes('목표 ' + firstTarget.slice(5)), '초안 목표일로 등록되지 않음');
         assert((await page.locator('#stepper .step').nth(5).innerText()).includes('목표 ' + hint.slice(5)), '추천 입고일이 등록되지 않음');
@@ -1224,13 +1224,13 @@ function fillTemplate(template, sheets) {
     await step('과제 수정 화면에 기존 값 표시', async () => {
         await page.locator('#summary a', { hasText: '수정' }).click();
         await page.waitForSelector('#edit-form');
-        assert((await page.inputValue('input[name="Form.Title"]')) === '베트남 냉장고 1라인 컨베이어 개선', '과제명이 채워지지 않음');
+        assert((await page.inputValue('input[name="Form.Title"]')) === '동남아 A제품 1라인 컨베이어 개선', '과제명이 채워지지 않음');
         assert((await page.locator('#items .item-row input[data-k=Quantity]').first().inputValue()) === '3', '기기 수량이 채워지지 않음');
-        await page.fill('input[name="Form.Vendor"]', '한성로보틱스');
+        await page.fill('input[name="Form.Vendor"]', 'A로보틱스');
         await page.click('#edit-form button[type=submit]');
         await page.waitForSelector('#summary .summary-meta');
         await page.click('.tabs [data-tab=info]');
-        assert((await page.locator('#tab-info').innerText()).includes('한성로보틱스'), '협력사가 저장되지 않음');
+        assert((await page.locator('#tab-info').innerText()).includes('A로보틱스'), '협력사가 저장되지 않음');
     });
 
     await step('과제 수정 화면 — 동시 수정 뒤 손대지 않은 항목은 최신 값으로 맞추고 같은 화면에서 다시 저장', async () => {
@@ -1263,7 +1263,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('단계 일정 편집 — 한 시트에서 여러 단계, 기존 목표일을 바꾸면 사유 한 번, 동시 수정 뒤 같은 시트에서 다시 저장', async () => {
-        // 앞 단계가 등록한 '베트남 냉장고 1라인 컨베이어 개선'(목표일 초안으로 등록)의 상세에 있다 (정보 탭이 열려 있다)
+        // 앞 단계가 등록한 '동남아 A제품 1라인 컨베이어 개선'(목표일 초안으로 등록)의 상세에 있다 (정보 탭이 열려 있다)
         await page.click('.tabs [data-tab=schedule]');
         const url = page.url().split('#')[0];
         await page.click('#edit-schedule');
@@ -1377,7 +1377,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('사유 분류 — 단계 목표일을 바꿀 때 분류를 고르면 변경 분석의 원인 파레토에 오름', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         await stageRow(page, '안정화').click();
         await page.waitForSelector(SHEET);
         const cur = await page.inputValue(SHEET + ' input[name=targetDate]');
@@ -1440,7 +1440,7 @@ function fillTemplate(template, sheets) {
         await page.waitForURL(/period=custom/);
         await page.fill('#report-filters input[name=from]', kstToday(-20));
         await page.fill('#report-filters input[name=to]', kstToday(0));
-        await page.selectOption('#report-filters select[name=org]', { label: '물류기술그룹' });
+        await page.selectOption('#report-filters select[name=org]', { label: '운영기술그룹' });
         await page.check('#report-filters input[name=changed]');
         await page.click('#report-filters button[type=submit]');
         await page.waitForURL(/changed=true/);
@@ -1478,7 +1478,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('활동 더 보기 — 최근 50건만 먼저 싣고 나머지는 나눠 받음, 이 과제 전체 이력으로 이동', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         // 활동을 50건 넘게 쌓는다: 미완료 단계의 체크를 켜고 끄기(짝수 번이라 원래 상태로 돌아온다). 주간 보고에 오르지 않는 활동이다
         const added = await page.evaluate(async () => {
             const id = +new URLSearchParams(location.search).get('id');
@@ -1568,11 +1568,11 @@ function fillTemplate(template, sheets) {
         await page.click('#feed-history');
         await page.waitForURL(/\/Insights\/History\?projectId=/);
         await page.waitForSelector('#history-project');
-        assert((await page.locator('#history-project').innerText()).includes('광주 냉장고 3라인 AGV 도입'), '과제 조건 표시가 없음');
+        assert((await page.locator('#history-project').innerText()).includes('본사 A제품 3라인 AGV 도입'), '과제 조건 표시가 없음');
         const total = +(await page.locator('.card-head .count').innerText());
         assert(total === expectedTotal, '과제 이력 건수가 다름: ' + total + ' / ' + expectedTotal);
         const titles = await page.locator('.history .history-body > a').allInnerTexts();
-        assert(titles.length === 50 && titles.every((t) => t === '광주 냉장고 3라인 AGV 도입'), '다른 과제 이력이 섞임');
+        assert(titles.length === 50 && titles.every((t) => t === '본사 A제품 3라인 AGV 도입'), '다른 과제 이력이 섞임');
         assert((await page.locator('.pager').innerText()).includes('1 / '), '쪽 이동이 없음');
         await page.locator('.pager a', { hasText: '다음' }).click();
         await page.waitForURL(/p=2/);
@@ -1592,7 +1592,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('작업 시트 진행 내용 더 보기 — 빠르게 두 번 눌러도 같은 활동이 두 번 붙지 않음', async () => {
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         // 한 작업에 진행 내용을 한 쪽(50건)보다 많이 남기고, 그 작업의 활동 전체 건수를 센다
         const total = await page.evaluate(async () => {
             const id = +new URLSearchParams(location.search).get('id');
@@ -1647,8 +1647,8 @@ function fillTemplate(template, sheets) {
 
     // ── 협업: 관심 과제·알림·멘션·활동 조건·댓글 고치기 ──
     // 다른 사용자는 X-Forwarded-For 로 다른 PC 를 흉내 낸다(개발 환경은 같은 서버의 프록시 머리글을 믿는다 — appsettings.Development.json).
-    // 이 단계들은 '광주 2공장 물류 동선 Simulation' 에 댓글을 남기고, 평영이 그 과제를 관심 과제로 둔다
-    const COLLAB = '광주 2공장 물류 동선 Simulation';
+    // 이 단계들은 '본사 2공장 물류 동선 Simulation' 에 댓글을 남기고, 평영이 그 과제를 관심 과제로 둔다
+    const COLLAB = '본사 2공장 물류 동선 Simulation';
 
     await step('관심 과제 — 상세·목록의 별을 누르면 눌린 상태로 바뀌고 내 할 일에 관심 과제로 보임', async () => {
         await openProject(page, COLLAB);
@@ -1661,16 +1661,16 @@ function fillTemplate(template, sheets) {
         const row = page.locator('.prow', { hasText: COLLAB });
         assert((await row.locator('[data-watch]').getAttribute('aria-pressed')) === 'true', '목록의 별이 눌려 있지 않음');
         // 목록에서 다른 과제의 별을 눌러도 행(상세)으로 넘어가지 않는다
-        const other = page.locator('.prow', { hasText: '멕시코 에어컨 용기 표준화' }).locator('[data-watch]');
+        const other = page.locator('.prow', { hasText: '미주 B제품 용기 표준화' }).locator('[data-watch]');
         await other.click();
-        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'true'));
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('미주 B제품 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'true'));
         assert(new URL(page.url()).pathname === '/Projects', '별을 누르니 상세로 넘어감: ' + page.url());
         await shot(page, 'd48-watch-list', false);
         await other.click();
-        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'false'));
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('미주 B제품 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'false'));
         await page.goto(BASE + '/My');
         const watched = await page.locator('#watched').innerText();
-        assert(watched.includes(COLLAB) && !watched.includes('멕시코 에어컨 용기 표준화'), '내 할 일의 관심 과제가 다름: ' + watched);
+        assert(watched.includes(COLLAB) && !watched.includes('미주 B제품 용기 표준화'), '내 할 일의 관심 과제가 다름: ' + watched);
     });
 
     await step('알림 — 다른 사람이 나를 알릴 사람으로 고르면 종에 읽지 않은 수, 새 소식·새 활동 표시, 알림을 누르면 그 활동을 강조', async () => {
@@ -1789,7 +1789,7 @@ function fillTemplate(template, sheets) {
         await shot(page, 'd54-comment-deleted', false);
 
         // 조건을 건 채로 더 보기: 체크를 켜고 끈 활동이 많은 과제에서 '진행' 만
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         await page.click('.tabs [data-tab=activity]');
         await page.click('#feed-filters [data-kind=progress]');
         await page.waitForFunction(() => document.querySelectorAll('#feed > li').length === 50 && !document.getElementById('feed-more').hidden);
@@ -1803,7 +1803,7 @@ function fillTemplate(template, sheets) {
 
     await step('대시보드 간트 — 과제가 많아도 페이지가 늘지 않고 간트 안에서 스크롤, 머리글은 붙어 있음', async () => {
         // 진행 과제를 잠시 늘린다(복제) — 끝나면 지운다
-        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
         const post = (handler, body) => page.evaluate(async ([h, b]) => {
             const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
             const r = await fetch('/Projects/Detail?handler=' + h, {
@@ -1845,7 +1845,7 @@ function fillTemplate(template, sheets) {
             await shot(page, 'd47-dashboard-gantt-scroll', false);
         } finally {
             await page.setViewportSize({ width: 1440, height: 900 });
-            await openProject(page, '광주 냉장고 3라인 AGV 도입');
+            await openProject(page, '본사 A제품 3라인 AGV 도입');
             for (const id of ids) await post('Delete', { id });
         }
         await page.goto(BASE + '/');
@@ -1905,11 +1905,11 @@ function fillTemplate(template, sheets) {
         await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('평영'));
         await page.locator('.node', { hasText: '신규담당' }).locator('.node-main').click();
         await page.waitForSelector(SHEET + ' [data-org-group]');
-        await page.selectOption(SHEET + ' [data-org-group]', { label: '물류기술그룹' });
+        await page.selectOption(SHEET + ' [data-org-group]', { label: '운영기술그룹' });
         await page.selectOption(SHEET + ' [data-org-part]', { label: '시뮬레이션파트' });
         await shot(page, 'd20-admin-user', false);
         await submitSheet(page);
-        await page.waitForFunction(() => [...document.querySelectorAll('.node')].some((n) => n.innerText.includes('신규담당') && n.innerText.includes('물류기술그룹 · 시뮬레이션파트')));
+        await page.waitForFunction(() => [...document.querySelectorAll('.node')].some((n) => n.innerText.includes('신규담당') && n.innerText.includes('운영기술그룹 · 시뮬레이션파트')));
 
         // 사용자별 접속 IP: 마지막 접속 표시, 직접 연결·해제 (지금 이 기기는 해제할 수 없다)
         assert((await page.locator('.node', { hasText: '평영' }).innerText()).includes('최근 접속'), '마지막 접속일이 없음');
@@ -2202,7 +2202,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('과제 삭제 — 열려 있던 다른 화면은 삭제됨 띠', async () => {
-        await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
+        await openProject(page, '동남아 A제품 1라인 컨베이어 개선');
         const other = await desktop.newPage();
         other.setDefaultTimeout(10000);
         await other.goto(page.url());
@@ -2238,7 +2238,7 @@ function fillTemplate(template, sheets) {
         await page.waitForFunction(() => !document.querySelector('.trash-row') || !document.body.innerText.includes('컨베이어 개선'));
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 1, '복원했는데 목록에 없음');
-        await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
+        await openProject(page, '동남아 A제품 1라인 컨베이어 개선');
         const P = await projectData(page);
         assert(P.activities.some((a) => a.type === 'projectDeleted' && a.reason === '중복 등록'), '삭제 기록이 없음');
         assert(P.activities.some((a) => a.type === 'projectRestored'), '복원 기록이 없음');
@@ -2304,7 +2304,7 @@ function fillTemplate(template, sheets) {
         await page.waitForSelector('.ptable-row');
         assert(!/sort=/.test(page.url()), '기본 순서로 돌린 뒤에도 정렬을 되살림');
         // 검색: 협력사 이름으로도 찾는다
-        await page.fill('#filters input[name=q]', '한성로보');
+        await page.fill('#filters input[name=q]', 'A로보틱스');
         await page.click('#filters button[type=submit]');
         await page.waitForURL(/q=/);
         assert((await page.locator('.ptable-row').count()) >= 1, '협력사 이름 검색 결과가 없음');
@@ -2312,7 +2312,7 @@ function fillTemplate(template, sheets) {
 
     await step('내 할 일 — 행에서 바로 진행률·진행 내용 저장, 다른 화면이 먼저 고치면 최신 값으로', async () => {
         await page.goto(BASE + '/My');
-        // 다른 단계가 쓰는 작업(광주 2공장 '검증 시나리오 실행' — 미착수여야 연쇄 이동 선택지가 보인다)을 피해 마지막 행을 쓴다
+        // 다른 단계가 쓰는 작업(본사 2공장 '검증 시나리오 실행' — 미착수여야 연쇄 이동 선택지가 보인다)을 피해 마지막 행을 쓴다
         const id = await page.locator('[data-my-work]').last().getAttribute('data-my-work');
         const sel = `[data-my-work="${id}"]`;
         await page.click(sel + ' [data-quick-progress="50"]');
@@ -2346,7 +2346,7 @@ function fillTemplate(template, sheets) {
     await step('작업 시트 빠른 갱신 — 맨 위 진행률 칩·진행 내용, 일정·선행·메모는 접힘(새 작업은 펼침)', async () => {
         await page.evaluate(() => App.pref.set('detail.workMore', '0'));
         try {
-            await openProject(page, '광주 냉장고 3라인 AGV 도입');
+            await openProject(page, '본사 A제품 3라인 AGV 도입');
             const open = worksOf(await projectData(page)).find((w) => !w.actualEnd && !w.closedOn);
             assert(open, '열린 작업이 없음');
             // 같은 주소에 해시만 바꾸면 다시 읽지 않으므로 한 번 비운 뒤 연다(상세는 #w{id} 로 작업 시트를 연다)
@@ -2384,9 +2384,9 @@ function fillTemplate(template, sheets) {
     });
 
     // ── 입력 부담 줄이기·Excel 가져오기 ──
-    // 이 단계들은 '광주 냉장고 5라인 AGV 도입'(복제본)에 담당 없는 작업을 더하고(내 할 일이 바뀌지 않게), 관리 > 유형 '물류' 의 '검토'에
-    // 작업 템플릿 2개를 더하며, 과제 'e2e 가져오기 과제'(담당 e2e가져오기담당)와 복제본 'e2e 베트남 복제'(담당 김물류)를 만든다
-    const PASTE = '광주 냉장고 5라인 AGV 도입';
+    // 이 단계들은 '본사 A제품 5라인 AGV 도입'(복제본)에 담당 없는 작업을 더하고(내 할 일이 바뀌지 않게), 관리 > 유형 '물류' 의 '검토'에
+    // 작업 템플릿 2개를 더하며, 과제 'e2e 가져오기 과제'(담당 e2e가져오기담당)와 복제본 'e2e 동남아 복제'(담당 김물류)를 만든다
+    const PASTE = '본사 A제품 5라인 AGV 도입';
     let importTemplate = null;     // 내려받은 가져오기 양식 (모바일 단계도 쓴다)
 
     await step('작업 여러 개 추가 — 붙여넣으면 서버가 해석한 표(문제 줄은 오류 모양)를 보이고, 고치면 n개를 한 번에 저장', async () => {
@@ -2485,18 +2485,18 @@ function fillTemplate(template, sheets) {
         await page.click('#btn-clone');
         await page.waitForSelector(SHEET + ' [data-location-picker] select');
         assert((await page.inputValue(SHEET + ' input[name=owner]')) !== '', '담당 기본값(나)이 없음');
-        await page.fill(SHEET + ' input[name=title]', 'e2e 베트남 복제');
-        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="1"]', { label: '베트남' });
-        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="2"]', { label: '세탁기' });
+        await page.fill(SHEET + ' input[name=title]', 'e2e 동남아 복제');
+        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="1"]', { label: '동남아' });
+        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="2"]', { label: 'C제품' });
         // 하위가 하나뿐인 라인은 저절로 고른다
         assert((await page.inputValue(SHEET + ' [data-location-picker] select[data-level="3"]')) !== '', '라인이 자동 선택되지 않음');
         await page.fill(SHEET + ' input[name=owner]', '김물류');
         await page.uncheck(SHEET + ' input[name=works]');
         await shot(page, 'd63-clone-location', false);
         await page.locator(SHEET + ' button[type=submit]').click();
-        await page.waitForFunction(() => document.getElementById('p-title').textContent === 'e2e 베트남 복제');
+        await page.waitForFunction(() => document.getElementById('p-title').textContent === 'e2e 동남아 복제');
         const P = await projectData(page);
-        assert(P.corporation === '베트남' && P.locationPath.includes('2라인') && P.owner === '김물류', '위치·담당이 반영되지 않음: ' + P.corporation + ' ' + P.locationPath + ' ' + P.owner);
+        assert(P.corporation === '동남아' && P.locationPath.includes('2라인') && P.owner === '김물류', '위치·담당이 반영되지 않음: ' + P.corporation + ' ' + P.locationPath + ' ' + P.owner);
     });
 
     await step('가져오기 — 양식 받기·올리기·미리보기(오류 행)·고쳐서 가져오기', async () => {
@@ -2508,7 +2508,7 @@ function fillTemplate(template, sheets) {
         importTemplate = await res.body();
         fs.writeFileSync(path.join(EXPORTS, '과제_가져오기_양식' + (process.env.FAKE_EXPORT ? '.txt' : '.xlsx')), importTemplate);
         if (!process.env.FAKE_EXPORT) assert(importTemplate.subarray(0, 2).toString('latin1') === 'PK', '양식이 xlsx 가 아님');
-        const good = ['e2e 가져오기 과제', '물류', '한국', '냉장고>3라인', 'e2e가져오기담당', kstToday(7), '', 'Excel 로 가져온 과제', '보고=' + kstToday(40)];
+        const good = ['e2e 가져오기 과제', '물류', '한국', 'A제품>3라인', 'e2e가져오기담당', kstToday(7), '', 'Excel 로 가져온 과제', '보고=' + kstToday(40)];
         const bad = ['e2e 가져오기 오류', '없는 유형', '한국', '', '', '언젠가'];
         const works = [['e2e 가져오기 과제', '적용', '현장 적용', '', kstToday(60), kstToday(62)]];
         const file = (rows) => ({ name: '가져오기.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fillTemplate(importTemplate, rows) });
@@ -2568,7 +2568,7 @@ function fillTemplate(template, sheets) {
         // 바뀐 것이 없어도 '확인' 시각은 서버 응답으로 고친다(화면이 멈추지 않았음을 보이게) — 지운 뒤 다시 채워지는지 본다
         await b.evaluate(() => { document.querySelector('#board [data-checked]').textContent = ''; window.BoardPoll(); });
         await b.waitForFunction(() => /^\d{2}:\d{2}$/.test(document.querySelector('#board [data-checked]').textContent));
-        await openProject(page, '한국 에어컨 1라인 리프터 교체');
+        await openProject(page, '한국 B제품 1라인 리프터 교체');
         const id = +new URL(page.url()).searchParams.get('id');
         await page.evaluate(async (pid) => {
             const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
@@ -2729,7 +2729,7 @@ function fillTemplate(template, sheets) {
         await m.goto(BASE + '/Projects?state=all');
         await m.evaluate(() => App.pref.set('detail.workMore', '0'));
         try {
-            await m.locator('.ptable-row', { hasText: '광주 냉장고 3라인 AGV 도입' }).first().click();
+            await m.locator('.ptable-row', { hasText: '본사 A제품 3라인 AGV 도입' }).first().click();
             await m.waitForSelector('#summary .summary-meta');
             const open = worksOf(await projectData(m)).find((w) => !w.actualEnd && !w.closedOn);
             const url = m.url().replace(/#.*/, '') + '#w' + open.id;
@@ -2754,7 +2754,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('모바일 과제 상세 — 기본은 목록 보기', async () => {
-        await m.locator('.ptable-row', { hasText: '베트남 세탁기 2라인 AMR 확대' }).click();
+        await m.locator('.ptable-row', { hasText: '동남아 C제품 2라인 AMR 확대' }).click();
         await m.waitForSelector('#schedule-list .stage-card');
         await noOverflow('과제 상세');
         await shot(m, 'm04-detail-list');
@@ -2815,7 +2815,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('모바일 단계 시트 — 목표일을 바꾸면 이후 단계 작업 포함 선택지', async () => {
-        await openProject(m, '광주 2공장 물류 동선 Simulation');
+        await openProject(m, '본사 2공장 물류 동선 Simulation');
         await m.click('#view-mode [data-view=list]');
         await m.locator('#schedule-list .stage-head', { hasText: '모델링' }).click();
         await m.waitForSelector(SHEET);
@@ -2825,7 +2825,7 @@ function fillTemplate(template, sheets) {
         await noOverflow('단계 시트');
         await shot(m, 'm07b-stage-cascade-works', false);
         await discardSheet(m);
-        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
+        await openProject(m, '동남아 C제품 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
     await step('모바일 단계 일정 편집 — 하단 시트, 날짜 두 칸과 간격', async () => {
@@ -2854,11 +2854,11 @@ function fillTemplate(template, sheets) {
         await noOverflow('과제 등록 초안');
         await m.locator('#draft-field').scrollIntoViewIfNeeded();
         await shot(m, 'm11e-edit-draft');
-        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
+        await openProject(m, '동남아 C제품 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
     await step('모바일 과제 간 연결 — 단계 카드의 경고 칩과 단계 시트의 연결 목록', async () => {
-        await openProject(m, '광주 냉장고 3라인 AGV 도입');
+        await openProject(m, '본사 A제품 3라인 AGV 도입');
         await m.click('#view-mode [data-view=list]');
         await m.waitForSelector('#schedule-list .stage-cross [data-cross-chip].warn');
         await noOverflow('과제 간 연결 칩');
@@ -2869,7 +2869,7 @@ function fillTemplate(template, sheets) {
         assert(over <= 0, '단계 시트가 가로로 넘침 ' + over);
         await shot(m, 'm07d-cross-link', false);
         await closeSheet(m);
-        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
+        await openProject(m, '동남아 C제품 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
     await step('모바일 자료·분석·과제 등록·관리 화면', async () => {
@@ -2923,7 +2923,7 @@ function fillTemplate(template, sheets) {
 
     await step('모바일 활동 더 보기·과제 전체 이력', async () => {
         await m.goto(BASE + '/Projects?state=all');
-        await m.locator('.ptable-row', { hasText: '광주 냉장고 3라인 AGV 도입' }).first().click();
+        await m.locator('.ptable-row', { hasText: '본사 A제품 3라인 AGV 도입' }).first().click();
         await m.waitForSelector('#summary .summary-meta');
         await m.click('.tabs [data-tab=activity]');
         await m.waitForSelector('#feed > li');
@@ -2946,7 +2946,7 @@ function fillTemplate(template, sheets) {
         await noOverflow('알림 목록');
         await shot(m, 'm14-notifications');
         await m.goto(BASE + '/Projects?state=all');
-        await m.locator('.ptable-row', { hasText: '광주 2공장 물류 동선 Simulation' }).first().click();
+        await m.locator('.ptable-row', { hasText: '본사 2공장 물류 동선 Simulation' }).first().click();
         await m.waitForSelector('#summary .summary-meta');
         await m.click('.tabs [data-tab=activity]');
         await m.waitForSelector('#feed > li');
@@ -2991,7 +2991,7 @@ function fillTemplate(template, sheets) {
     });
 
     await step('모바일 과제 삭제·휴지통 — 하단 시트로 지우고, 휴지통에서 영구 삭제하면 기록에 남음', async () => {
-        await openProject(m, '베트남 냉장고 1라인 컨베이어 개선');
+        await openProject(m, '동남아 A제품 1라인 컨베이어 개선');
         await m.click('.tabs [data-tab=info]');
         await m.click('#btn-delete');
         await m.waitForSelector(SHEET + ' textarea[name=reason]');

@@ -346,7 +346,7 @@ public class StagePlanServiceTests : IClassFixture<TestDb>
         using var s = _db.NewScope();
         var cat = await s.Db.Categories.Include(c => c.StageTemplates).FirstAsync(c => c.Name == "물류 자동화");
         var ids = cat.StageTemplates.OrderBy(t => t.SortOrder).Select(t => t.Id).ToList();
-        var vn = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "베트남");
+        var vn = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "동남아");
 
         // 착수 10-12(월), 기본 기간 검토 10 · 품의 10 · 발주 5 (샘플 기준 정보)
         var draft = await s.Projects.DraftAsync(cat.Id, Day(10, 12), null);
@@ -360,7 +360,7 @@ public class StagePlanServiceTests : IClassFixture<TestDb>
         Assert.Null(inbound.InboundHint);                  // 법인을 고르기 전에는 추천일이 없다
         Assert.All(draft.Rows, r => Assert.False(r.Kept));
 
-        // 사람이 검토를 10-30 으로 고치면 품의부터 그 날짜에서 다시 센다. 베트남(해상 12일)을 고르면 입고에 추천일
+        // 사람이 검토를 10-30 으로 고치면 품의부터 그 날짜에서 다시 센다. 동남아(해상 12일)을 고르면 입고에 추천일
         var kept = await s.Projects.DraftAsync(cat.Id, Day(10, 12), vn.Id, new Dictionary<int, DateOnly?> { [ids[0]] = Day(10, 30) });
         Assert.Equal(new DateOnly?[] { Day(10, 30), Day(11, 13) }, kept.Rows.Take(2).Select(r => r.TargetDate));
         Assert.True(kept.Rows[0].Kept);
@@ -375,7 +375,7 @@ public class StagePlanServiceTests : IClassFixture<TestDb>
     [Fact]
     public async Task 미리보기는_저장하지_않은_날짜로_간격과_추천_입고일을_다시_계산한다()
     {
-        var id = await NewProjectAsync("일정 표 미리보기", "물류 자동화", "베트남");
+        var id = await NewProjectAsync("일정 표 미리보기", "물류 자동화", "동남아");
         var st = (await ViewAsync(id)).Stages;
         var inspection = st.Single(x => x.Name == "검수");
         var inbound = st.Single(x => x.Name == "입고");

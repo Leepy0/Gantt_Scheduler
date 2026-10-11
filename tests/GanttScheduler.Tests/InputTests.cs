@@ -341,7 +341,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         int vnLine, inactive;
         using (var s = _db.NewScope())
         {
-            vnLine = (await s.Db.Locations.FirstAsync(l => l.Name == "2라인" && l.Parent!.Name == "세탁기" && l.Parent.Parent!.Name == "베트남")).Id;
+            vnLine = (await s.Db.Locations.FirstAsync(l => l.Name == "2라인" && l.Parent!.Name == "C제품" && l.Parent.Parent!.Name == "동남아")).Id;
             var off = new Location { Name = "중지 라인", Level = 2, ParentId = (await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "한국")).Id, IsActive = false };
             s.Db.Locations.Add(off);
             await s.Db.SaveChangesAsync();
@@ -351,7 +351,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         using (var s = _db.NewScope())
             same = await s.Projects.CloneAsync(new CloneInput(id, "복제 기본", Day(10, 12), true));
         using (var s = _db.NewScope())
-            moved = await s.Projects.CloneAsync(new CloneInput(id, "복제 베트남", Day(10, 12), true, vnLine, "복제새담당"));
+            moved = await s.Projects.CloneAsync(new CloneInput(id, "복제 동남아", Day(10, 12), true, vnLine, "복제새담당"));
         using (var s = _db.NewScope())
         {
             var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.CloneAsync(new CloneInput(id, "복제 중지", Day(10, 12), true, inactive)));
@@ -363,7 +363,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         Assert.Equal((src.CorporationId, src.LocationId), (a.CorporationId, a.LocationId));
         Assert.Equal("테스터", a.Owner);
         var b = await ViewAsync(moved);
-        Assert.Equal("베트남", b.Corporation);
+        Assert.Equal("동남아", b.Corporation);
         Assert.Equal(vnLine, b.LocationId);
         Assert.Equal("복제새담당", b.Owner);
     }
@@ -410,7 +410,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         Assert.Equal(ProjectService.ImportColumns.Work, Enumerable.Range(1, 7).Select(c => wb.Worksheet("작업").Cell(1, c).GetString()));
         var list = wb.Worksheet("목록");
         Assert.Contains("용기", list.Column(1).CellsUsed().Select(c => c.GetString()));
-        Assert.Contains(list.Column(7).CellsUsed(), c => c.GetString() == "세탁기>2라인");
+        Assert.Contains(list.Column(7).CellsUsed(), c => c.GetString() == "C제품>2라인");
         Assert.Contains("김물류", list.Column(9).CellsUsed().Select(c => c.GetString()));
     }
 
@@ -420,7 +420,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         var before = await ProjectCountAsync();
         var book = await BookAsync(new[]
         {
-            new[] { "가져오기 정상", "물류", "베트남", "세탁기>2라인", "김물류", "2026-10-12", "대명오토메이션", "설명", "검토=2026-10-20; 보고=10/30" },
+            new[] { "가져오기 정상", "물류", "동남아", "C제품>2라인", "김물류", "2026-10-12", "B오토메이션", "설명", "검토=2026-10-20; 보고=10/30" },
             new[] { "가져오기 유형 오류", "없는유형", "한국", "", "", "2026-10-12" },
             new[] { "가져오기 위치 오류", "물류", "한국", "없는 제품군", "", "2026-10-12" },
             new[] { "가져오기 날짜 오류", "물류", "한국", "", "", "언젠가" },
@@ -448,7 +448,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         Assert.DoesNotContain(pv.Issues, i => i.Row == 2);
         var okRow = pv.Projects.Single(p => p.Row == 2);
         Assert.True(okRow.Ok);
-        Assert.Equal("베트남 > 세탁기 > 2라인", okRow.Location);
+        Assert.Equal("동남아 > C제품 > 2라인", okRow.Location);
         Assert.Equal((3, 2), (okRow.Stages, okRow.Targets));
         Assert.Equal(("김물류", false), (okRow.Owner, okRow.NewOwner));       // 기존 사용자 담당은 그 이름으로(올린 사람이 아니라)
         Assert.Equal(new[] { "가져오기신규" }, pv.NewUsers);
@@ -466,8 +466,8 @@ public class InputServiceTests : IClassFixture<TestDb>
         var before = await ProjectCountAsync();
         var book = await BookAsync(new[]
         {
-            new[] { "가져오기 등록 A", "물류", "베트남", "세탁기>2라인", "가져오기담당", "2026-10-12", "대명오토메이션", "설명 A", "검토=2026-10-20; 보고=10/30" },
-            new[] { "가져오기 등록 B", "용기", "한국", "냉장고>3라인>1F", "", "2026.10.12" },
+            new[] { "가져오기 등록 A", "물류", "동남아", "C제품>2라인", "가져오기담당", "2026-10-12", "B오토메이션", "설명 A", "검토=2026-10-20; 보고=10/30" },
+            new[] { "가져오기 등록 B", "용기", "한국", "A제품>3라인>1F", "", "2026.10.12" },
         }, new[]
         {
             new[] { "가져오기 등록 A", "검토", "자료 조사", "가져오기담당", "2026-10-12", "2026-10-14" },
@@ -491,7 +491,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         Assert.Equal(before + 2, await ProjectCountAsync());
 
         var a = await ViewAsync(result.Ids[0]);
-        Assert.Equal(("가져오기 등록 A", "가져오기담당", "베트남", Day(10, 12), "대명오토메이션"), (a.Title, a.Owner, a.Corporation, a.StartDate, a.Vendor));
+        Assert.Equal(("가져오기 등록 A", "가져오기담당", "동남아", Day(10, 12), "B오토메이션"), (a.Title, a.Owner, a.Corporation, a.StartDate, a.Vendor));
         Assert.Equal(new DateOnly?[] { Day(10, 20), Day(10, 30), null }, a.Stages.Select(x => x.TargetDate));
         // 작업 시트에 줄이 있는 과제는 템플릿 작업 대신 그 줄로 — 물류에는 템플릿이 없으므로 두 줄만
         Assert.Equal(new[] { "자료 조사", "정리" }, a.Stages[0].Works.Select(w => w.Title));

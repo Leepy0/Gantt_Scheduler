@@ -87,7 +87,7 @@ public class NotifyTests : IClassFixture<TestDb>
             var project = 0;
             using (var s = _db.NewScope())
             {
-                project = await s.Db.Projects.Where(p => p.Title == "광주 냉장고 3라인 AGV 도입").Select(p => p.Id).SingleAsync();
+                project = await s.Db.Projects.Where(p => p.Title == "본사 A제품 3라인 AGV 도입").Select(p => p.Id).SingleAsync();
                 await s.Projects.CommentAsync(new CommentInput(project, null, null, "검수 서류 확인 부탁드립니다"));
             }
 
@@ -104,7 +104,7 @@ public class NotifyTests : IClassFixture<TestDb>
             var mail = Assert.Single(channel.Sent, m => m.To == "kim@example.com");
             Assert.StartsWith("[과제 스케줄러] 10-12 요약 — 알림 1건", mail.Subject);
             Assert.Contains("[읽지 않은 알림 1건]", mail.Body);
-            Assert.Contains("[내 과제] 광주 냉장고 3라인 AGV 도입 — 댓글: 검수 서류 확인 부탁드립니다 (테스터,", mail.Body);
+            Assert.Contains("[내 과제] 본사 A제품 3라인 AGV 도입 — 댓글: 검수 서류 확인 부탁드립니다 (테스터,", mail.Body);
             Assert.Contains("작업", mail.Body);
             Assert.Contains("http://gantt.local/My/Notifications", mail.Body);
             using (var s = _db.NewScope())
@@ -147,7 +147,7 @@ public class NotifyTests : IClassFixture<TestDb>
             using (var s = _db.NewScope())
             {
                 var cat = await s.Db.Categories.FirstAsync(c => c.Name == "용기");
-                var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "멕시코");
+                var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "미주");
                 project = await s.Projects.CreateAsync(new ProjectInput("메일 실패 과제", cat.Id, corp.Id, null, _db.Clock.Today, null, null, null, null));
             }
             using (var s = _db.NewScope("메일실패"))
@@ -208,7 +208,7 @@ public class NotifyTests : IClassFixture<TestDb>
             using (var s = _db.NewScope())
             {
                 var cat = await s.Db.Categories.FirstAsync(c => c.Name == "용기");
-                var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "멕시코");
+                var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "미주");
                 project = await s.Projects.CreateAsync(new ProjectInput("표시 실패 과제", cat.Id, corp.Id, null, _db.Clock.Today, null, null, null, null));
             }
             using (var s = _db.NewScope("표시실패")) await s.Projects.WatchAsync(project, true);
