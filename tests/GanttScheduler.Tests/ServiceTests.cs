@@ -272,7 +272,10 @@ public class ServiceTests : IClassFixture<TestDb>
         Assert.Equal(2, Assert.Single(p.Equipments!).Quantity);
 
         using (var s = _db.NewScope())
+        {
             await s.Projects.DeleteAsync(id);
+            await s.Projects.PurgeAsync(id);
+        }
         using (var s = _db.NewScope())
         {
             Assert.Null(await s.Projects.ViewAsync(id));

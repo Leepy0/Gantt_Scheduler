@@ -81,7 +81,7 @@ public partial class ProjectService
     // 저장 전의 날짜로 근무일 간격·추천 입고일을 다시 계산한다. rows 에 없는 단계는 저장된 값을 쓴다
     public async Task<List<StagePlanView>> SchedulePreviewAsync(int projectId, List<StagePlanRow>? rows)
     {
-        var p = await _db.Projects.AsNoTracking().Include(x => x.Stages).FirstOrDefaultAsync(x => x.Id == projectId)
+        var p = await _db.LiveProjects.AsNoTracking().Include(x => x.Stages).FirstOrDefaultAsync(x => x.Id == projectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         var edits = (rows ?? new()).GroupBy(r => r.StageId).ToDictionary(g => g.Key, g => g.Last());
         // 저장할 때와 같은 범위 검사 — 바뀐 날짜만 본다(범위 밖으로 남은 옛 데이터가 미리보기를 막지 않게)

@@ -168,7 +168,7 @@ public class EditModel : PageModel
     private async Task ShowConflictAsync(int id)
     {
         // 실패한 저장이 컨텍스트에 남긴 값이 섞이지 않게 추적 없이 DB 에서 새로 읽는다
-        var latest = await _db.Projects.AsNoTracking()
+        var latest = await _db.LiveProjects.AsNoTracking()
             .Include(x => x.Category)
             .Include(x => x.Owner)
             .Include(x => x.Equipments).ThenInclude(e => e.EquipmentType).ThenInclude(t => t!.Parent)
@@ -304,7 +304,7 @@ public class EditModel : PageModel
         string? currentOwner = null;
         if (!IsNew)
         {
-            var ownerId = await _db.Projects.AsNoTracking().Where(x => x.Id == Id).Select(x => x.OwnerId).FirstOrDefaultAsync();
+            var ownerId = await _db.LiveProjects.AsNoTracking().Where(x => x.Id == Id).Select(x => x.OwnerId).FirstOrDefaultAsync();
             currentOwner = await _db.Users.AsNoTracking().Where(u => u.Id == ownerId).Select(u => u.Name).FirstOrDefaultAsync();
         }
 

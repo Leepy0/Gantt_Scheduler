@@ -303,7 +303,7 @@ public partial class ProjectService
     // 같은 요청에서 다른 저장이 일어나도, 엔티티를 공유하는 저장소(섀도 빌드의 가짜 EF)에서도 미리보기가 데이터를 바꾸지 않게
     private async Task<Project> PlanGraphAsync(int projectId)
     {
-        var src = await _db.Projects.AsNoTracking()
+        var src = await _db.LiveProjects.AsNoTracking()
             .Include(p => p.Stages).ThenInclude(s => s.Works)
             .Include(p => p.Links)
             .AsSplitQuery()

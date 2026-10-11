@@ -23,7 +23,7 @@ public partial class ProjectService
     public async Task<List<LinkTargetProject>> LinkTargetsAsync(int projectId, string? q)
     {
         var text = q?.Trim() ?? "";
-        var rows = (await _db.Projects.AsNoTracking().Where(p => p.Id != projectId)
+        var rows = (await _db.LiveProjects.AsNoTracking().Where(p => p.Id != projectId)
                 .Select(p => new { p.Id, p.Title, p.State, p.UpdatedAt }).ToListAsync())
             .Where(p => text.Length == 0 || p.Title.Contains(text, StringComparison.OrdinalIgnoreCase))
             .OrderBy(p => p.State is ProjectState.Active or ProjectState.Hold ? 0 : 1).ThenByDescending(p => p.UpdatedAt).ThenBy(p => p.Id)
@@ -49,7 +49,8 @@ public partial class ProjectService
             l.PredecessorStage = stages.GetValueOrDefault(l.PredecessorStageId);
             l.SuccessorStage = stages.GetValueOrDefault(l.SuccessorStageId);
         }
-        return links;
+        // 휴지통에 있는 과제와의 연결은 지우지 않고(복원하면 돌아온다) 보이지도 위반으로 세지도 않는다
+        return links.Where(l => l.PredecessorStage?.Project?.DeletedAt == null && l.SuccessorStage?.Project?.DeletedAt == null).ToList();
     }
 
     // 다른 과제의 단계와 잇는다. 같은 과제끼리·같은 쌍·순환(과제 간 연결을 따라 되돌아옴)은 거절한다.
@@ -65,7 +66,7 @@ public partial class ProjectService
         var stages = await _db.Stages.Include(s => s.Project).Where(s => s.Id == predId || s.Id == succId).ToListAsync();
         var pred = stages.FirstOrDefault(s => s.Id == predId);
         var succ = stages.FirstOrDefault(s => s.Id == succId);
-        if (pred?.Project == null || succ?.Project == null)
+        if (pred?.Project == null || succ?.Project == null || pred.Project.DeletedAt != null || succ.Project.DeletedAt != null)
             throw new RuleException("연결할 단계를 찾을 수 없습니다. 화면을 새로고침해 주세요.", "otherStageId");
         if (pred.ProjectId == succ.ProjectId)
             throw new RuleException("같은 과제의 단계는 연결하지 않습니다. 과제 안의 순서는 단계 목표일로 정합니다.", "otherStageId");

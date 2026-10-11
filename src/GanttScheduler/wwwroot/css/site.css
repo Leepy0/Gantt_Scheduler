@@ -1052,3 +1052,26 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 @media (max-width: 767px) {
     .year-chip { min-height: var(--tap); }
 }
+
+/* ── 휴지통·기준선 차수 이력 ───────────────────────────────────── */
+/* 상세 > 정보: 기준선 이력(비교 중인 차수 강조)과 비교 기준 고르기 */
+.baseline-compare { margin-bottom: 12px; }
+.baseline-list { list-style: none; margin: 0; padding: 0; }
+.baseline-list li { display: flex; align-items: flex-start; gap: 12px; padding: 8px 0; }
+.baseline-list li + li { border-top: 1px solid var(--line); }
+.baseline-list li.on .baseline-no { background: var(--accent-weak); color: var(--accent); }
+.baseline-list .row-sub { white-space: normal; }
+.baseline-no {
+    flex: none; min-width: 40px; padding: 2px 8px; border-radius: var(--r-sm); background: var(--surface-2);
+    color: var(--text-2); font-weight: 600; font-size: var(--fs-xs); text-align: center;
+}
+/* 관리 > 휴지통 */
+.trash-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; flex-wrap: wrap; }
+.trash-row .row-main { flex: 1 1 280px; }
+.trash-row .row-sub { white-space: normal; }
+.trash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.trash-log td { vertical-align: top; }
+@media (max-width: 767px) {
+    .trash-actions { width: 100%; }
+    .trash-actions .btn { flex: 1; min-height: 48px; }
+}

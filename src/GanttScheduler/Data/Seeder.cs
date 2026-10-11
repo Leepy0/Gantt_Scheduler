@@ -47,6 +47,9 @@ public static class DbInitializer
 
         await Seeder.SeedMastersAsync(db);
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
+        // 기준선 차수 이력이 생기기 전에 확정한 과제에 1차를 만든다(멱등 — 이미 차수가 있으면 건너뛴다)
+        var migrated = await GanttScheduler.Services.BaselineHistory.EnsureFirstRoundsAsync(db);
+        if (migrated > 0) log.LogInformation("기준선 차수 이력: 과제 {Count}건의 기존 기준선을 1차로 옮겼습니다.", migrated);
     }
 
     public static string SchemaHash(string script) =>

@@ -501,7 +501,7 @@ public class MasterService
     {
         var oldCal = new WorkCalendar(before);
         var newCal = new WorkCalendar(after);
-        var active = await _db.Projects.AsNoTracking().Include(p => p.Stages).ThenInclude(s => s.Works).Include(p => p.Links)
+        var active = await _db.LiveProjects.AsNoTracking().Include(p => p.Stages).ThenInclude(s => s.Works).Include(p => p.Links)
             .Where(p => p.State == ProjectState.Active).AsSplitQuery().ToListAsync();
         var titles = new List<string>();
         var violations = 0;
@@ -631,7 +631,7 @@ public class MasterService
     // 단계 템플릿 기본 기간 옆의 참고값 — 완료된 과제의 같은 유형·같은 이름 단계 리드타임(근무일). 완료 과제만 읽는다
     private async Task<Dictionary<(int CategoryId, string Stage), StageLeadHint>> LeadHintsAsync()
     {
-        var done = await _db.Projects.AsNoTracking().Include(p => p.Stages).Where(p => p.State == ProjectState.Done).ToListAsync();
+        var done = await _db.LiveProjects.AsNoTracking().Include(p => p.Stages).Where(p => p.State == ProjectState.Done).ToListAsync();
         var cal = new WorkCalendar((await _db.Holidays.AsNoTracking().ToListAsync()).Select(h => h.Date));
         return Reporting.StageLeadHints(done, cal);
     }

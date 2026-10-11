@@ -291,7 +291,10 @@ public class DataAccessTests : IClassFixture<TestDb>
     {
         var big = await BigProject.CreateAsync(_db, "대형 과제 삭제");
         using (var s = _db.NewScope())
+        {
             await s.Projects.DeleteAsync(big.Id);
+            await s.Projects.PurgeAsync(big.Id);
+        }
         using var c = _db.NewScope();
         Assert.False(await c.Db.Projects.AnyAsync(p => p.Id == big.Id));
         Assert.False(await c.Db.Stages.AnyAsync(x => x.ProjectId == big.Id));

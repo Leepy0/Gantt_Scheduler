@@ -64,7 +64,7 @@ public partial class ProjectService
         var me = _me.Id;
         var floor = _clock.UtcNow.AddDays(-Rules.NewActivityDays);
         var rows = await (
-                from a in _db.Activities.AsNoTracking()
+                from a in _db.LiveActivities.AsNoTracking()
                 where a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged && a.DeletedAt == null
                 join v in _db.ProjectVisits.AsNoTracking().Where(v => v.UserId == me) on a.ProjectId equals v.ProjectId into visits
                 from v in visits.DefaultIfEmpty()
@@ -135,7 +135,7 @@ public partial class ProjectService
     // 관심 과제로 두거나 뺀다. 지금 상태를 돌려준다
     public async Task<bool> WatchAsync(int projectId, bool on)
     {
-        if (!await _db.Projects.AnyAsync(p => p.Id == projectId))
+        if (!await _db.LiveProjects.AnyAsync(p => p.Id == projectId))
             throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         var me = _me.Id;
         var row = await _db.ProjectWatches.FirstOrDefaultAsync(w => w.UserId == me && w.ProjectId == projectId);
@@ -156,14 +156,14 @@ public partial class ProjectService
     public async Task<HashSet<int>> WatchedIdsAsync()
     {
         var me = _me.Id;
-        return (await _db.ProjectWatches.AsNoTracking().Where(w => w.UserId == me).Select(w => w.ProjectId).ToListAsync()).ToHashSet();
+        return (await _db.ProjectWatches.AsNoTracking().Where(w => w.UserId == me && w.Project!.DeletedAt == null).Select(w => w.ProjectId).ToListAsync()).ToHashSet();
     }
 
     // 내 관심 과제 (진행 → 보류 → 완료 → 중단, 그 안에서는 이름순)와 새 활동 수
     public async Task<List<WatchedProject>> WatchedProjectsAsync(Dictionary<int, int>? newCounts = null)
     {
         var me = _me.Id;
-        var rows = await _db.ProjectWatches.AsNoTracking().Where(w => w.UserId == me)
+        var rows = await _db.ProjectWatches.AsNoTracking().Where(w => w.UserId == me && w.Project!.DeletedAt == null)
             .Select(w => new { w.ProjectId, w.Project!.Title, w.Project.State }).ToListAsync();
         newCounts ??= await NewCountsAsync();
         return rows
@@ -261,7 +261,7 @@ public partial class ProjectService
             throw new RuleException(_comments.EditHours > 0
                 ? $"댓글은 남긴 뒤 {_comments.EditHours}시간 안에만 고치거나 지울 수 있습니다."
                 : "댓글을 고치거나 지울 수 없게 설정되어 있습니다.");
-        var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == c.ProjectId)
+        var p = await _db.LiveProjects.FirstOrDefaultAsync(x => x.Id == c.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         return (p, c);
     }
@@ -277,7 +277,7 @@ public partial class ProjectService
         var me = _me.Id;
         var floor = _clock.UtcNow.AddDays(-Rules.NewActivityDays);
         var rows = await (
-                from a in _db.Activities.AsNoTracking()
+                from a in _db.LiveActivities.AsNoTracking()
                 where a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged && a.DeletedAt == null
                 where a.Project!.OwnerId == me
                       || _db.ProjectWatches.Any(w => w.ProjectId == a.ProjectId && w.UserId == me)

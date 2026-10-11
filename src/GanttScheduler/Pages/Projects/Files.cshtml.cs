@@ -63,7 +63,8 @@ public class FilesModel : PageModel
         };
     }
 
-    public async Task<IActionResult> OnPostUploadAsync(int projectId, int? stageId, IFormFile? file)
+    // compare: 상세 화면이 고른 기준선 비교 차수 — 돌려주는 과제도 같은 기준으로 센다
+    public async Task<IActionResult> OnPostUploadAsync(int projectId, int? stageId, IFormFile? file, int? compare = null)
     {
         try
         {
@@ -71,7 +72,7 @@ public class FilesModel : PageModel
             await using var stream = file.OpenReadStream();
             await _files.SaveAsync(projectId, stageId, file.FileName, file.Length, stream);
             // today: 상세 화면의 다른 변경 응답(Detail 의 Run)과 같게 한국 날짜를 실어 오래 열어 둔 화면의 '오늘'을 맞춘다
-            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId), today = _clock.Today });
+            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId, compare: compare), today = _clock.Today });
         }
         catch (RuleException ex)
         {

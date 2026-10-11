@@ -21,7 +21,10 @@
     var tab = 'schedule';
 
     var $ = function (id) { return document.getElementById(id); };
-    var detailUrl = function (handler) { return App.url('/Projects/Detail?handler=' + handler); };
+    // 기준선 비교 차수(null = 최신). 모든 요청 주소에 붙여, 저장 뒤 서버가 돌려주는 과제도 같은 차수 기준으로 '+n일'을 세게 한다
+    var compare = P.compareNo == null ? null : P.compareNo;
+    function compareQuery() { return compare == null ? '' : '&compare=' + compare; }
+    var detailUrl = function (handler) { return App.url('/Projects/Detail?handler=' + handler) + compareQuery(); };
 
     // 근무일 수·휴일 안내·의존 밀기는 서버가 계산한다(미리보기 ?handler=Preview). 화면의 휴일 판정은 간트 음영(gantt.js)에만 쓴다
 
@@ -104,11 +107,13 @@
     function stageChip(s) { return App.chip(s.chip) + App.chip(s.dueChip); }
     function workChip(w) { return App.chip(w.chip); }
 
+    // 비교 기준을 최신이 아닌 차수로 골랐으면 칩에 'n차'를 붙인다 (같은 '+n일'이라도 기준이 다르다)
     function slipChip(days) {
         if (days == null) return '';
-        if (days > 0) return chip('alarm', 'pin', '기준선 ' + signed(days) + '일');
-        if (days < 0) return chip('ok', 'pin', '기준선 ' + signed(days) + '일');
-        return chip('', 'pin', '기준선 유지');
+        var label = P.compareNo != null ? P.compareNo + '차 기준선 ' : '기준선 ';
+        if (days > 0) return chip('alarm', 'pin', label + signed(days) + '일');
+        if (days < 0) return chip('ok', 'pin', label + signed(days) + '일');
+        return chip('', 'pin', label + '유지');
     }
 
     function owners(w) {
@@ -421,13 +426,15 @@
                     : '<p class="empty">등록된 내역이 없습니다.</p>') +
                 '</section>';
         }
+        compare = P.compareNo == null ? null : P.compareNo;
         var baseline = P.baselineAt
-            ? App.time(P.baselineAt) + ' 확정' + (P.baselineEnd ? ' · 종료 ' + P.baselineEnd : '') + (P.slipDays != null ? ' · 현재 ' + signed(P.slipDays) + '일' : '')
+            ? (P.compareNo != null ? P.compareNo + '차 · ' : '') +
+              App.time(P.baselineAt) + ' 확정' + (P.baselineEnd ? ' · 종료 ' + P.baselineEnd : '') + (P.slipDays != null ? ' · 현재 ' + signed(P.slipDays) + '일' : '')
             : null;
         // 삭제 단추는 지울 수 있는 사람(담당자·등록자·관리자)에게만 — 서버가 canDelete 로 알려 준다
         var danger = P.canDelete
             ? '<section class="card danger-zone"><div><h3>과제 삭제</h3>' +
-              '<p class="muted">단계·작업·첨부·활동 이력이 모두 삭제되며 되돌릴 수 없습니다.</p></div>' +
+              '<p class="muted">휴지통으로 보냅니다. 보관 기간 안에는 관리자가 되살릴 수 있고, 그 뒤 첨부·활동 이력과 함께 영구 삭제됩니다.</p></div>' +
               '<span class="spacer"></span><button type="button" class="btn danger" id="btn-delete">' + icon('trash') + '과제 삭제</button></section>'
             : '';
         $('tab-info').innerHTML =
@@ -442,7 +449,30 @@
             row('협력사', P.vendor) +
             row('등록', (P.createdBy || '') + (P.createdAt ? ' · ' + App.time(P.createdAt) : '')) +
             row('설명', P.description) +
-            '</dl></section>' + itemHtml + '</div>' + danger;
+            '</dl></section>' + baselineCard() + itemHtml + '</div>' + danger;
+    }
+
+    // 기준선 차수 이력: 차수·시각·사람·사유와 비교 기준 고르기. 고른 차수 대비 '+n일'은 서버가 다시 센다(?compare=n)
+    function baselineCard() {
+        var rounds = P.baselines || [];
+        if (!rounds.length) return '';
+        var latest = rounds[0].no;
+        var options = '<option value="">최신 (' + latest + '차)</option>' + rounds.slice(1).map(function (b) {
+            var name = b.no === latest - 1 ? '직전 (' + b.no + '차)' : b.no + '차';
+            return '<option value="' + b.no + '"' + (P.compareNo === b.no ? ' selected' : '') + '>' + name + ' · ' + esc(App.time(b.at)) + '</option>';
+        }).join('');
+        return '<section class="card baseline-card" id="baseline-card"><header class="card-head"><h2>기준선 이력</h2><span class="count">' + rounds.length + '</span></header>' +
+            (rounds.length > 1
+                ? '<label class="field baseline-compare"><span class="label">비교 기준</span><select id="baseline-compare">' + options + '</select></label>'
+                : '') +
+            '<ol class="baseline-list">' + rounds.map(function (b) {
+                var on = (P.compareNo == null ? latest : P.compareNo) === b.no;
+                return '<li' + (on ? ' class="on" aria-current="true"' : '') + ' data-baseline-no="' + b.no + '">' +
+                    '<span class="baseline-no num">' + b.no + '차</span>' +
+                    '<span class="row-main"><span class="row-title">' + App.timeTag(b.at) + ' · ' + esc(b.user) +
+                    (on ? ' ' + chip('accent', 'pin', '비교 중') : '') + '</span>' +
+                    (b.reason ? '<span class="row-sub">' + esc(b.reason) + '</span>' : '') + '</span></li>';
+            }).join('') + '</ol></section>';
     }
 
     // ── 자료(첨부) ──────────────────────────────────────────────────
@@ -1761,17 +1791,29 @@
         });
     }
 
-    async function deleteProject() {
-        var ok = await App.confirm({
+    // 과제 삭제 = 휴지통으로 보내기. 보관 기간 안에는 관리 > 휴지통에서 되살릴 수 있다. 사유는 선택(휴지통 목록·활동에 남는다)
+    function deleteProject() {
+        var opened = P.version;
+        App.sheet({
             title: '과제 삭제',
-            message: '"' + P.title + '" 과제와 모든 단계·작업·첨부·활동 이력을 삭제합니다. 되돌릴 수 없습니다.',
-            verb: '과제 삭제'
+            primary: '휴지통으로 보내기',
+            html: '<p class="form-warn">' + icon('trash') + '<span>"' + esc(P.title) + '" 과제를 휴지통으로 보냅니다. 목록·대시보드·보고에서 빠지고, ' +
+                '보관 기간 안에는 관리 &gt; 휴지통에서 되살릴 수 있습니다.</span></p>' +
+                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="지우는 이유 (중복 등록, 취소 등)"></textarea>', true),
+            onSubmit: async function (form) {
+                try {
+                    var r = await App.post(detailUrl('Delete'), { id: P.id, reason: form.elements.reason.value, version: opened });
+                    window.location.href = r.redirect || App.url('/Projects');
+                } catch (err) {
+                    if (err.data && err.data.conflict) {
+                        await reload();
+                        opened = P.version;
+                        throw new Error('다른 사용자가 먼저 과제를 바꿨습니다. 최신 내용을 확인한 뒤 다시 삭제해 주세요.');
+                    }
+                    throw err;
+                }
+            }
         });
-        if (!ok) return;
-        try {
-            var r = await App.post(detailUrl('Delete'), { id: P.id });
-            window.location.href = r.redirect || App.url('/Projects');
-        } catch (err) { App.toast(err.message, 'error'); }
     }
 
     // ── 이벤트 ──────────────────────────────────────────────────────
@@ -1856,6 +1898,14 @@
         else if (e.target.closest('#btn-clone')) openCloneSheet();
         else if (e.target.closest('#btn-baseline')) setBaseline();
         else if (e.target.closest('#btn-delete')) deleteProject();
+    });
+
+    // 기준선 비교 차수 고르기 → 그 차수 기준으로 다시 받아 그린다(간트 기준선 막대·'+n일'이 함께 바뀐다)
+    $('tab-info').addEventListener('change', function (e) {
+        if (e.target.id !== 'baseline-compare') return;
+        var prev = compare;
+        compare = e.target.value ? +e.target.value : null;
+        reload().catch(function (err) { compare = prev; App.toast(err.message, 'error'); });
     });
 
     // 활동 탭의 진행 내용: 쓰던 글은 이 탭(sessionStorage)에 임시 저장하고, 다시 열면 복원을 제안한다
@@ -1957,7 +2007,7 @@
             form.append('projectId', P.id);
             if ($('file-stage').value) form.append('stageId', $('file-stage').value);
             form.append('file', file);
-            await change(App.upload(App.url('/Projects/Files?handler=Upload'), form));
+            await change(App.upload(App.url('/Projects/Files?handler=Upload') + compareQuery(), form));
             input.value = '';
             App.toast('올렸습니다.');
         } catch (err) {

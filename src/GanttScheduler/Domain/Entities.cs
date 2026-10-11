@@ -31,6 +31,8 @@ public enum ActivityType
     CheckChanged = 17,
     LinkChanged = 18,
     CommentChanged = 19,    // 댓글 수정·삭제 기록 (NewValue = 고친 댓글의 활동 Id)
+    ProjectDeleted = 20,    // 휴지통으로 보냄 (영구 삭제 전까지 활동이 남는다)
+    ProjectRestored = 21,   // 휴지통에서 되살림
 }
 
 // 조직: 1 그룹 → 2 파트. 사용자는 파트(없으면 그룹)에 속한다
@@ -176,6 +178,11 @@ public class Project
     public DateTime UpdatedAt { get; set; }
     public int Version { get; set; }                // 동시 수정 감지용 — 과제 정보·상태가 바뀔 때마다 증가
     public DateTime? BaselineAt { get; set; }       // 기준선을 확정한 시각 (없으면 미확정)
+    // 휴지통: 지운 과제는 표시만 하고 모든 조회에서 뺀다(AppDb.LiveProjects). 보관 기간(Trash:KeepDays)이 지나면 영구 삭제한다
+    public DateTime? DeletedAt { get; set; }
+    public int? DeletedById { get; set; }
+    public AppUser? DeletedBy { get; set; }
+    public string? DeleteReason { get; set; }
 
     public List<Stage> Stages { get; set; } = new();
     public List<WorkLink> Links { get; set; } = new();
@@ -390,4 +397,48 @@ public class ActivityMention
     public Activity? Activity { get; set; }
     public int UserId { get; set; }
     public AppUser? User { get; set; }
+}
+
+// ── 휴지통·기준선 차수 이력 ───────────────────────────────────────────────
+
+// 기준선 한 차수. 확정할 때마다 새 차수를 더한다(덮어쓰지 않는다). Stage.BaselineDate·WorkItem.Baseline*·Project.BaselineAt 은
+// '최신 차수'의 사본으로 그대로 둔다 — 기존 화면·내보내기·리드타임이 그 열을 읽는다
+public class Baseline
+{
+    public int Id { get; set; }
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public int No { get; set; }                     // 1부터 과제마다 차례로
+    public DateTime At { get; set; }
+    public int UserId { get; set; }
+    public AppUser? User { get; set; }
+    public string? Reason { get; set; }
+    public List<BaselineItem> Items { get; set; } = new();
+}
+
+// 차수에 고정한 단계 목표일(StageId, End) 또는 작업 목표 일정(WorkItemId, Start~End).
+// 단계·작업은 느슨한 참조(FK 없음)다 — 나중에 지워도 그때의 기준선 기록은 남는다
+public class BaselineItem
+{
+    public int Id { get; set; }
+    public int BaselineId { get; set; }
+    public Baseline? Baseline { get; set; }
+    public int? StageId { get; set; }
+    public int? WorkItemId { get; set; }
+    public DateOnly? Start { get; set; }
+    public DateOnly? End { get; set; }
+}
+
+// 영구 삭제한 과제의 기록 한 줄. 과제·활동은 함께 지워지므로 '누가 지웠고 언제 영구히 사라졌는지'는 여기와 파일 로그에만 남는다.
+// 사용자 이름은 글자로 남긴다(FK 없음) — 기록이 다른 행에 묶이지 않게
+public class DeletedProjectLog
+{
+    public int Id { get; set; }
+    public int ProjectId { get; set; }
+    public string Title { get; set; } = "";
+    public string? DeletedBy { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public string? Reason { get; set; }
+    public DateTime PurgedAt { get; set; }
+    public string PurgedBy { get; set; } = "";      // 사람 이름, 또는 자동 정리('보관 기간 경과')
 }

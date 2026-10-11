@@ -89,6 +89,10 @@ builder.Services.AddScoped<OpsChecks>();
 builder.Services.AddHostedService<BackupWorker>();
 // 하루 한 번 메일 요약 (Notify:Enabled 일 때만)
 builder.Services.AddHostedService<NotifyWorker>();
+// 휴지통: 지운 과제의 복원·영구 삭제, 보관 기간(Trash:KeepDays)이 지난 과제의 하루 한 번 자동 정리
+builder.Services.AddSingleton(_ => TrashOptions.From(config));
+builder.Services.AddScoped<TrashService>();
+builder.Services.AddHostedService<TrashWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);

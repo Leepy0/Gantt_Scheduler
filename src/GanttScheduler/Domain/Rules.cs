@@ -160,8 +160,50 @@ public static class Rules
     // ── 기준선 ───────────────────────────────────────────────────────────
 
     // 기준선 대비 밀린 일수 (당겨졌으면 음수). 기준선이나 목표일이 없으면 null
-    public static int? SlipDays(Stage s) =>
-        s.BaselineDate == null || s.TargetDate == null ? null : s.TargetDate.Value.DayNumber - s.BaselineDate.Value.DayNumber;
+    public static int? SlipDays(Stage s) => SlipDays(s.TargetDate, s.BaselineDate);
+
+    // 지금 값이 기준값보다 밀린 달력 일수. 단계·작업·과제의 '기준선 대비 +n일'이 모두 이것을 거친다 —
+    // 비교 기준(최신·1차·직전 차수)을 바꿔도 같은 식으로 센다(UseBaseline 이 기준값만 바꿔 넣는다)
+    public static int? SlipDays(DateOnly? current, DateOnly? baseline) =>
+        current == null || baseline == null ? null : current.Value.DayNumber - baseline.Value.DayNumber;
+
+    // 기준선 차수 하나를 만든다: 지금 단계 목표일과 작업 목표 일정을 그대로 고정한다(규칙 12). 단계·작업 Id 는 느슨한 참조 —
+    // 나중에 지워도 그 차수의 기록은 남는다. 저장 전 새 단계·작업(Id 0)은 없다고 보고 넣지 않는다
+    public static List<BaselineItem> BaselineItems(Project p)
+    {
+        var items = new List<BaselineItem>();
+        foreach (var s in p.Stages.Where(s => s.Id != 0))
+        {
+            items.Add(new BaselineItem { StageId = s.Id, End = s.TargetDate });
+            foreach (var w in s.Works.Where(w => w.Id != 0))
+                items.Add(new BaselineItem { WorkItemId = w.Id, Start = w.PlanStart, End = w.PlanEnd });
+        }
+        return items;
+    }
+
+    // 비교 기준을 고른 차수로 바꾼다 — 읽기 전용 그래프(추적하지 않는 상세 화면용)의 기준선 열에 그 차수의 값을 넣는다.
+    // 그 차수 뒤에 생긴 단계·작업은 기준값이 없다(null → '+n일' 없음). 이후 계산(SlipDays·BaselineEnd·간트 기준선 막대)은 그대로 따라온다
+    public static void UseBaseline(Project p, IEnumerable<BaselineItem> items, DateTime at)
+    {
+        var stages = new Dictionary<int, BaselineItem>();
+        var works = new Dictionary<int, BaselineItem>();
+        foreach (var i in items)
+        {
+            if (i.StageId is int sid) stages[sid] = i;
+            else if (i.WorkItemId is int wid) works[wid] = i;
+        }
+        p.BaselineAt = at;
+        foreach (var s in p.Stages)
+        {
+            s.BaselineDate = stages.TryGetValue(s.Id, out var si) ? si.End : null;
+            foreach (var w in s.Works)
+            {
+                var found = works.TryGetValue(w.Id, out var wi);
+                w.BaselineStart = found ? wi!.Start : null;
+                w.BaselineEnd = found ? wi!.End : null;
+            }
+        }
+    }
 
     public static DateOnly? BaselineEnd(Project p)
     {
@@ -607,7 +649,7 @@ public static class Rules
     public static bool IsDoneLate(Stage s) => s.CompletedDate != null && s.TargetDate != null && s.CompletedDate.Value > s.TargetDate.Value;
 
     // 작업 목표 종료의 기준선 대비 (밀리면 양수). 기준선이 없으면 null
-    public static int? SlipDays(WorkItem w) => w.BaselineEnd == null ? null : w.PlanEnd.DayNumber - w.BaselineEnd.Value.DayNumber;
+    public static int? SlipDays(WorkItem w) => SlipDays(w.PlanEnd, w.BaselineEnd);
 
     // 지연 작업이 목표 종료를 넘긴 달력 일수 (지연이 아니면 0)
     public static int LateDays(WorkItem w, Stage? stage, DateOnly today)
