@@ -111,6 +111,65 @@ public class DetailModel : PageModel
         }
     }
 
+    // ── 일정 변경 미리보기·재계획·과제 간 연결 ──
+
+    // 저장 전 미리보기(저장·활동 없음). kind:
+    //  work   — 작업 목표 일정 from~to (id 없으면 stageId 단계의 새 작업, stageId 가 있으면 그 단계로 옮김, links 는 'id:유형:간격' 을 쉼표로 — '-' 는 연결 없음, 없으면 지금 그대로)
+    //  stage  — 단계(id) 목표일 date (cascade: 이후 미완료 단계 연쇄 이동, works: 이후 단계의 미착수 작업 포함)
+    //  replan — 과제(id)를 오늘 기준 예측대로 재계획하면 옮겨질 작업
+    //  day    — 날짜(date) 하나의 휴일 안내 (새 단계 목표일)
+    public async Task<IActionResult> OnGetPreviewAsync(string? kind, int? id, DateOnly? from, DateOnly? to, int? stageId, string? links,
+                                                       DateOnly? date, bool cascade, bool works)
+    {
+        try
+        {
+            var preview = kind switch
+            {
+                "work" when from != null && to != null => await _projects.PreviewWorkPlanAsync(id, from.Value, to.Value, stageId, ParseLinks(links)),
+                "work" => throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart"),
+                "stage" when id != null => await _projects.PreviewStageTargetAsync(id.Value, date, cascade, works),
+                "replan" when id != null => await _projects.ReplanPreviewAsync(id.Value),
+                "day" => await _projects.DayPreviewAsync(date, "목표일"),
+                _ => throw new RuleException("알 수 없는 미리보기입니다."),
+            };
+            return new JsonResult(new { ok = true, preview });
+        }
+        catch (RuleException ex)
+        {
+            return Fail(ex);
+        }
+    }
+
+    // 'id:유형:간격,…' → 선행 연결 목록 ('-' 는 빈 목록, 비어 있으면 null = 지금 그대로)
+    private static List<LinkInput>? ParseLinks(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var list = new List<LinkInput>();
+        if (text.Trim() == "-") return list;
+        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var bits = part.Split(':');
+            if (!int.TryParse(bits[0], out var pred)) throw new RuleException("선행 작업을 다시 선택해 주세요.", "predecessors");
+            var lag = bits.Length > 2 && int.TryParse(bits[2], out var l) ? l : 0;
+            list.Add(new LinkInput(pred, lag, bits.Length > 1 ? bits[1] : null));
+        }
+        return list;
+    }
+
+    // 오늘 기준 재계획: 예측과 다른 미착수 작업의 목표 일정을 예측대로 옮긴다
+    public Task<IActionResult> OnPostReplanAsync([FromBody] ReplanInput input) =>
+        Run(input.ProjectId, async () => { await _projects.ReplanAsync(input); return input.ProjectId; });
+
+    // 과제 간 단계 연결: 상대 과제 검색, 연결, 해제
+    public async Task<IActionResult> OnGetLinkTargetsAsync(int id, string? q) =>
+        new JsonResult(new { ok = true, projects = await _projects.LinkTargetsAsync(id, q) });
+
+    public Task<IActionResult> OnPostAddStageLinkAsync([FromBody] StageLinkInput input) =>
+        Run(null, () => _projects.AddStageLinkAsync(input));
+
+    public Task<IActionResult> OnPostRemoveStageLinkAsync([FromBody] StageLinkRemove input) =>
+        Run(input.ProjectId, () => _projects.RemoveStageLinkAsync(input));
+
     public Task<IActionResult> OnPostMoveStageAsync([FromBody] MoveInput input) =>
         Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir));
 

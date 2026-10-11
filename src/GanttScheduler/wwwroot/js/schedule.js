@@ -1,5 +1,5 @@
 // 상세 '단계 일정 편집': 모든 단계의 목표일·완료일을 한 시트에서 고치고 한 번에 저장한다.
-// 근무일 간격·추천 입고일은 서버가 계산한 값을 그린다(고치는 동안은 미리보기 요청으로 다시 받는다). detail.js 가 ctx 를 넘겨 연다
+// 근무일 간격·추천 입고일·휴일 안내는 서버가 계산한 값을 그린다(열 때와 고치는 동안 미리보기 요청으로 받는다). detail.js 가 ctx 를 넘겨 연다
 (function () {
     'use strict';
 
@@ -13,13 +13,13 @@
         return '+' + gap + '근무일';
     }
 
-    // ctx: { project(), api(handler, body), previewUrl, mergeField, conflict(문구), isOff(date), holidays{date: 이름}, userToday() }
+    // ctx: { project(), api(handler, body), previewUrl, mergeField, conflict(문구), userToday() }
     function open(ctx) {
         var P = ctx.project();
         if (!P.stages.length) { App.toast('단계가 없습니다. 단계를 먼저 추가해 주세요.', 'error'); return; }
 
         var base = {};          // 단계 id → 표를 연 때(동시 수정 뒤에는 최신)의 값과 버전
-        var computed = {};      // 단계 id → 서버가 계산한 { gap, inboundHint }
+        var computed = {};      // 단계 id → 서버가 계산한 { gap, inboundHint, targetNote }
         function snapshot(stages) {
             base = {};
             computed = {};
@@ -108,8 +108,8 @@
                 gap.innerHTML = '<span class="sched-gap-label">간격</span>' + gapHtml(calc.gap);
 
                 var notes = [];
-                if (cur.target && ctx.isOff(cur.target)) {
-                    notes.push('<span class="hint">' + icon('alert') + '목표일이 휴일' + (ctx.holidays[cur.target] ? '(' + esc(ctx.holidays[cur.target]) + ')' : '') + '입니다.</span>');
+                if (cur.target && calc.targetNote) {
+                    notes.push('<span class="hint">' + icon('alert') + esc(calc.targetNote) + '</span>');
                 }
                 if (s.kind === 'inbound' && !cur.completed && calc.inboundHint && calc.inboundHint !== cur.target) {
                     notes.push('<span class="sched-hint">추천 입고일 <b>' + esc(calc.inboundHint) + '</b>' +
@@ -149,7 +149,7 @@
                 });
                 App.post(ctx.previewUrl, { projectId: P.id, rows: rows }).then(function (r) {
                     if (seq !== previewSeq || !form) return;
-                    r.rows.forEach(function (x) { computed[x.stageId] = { gap: x.gapWorkDays, inboundHint: x.inboundHint }; });
+                    r.rows.forEach(function (x) { computed[x.stageId] = { gap: x.gapWorkDays, inboundHint: x.inboundHint, targetNote: x.targetNote }; });
                     form.querySelector('[data-rows]').removeAttribute('aria-busy');
                     refresh();
                 }, function () {
@@ -181,6 +181,7 @@
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                 });
                 refresh();
+                preview();      // 휴일 안내는 서버가 준다 — 연 때의 날짜로도 한 번 받는다
             },
             onClose: function () { form = null; clearTimeout(previewTimer); },
             // 다른 사용자가 먼저 고쳤으면: 최신 단계로 표를 다시 그리고, 내가 손대지 않은 칸은 최신 값으로, 둘 다 바꾼 칸은 내 값을 두고 옆에 알린다

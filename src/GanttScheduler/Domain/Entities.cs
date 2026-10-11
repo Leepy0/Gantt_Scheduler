@@ -258,7 +258,8 @@ public class WorkItem
     public int Version { get; set; }
 }
 
-// 작업 의존 관계 (종료 → 시작): 선행 작업이 끝난 다음 근무일 + LagDays 이후에 후행 작업을 시작한다
+// 작업 의존 관계. 유형(LinkType)에 따라 후행 작업이 선행 작업의 시작·종료 + LagDays(근무일) 이후에 시작하거나 끝나야 한다.
+// 판정은 Rules.EarliestStart 하나를 거친다 (규칙 11)
 public class WorkLink
 {
     public int Id { get; set; }
@@ -269,6 +270,7 @@ public class WorkLink
     public int SuccessorId { get; set; }
     public WorkItem? Successor { get; set; }
     public int LagDays { get; set; }                // 근무일 기준 간격
+    public LinkType Type { get; set; }              // 0(FS)이 기본 — 유형이 생기기 전의 연결은 그대로 '끝나면 시작'
 }
 
 // 첨부 파일 — 실제 파일은 디스크(Storage:Path)에 StoredName 으로 저장한다
@@ -304,4 +306,28 @@ public class Activity
     public int UserId { get; set; }
     public AppUser? User { get; set; }
     public DateTime At { get; set; }
+}
+
+// ── 의존 표현 확장: 작업 의존 유형, 과제 간 단계 의존 ─────────────────────
+
+// 작업 의존 유형. 숫자로 저장한다 — 유형 열을 더할 때 기존 연결이 0(FS)으로 읽히게(문자열이면 빈 값이 된다)
+public enum LinkType
+{
+    FS = 0,     // 끝나면 시작: 후행은 선행 종료 다음 근무일 + 간격 이후에 시작
+    SS = 1,     // 같이 시작: 후행은 선행 시작일 + 간격 이후에 시작
+    FF = 2,     // 같이 끝: 후행은 선행 종료일 + 간격 이후에 끝
+}
+
+// 과제 간 단계 의존: 후행 단계의 목표일이 선행 단계(다른 과제)의 완료일(없으면 목표일) 다음 근무일 + LagDays 이후여야 한다.
+// 다른 과제 담당자의 일정을 몰래 바꾸지 않도록 자동으로 밀지 않고 위반만 계산한다(규칙 11).
+// 두 FK 는 Restrict 다 — 단계·과제를 지울 때 서비스가 먼저 지운다(한 테이블로 가는 cascade 경로가 둘이면 SQL Server 가 거절한다)
+public class StageLink
+{
+    public int Id { get; set; }
+    public int PredecessorStageId { get; set; }
+    public Stage? PredecessorStage { get; set; }
+    public int SuccessorStageId { get; set; }
+    public Stage? SuccessorStage { get; set; }
+    public int LagDays { get; set; }                // 근무일 기준 간격
+    public DateTime CreatedAt { get; set; }
 }
