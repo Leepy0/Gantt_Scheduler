@@ -18,6 +18,9 @@ public class ExcelExporter
     public byte[] Weekly(WeeklyReport report) =>
         Encoding.UTF8.GetBytes(string.Join("\n", report.Projects.Select(p => $"{p.Title},{p.StateLabel},{p.Done.Count},{p.Changes.Count}")));
 
+    public byte[] History(List<HistoryRow> rows, string filterText, int total) =>
+        Encoding.UTF8.GetBytes(filterText + "\n" + string.Join("\n", rows.Select(r => $"{r.At:yyyy-MM-dd HH:mm},{r.User},{r.Project},{r.Text}")));
+
     public static string Signed(int days) => days > 0 ? "+" + days : days.ToString();
 }
 

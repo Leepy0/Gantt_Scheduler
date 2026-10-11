@@ -42,8 +42,9 @@ public record WeeklyProject(
     int Id, string Title, string Category, string Corporation, string Owner, string StateLabel,
     int Progress, int DelayDays, string? CurrentStage, DateOnly? CurrentTarget,
     List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next, ChipView? Chip = null,
-    List<WeeklyItem>? States = null, List<WeeklyLate>? Overdue = null, int RiskDays = 0)
+    List<WeeklyItem>? States = null, List<WeeklyLate>? Overdue = null, int RiskDays = 0, int ProgressGain = 0, string? DelayedStage = null)
 {
+    // ProgressGain: 기간 안 작업 진행률 변경을 과제 진행률로 환산한 증감(%p — Rules.ProgressGain). 진행률 변경 이전·새 값이 기록된 활동만 센다
     // RiskDays: 예상 지연 일수(Rules.RiskDays — 아직 지연이 아닌 진행 과제의 단계 예상 종료가 목표일을 넘는 일수). 이번 주 보고에서만 센다(지금 계산이라)
     // 이번 주 기록된 변동(실적·일정 변경·상태·진행 내용)이 없다
     public bool Quiet => Done.Count + Changes.Count + (States?.Count ?? 0) + Comments.Count == 0;
@@ -51,20 +52,32 @@ public record WeeklyProject(
     // 예상 지연(조기 경보)이 있는 과제도 카드로 보인다 — 조용해 보여도 늦어질 과제를 접어 두지 않는다
     public bool Card => !Quiet || DelayDays > 0 || (Overdue?.Count ?? 0) > 0 || RiskDays > 0;
     public ChipView? RiskChip => RiskDays > 0 ? new("warn", "clock", $"예상 지연 +{RiskDays}일") : null;
+    public string? GainText => ProgressGain == 0 ? null : $"진척 {(ProgressGain > 0 ? "+" : "")}{ProgressGain}%p";
     public int ChangeTargets => Changes.Sum(c => c.Targets);
 }
 
 // ChangeCount: 일정 변경 결정 수(BatchId 묶음은 1건), ChangeTargets: 그 결정이 바꾼 대상(행) 수.
 // StateCount: 사람이 바꾼 상태·기준선 확정 수, Completed: 모든 단계를 끝내 자동으로 완료된 과제 수.
 // AsOf: 지연·밀린 항목을 센 기준일 = min(그 주 마지막 날, 오늘). 진행률·현재 단계는 지금 값이다
+// 아래는 보고 확장(S10): NextTo — '다음 기간 계획'의 끝(기간 길이만큼), Missed — 기간 안에 끝났어야 하는데 실적이 없는 단계·작업,
+// DelaySummary — 지연·위험 과제 요약(서비스가 최근 사유를 채운다), NewDelayed·Resolved·ActiveDelta·DelayedDelta — 직전 기간 끝의 스냅샷과
+// 견준 것(스냅샷이 없으면 null), Kind — 'week'·'month'·'custom', Scope — 범위 설명(전체·내 과제·유형·법인·조직), ChangedOnly — 변동 있는 과제만
 public record WeeklyReport(
     DateOnly From, DateOnly To, DateOnly Today, int Active, int Delayed, int DoneCount, int ChangeCount, List<WeeklyProject> Projects,
-    int ChangeTargets = 0, int StateCount = 0, int Completed = 0, DateOnly? AsOf = null)
+    int ChangeTargets = 0, int StateCount = 0, int Completed = 0, DateOnly? AsOf = null,
+    DateOnly? NextTo = null, List<WeeklyMissed>? Missed = null, List<WeeklyDelayRow>? DelaySummary = null,
+    List<WeeklyFlip>? NewDelayed = null, List<WeeklyFlip>? Resolved = null, int? ActiveDelta = null, int? DelayedDelta = null,
+    string Kind = "week", string? Scope = null, bool ChangedOnly = false, string? Notice = null)
 {
+    public string Title => Kind switch { "month" => "월간 보고", "custom" => "기간 보고", _ => "주간 보고" };
+    public string PeriodWord => Kind switch { "month" => "이번 달", "custom" => "이번 기간", _ => "이번 주" };
+    public string NextWord => Kind switch { "month" => "다음 달", "custom" => "다음 기간", _ => "다음 주" };
+    public string PrevWord => Kind switch { "month" => "전월 대비", "custom" => "직전 기간 대비", _ => "전주 대비" };
     // 지난 주 보고 — 화면에 '지연은 그 주 기준, 진행률·현재 단계는 지금 기준'을 밝힌다
     public bool Past => AsOf != null && AsOf.Value < Today;
-    public List<WeeklyProject> Cards() => Projects.Where(p => p.Card).ToList();
-    public List<WeeklyProject> Folded() => Projects.Where(p => !p.Card).ToList();
+    // 변동 있는 과제만 고르면 이번 기간 기록이 없는 과제는 카드·접힌 표 모두에서 뺀다(지연 과제라도 — 지연은 요약 표에 남는다)
+    public List<WeeklyProject> Cards() => Projects.Where(p => p.Card && (!ChangedOnly || !p.Quiet)).ToList();
+    public List<WeeklyProject> Folded() => ChangedOnly ? new() : Projects.Where(p => !p.Card).ToList();
 }
 
 // ── 변경 이력 ────────────────────────────────────────────────────────────
@@ -137,9 +150,9 @@ public class InsightService
         return result;
     }
 
-    // 내 할 일은 진행 과제만 본다(Reporting.My)
-    public async Task<MyView> MyAsync() =>
-        Reporting.My(await _projects.AllAsync(q => q.Where(p => p.State == ProjectState.Active)), _me.Id, _clock.Today);
+    // 내 할 일은 진행 과제만 본다(Reporting.My). userId: 다른 사람의 할 일(부하 화면에서 연 읽기 전용 보기) — 없으면 지금 사용자
+    public async Task<MyView> MyAsync(int? userId = null) =>
+        Reporting.My(await _projects.AllAsync(q => q.Where(p => p.State == ProjectState.Active)), userId ?? _me.Id, _clock.Today);
 
     // 내 할 일 한 행만 다시 계산한다(빠른 갱신 뒤 그 행을 옮기기 위해). 그 과제만 읽는다.
     // 더 이상 내 할 일이 아니면(완료·단계 완료·담당 변경) null
@@ -155,24 +168,68 @@ public class InsightService
         return projectId is int id ? await MyWorkAsync(id, workId) : null;
     }
 
-    // from 이 속한 주(월~일)의 보고
-    public async Task<WeeklyReport> WeeklyAsync(DateOnly? day, bool mine)
+    // day 가 속한 주(월~일)의 보고
+    public Task<WeeklyReport> WeeklyAsync(DateOnly? day, bool mine)
     {
         var (from, to) = Reporting.WeekOf(day ?? _clock.Today);
+        return ReportAsync(from, to, new ProjectFilter(null, null, null, null, mine), "week");
+    }
+
+    // 기간 보고(주간 보고의 일반화): 기간 [from, to] 의 실적·일정 변경·진행 내용·밀린 항목·미달과 다음 기간(같은 길이) 계획.
+    // filter 는 범위(내 과제·유형·법인·조직 — 조직은 담당자 소속, 하위 파트 포함)만 쓴다. kind 는 화면 제목(주간·월간·기간)
+    public async Task<WeeklyReport> ReportAsync(DateOnly from, DateOnly to, ProjectFilter filter, string kind = "custom", bool changedOnly = false,
+        string? notice = null)
+    {
         var start = KoreaClock.StartOfDayUtc(from);
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
         var activities = await _db.LiveActivities.AsNoTracking().Include(a => a.User)
             .Where(a => a.At >= start && a.At < end).ToListAsync();
-        // 보고에 오르는 과제: 그 주가 끝나기 전에 등록했고, 진행 중이었거나 그 주에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly).
-        // 지난 주라면 그 뒤에 마지막 단계를 끝낸 완료 과제도 그때는 진행 중이었다. 나머지 완료·중단 과제는 읽지 않는다
+        // 보고에 오르는 과제: 그 기간이 끝나기 전에 등록했고, 진행 중이었거나 그 기간에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly).
+        // 지난 기간이라면 그 뒤에 마지막 단계를 끝낸 완료 과제도 그때는 진행 중이었다. 나머지 완료·중단 과제는 읽지 않는다
         var past = to < _clock.Today;
-        var all = await _projects.AllAsync(q => q.Where(p => p.CreatedAt < end
-            && (p.State == ProjectState.Active
-                || (past && p.State == ProjectState.Done && p.Stages.Any(s => s.CompletedDate > to))
-                || p.Activities.Any(a => a.At >= start && a.At < end && a.Type != ActivityType.CommentChanged && a.DeletedAt == null))),
-            withLinks: true);
-        if (mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
-        return Reporting.Weekly(all, activities, await _projects.LocationsAsync(), from, to, _clock.Today, await _projects.CalendarAsync());
+        var all = await _projects.AllAsync(q =>
+        {
+            q = q.Where(p => p.CreatedAt < end
+                && (p.State == ProjectState.Active
+                    || (past && p.State == ProjectState.Done && p.Stages.Any(s => s.CompletedDate > to))
+                    || p.Activities.Any(a => a.At >= start && a.At < end && a.Type != ActivityType.CommentChanged && a.DeletedAt == null)));
+            if (filter.CategoryId is int category) q = q.Where(p => p.CategoryId == category);
+            if (filter.CorporationId is int corp) q = q.Where(p => p.CorporationId == corp);
+            return q;
+        }, withLinks: true);
+        if (filter.Mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
+        if (filter.OrgUnitId is int org) all = all.Where(p => Rules.InOrg(p.Owner?.OrgUnit, org)).ToList();
+        var report = Reporting.Weekly(all, activities, await _projects.LocationsAsync(), from, to, _clock.Today, await _projects.CalendarAsync());
+
+        // 지연·위험 요약의 최근 사유 한 줄(대시보드 카드와 같은 조회 — 과제 수 상한)
+        var summary = report.DelaySummary ?? new();
+        var notes = await _projects.RecentNotesAsync(summary.Take(Dashboard.NotesMax).Select(x => x.ProjectId).ToList());
+        summary = summary.Select(x => notes.TryGetValue(x.ProjectId, out var n) ? x with { Reason = n.Text } : x).ToList();
+
+        // 직전 기간 끝(from 하루 전부터 일주일 안의 가장 늦은 날)의 스냅샷과 견준다. 스냅샷이 없으면 비워 둔다(화면은 숨긴다)
+        var prevDay = await _db.ProjectSnapshots.AsNoTracking().Where(x => x.Date < from && x.Date >= from.AddDays(-7))
+            .OrderByDescending(x => x.Date).Select(x => (DateOnly?)x.Date).FirstOrDefaultAsync();
+        List<WeeklyFlip>? newly = null, resolved = null;
+        int? activeDelta = null, delayedDelta = null;
+        if (prevDay is DateOnly pd)
+        {
+            var prev = await _db.ProjectSnapshots.AsNoTracking().Where(x => x.Date == pd).ToListAsync();
+            HashSet<int>? scope = null;
+            if (filter.OrgUnitId is int o) scope = Reporting.OrgScope(o, await _db.OrgUnits.AsNoTracking().ToListAsync());
+            var mineIds = all.Select(p => p.Id).ToHashSet();
+            prev = Reporting.Filter(prev, new AnalyticsFilter(filter.CategoryId, filter.CorporationId, filter.OrgUnitId), scope)
+                .Where(x => !filter.Mine || x.OwnerId == _me.Id || mineIds.Contains(x.ProjectId)).ToList();
+            (newly, resolved) = Reporting.Flips(report, prev);
+            // 그날 기록은 있는데 이 범위의 과제가 없었으면 0 건이었던 것이다
+            var (pa, pdl) = Reporting.CountsOn(prev) ?? (0, 0);
+            activeDelta = report.Active - pa;
+            delayedDelta = report.Delayed - pdl;
+        }
+        return report with
+        {
+            DelaySummary = summary, NewDelayed = newly, Resolved = resolved, ActiveDelta = activeDelta, DelayedDelta = delayedDelta,
+            Kind = kind, ChangedOnly = changedOnly, Notice = notice,
+        };
     }
 
     // 여러 과제를 가로지르는 이력의 기간 상한. 넓은 기간을 고르면 사용자가 크기를 정하는 조회가 되므로 막는다
@@ -180,7 +237,15 @@ public class InsightService
 
     // 변경 이력: 기간·과제·사람·종류 조건과 건수·정렬·쪽 나누기는 DB 에서 한다(필요한 열만 투영 — 과제 행 전체를 읽지 않는다).
     // 글자 검색만 투영한 뒤 메모리에서 한다 — SQLite(대소문자 구분)와 SQL Server(정렬 규칙)의 결과가 다르기 때문이다
-    public async Task<HistoryPage> HistoryAsync(HistoryFilter f)
+    // 변경 이력 내려받기의 행 상한 — 화면 조건(기간 상한 1년)을 그대로 쓰되, 한 파일에 담는 행 수는 막는다
+    public const int HistoryExportMax = 20000;
+
+    // 변경 이력 Excel: 화면의 지금 조건 그대로 모든 쪽(상한 HistoryExportMax 행)
+    public Task<HistoryPage> HistoryExportAsync(HistoryFilter f) => HistoryAsync(f, all: true);
+
+    public async Task<HistoryPage> HistoryAsync(HistoryFilter f) => await HistoryAsync(f, all: false);
+
+    private async Task<HistoryPage> HistoryAsync(HistoryFilter f, bool all)
     {
         string? notice = null;
         string? projectTitle = null;
@@ -221,7 +286,20 @@ public class InsightService
         var text = (f.Q ?? "").Trim();
         List<HistoryRow> rows;
         int total, page, pages;
-        if (text.Length == 0)
+        if (all)
+        {
+            IQueryable<Activity> source = text.Length == 0 ? ordered.Take(HistoryExportMax) : ordered;
+            var list = ToRows(await Rows(source).ToListAsync());
+            if (text.Length > 0)
+                list = list.Where(r => r.Project.Contains(text, StringComparison.OrdinalIgnoreCase)
+                                       || r.Text.Contains(text, StringComparison.OrdinalIgnoreCase)
+                                       || (r.Reason ?? "").Contains(text, StringComparison.OrdinalIgnoreCase)).Take(HistoryExportMax).ToList();
+            total = text.Length == 0 ? await q.CountAsync() : list.Count;
+            rows = list;
+            page = 1;
+            pages = 1;
+        }
+        else if (text.Length == 0)
         {
             total = await q.CountAsync();
             pages = Math.Max(1, (int)Math.Ceiling(total / (double)HistoryPageSize));
@@ -420,7 +498,9 @@ public static partial class Reporting
         var asOf = to < today ? to : today;
         var byProject = activities.GroupBy(a => a.ProjectId).ToDictionary(g => g.Key, g => g.OrderBy(a => a.At).ThenBy(a => a.Id).ToList());
         var nextFrom = to.AddDays(1);
-        var nextTo = to.AddDays(7);
+        // 다음 기간 계획은 보고 기간과 같은 길이(주 7일·월·직접 지정)
+        var nextTo = to.AddDays(to.DayNumber - from.DayNumber + 1);
+        var missed = new List<WeeklyMissed>();
         var projects = new List<WeeklyProject>();
         // 그 주가 끝나기 전에 등록한 과제만 (지난 주 보고에 그 뒤 등록한 과제가 끼지 않게)
         var existing = all.Where(p => KoreaClock.KstDate(p.CreatedAt) <= to).ToList();
@@ -468,6 +548,15 @@ public static partial class Reporting
                 }
                 overdue = overdue.OrderByDescending(x => x.LateDays).ThenBy(x => x.Kind).ThenBy(x => x.Title).ToList();
 
+                // 이번 기간 미달: 목표일(작업은 목표 종료일)이 기간 안이고 기준일까지 지났는데 끝나지 않은 단계·작업
+                foreach (var s in Rules.Ordered(p))
+                {
+                    if (Rules.MissedIn(s.TargetDate, s.CompletedDate, null, from, to, asOf, today))
+                        missed.Add(new WeeklyMissed(p.Id, p.Title, "단계", s.Name, p.Owner?.Name, s.TargetDate!.Value));
+                    foreach (var w in s.Works.Where(w => Rules.MissedIn(w.PlanEnd, w.ActualEnd, s.CompletedDate, from, to, asOf, today)))
+                        missed.Add(new WeeklyMissed(p.Id, p.Title, "작업", w.Title, w.Owner?.Name, w.PlanEnd));
+                }
+
                 next.AddRange(Rules.Ordered(p)
                     .Where(s => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value >= nextFrom && s.TargetDate.Value <= nextTo)
                     .Select(s => $"[{s.Name}] 단계 목표 {s.TargetDate!.Value:MM-dd}"));
@@ -485,15 +574,21 @@ public static partial class Reporting
                 Views.StateLabel(state, delay),
                 Rules.ProjectProgress(p), delay, current?.Name, current?.TargetDate,
                 done, changes, comments, next, Views.ProjectChip(state, delay), states, overdue,
-                cal != null && asOf >= today && delay == 0 ? Rules.RiskDays(Rules.RiskReasons(p, today, Rules.ForwardPass(p, cal, today))) : 0));
+                cal != null && asOf >= today && delay == 0 ? Rules.RiskDays(Rules.RiskReasons(p, today, Rules.ForwardPass(p, cal, today))) : 0,
+                Rules.ProgressGain(p, ProgressChanges(acts)),
+                p.Stages.Where(s => Rules.StageLateDaysAsOf(s, asOf, today) > 0).OrderByDescending(s => Rules.StageLateDaysAsOf(s, asOf, today)).FirstOrDefault()?.Name));
         }
 
         projects = projects.OrderByDescending(x => x.DelayDays).ThenBy(x => x.Title).ToList();
+        var summary = projects.Where(x => x.DelayDays > 0 || x.RiskDays > 0)
+            .Select(x => new WeeklyDelayRow(x.Id, x.Title, x.DelayDays > 0 ? x.DelayedStage : x.CurrentStage, x.DelayDays, x.RiskDays, null, x.Owner))
+            .OrderByDescending(x => x.DelayDays).ThenByDescending(x => x.RiskDays).ThenBy(x => x.Project, StringComparer.Ordinal).ToList();
         return new WeeklyReport(from, to, today,
             existing.Count(p => Rules.ActiveAsOf(p, asOf, today)),
             existing.Count(p => Rules.DelayDaysAsOf(p, asOf, today) > 0),
             projects.Sum(x => x.Done.Count), projects.Sum(x => x.Changes.Count), projects,
-            projects.Sum(x => x.ChangeTargets), stateCount, completed, asOf);
+            projects.Sum(x => x.ChangeTargets), stateCount, completed, asOf,
+            nextTo, missed.OrderBy(m => m.Due).ThenBy(m => m.Project, StringComparer.Ordinal).ThenBy(m => m.Title, StringComparer.Ordinal).ToList(), summary);
     }
 
     public static MyView My(List<Project> all, int userId, DateOnly today)

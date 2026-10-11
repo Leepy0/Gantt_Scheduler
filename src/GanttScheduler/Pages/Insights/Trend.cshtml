@@ -1,0 +1,112 @@
+@page
+@model TrendModel
+@using GanttScheduler.Pages.Insights
+@{
+    ViewData["Title"] = "추세";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "trend";
+    var d = Model.Data;
+    var x = d.Points.Select(p => p.Date).ToList();
+    var gap = d.Range == "1y" ? 7 : 1;
+    var counts = new LineChart("과제 수", x, new()
+    {
+        new ChartSeries("진행", "series-active", d.Points.Select(p => (double?)p.Active).ToArray()),
+        new ChartSeries("지연", "series-delayed", d.Points.Select(p => (double?)p.Delayed).ToArray()),
+        new ChartSeries("지연 위험", "series-risk", d.Points.Select(p => (double?)p.Risk).ToArray()),
+    }, "건", gap);
+    var progress = new LineChart("진행 과제 평균 진행률", x, new()
+    {
+        new ChartSeries("평균 진행률", "series-progress", d.Points.Select(p => p.AvgProgress).ToArray()),
+    }, "%", gap, 100);
+    var form = new AnalyticsFilterForm("/Insights/Trend", d.Filter, d.Categories, d.Corporations, d.Orgs, new() { ["range"] = d.Range });
+    var last = d.Points.LastOrDefault();
+    var eq = d.Equipment;
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<div class="toolbar">
+    <div class="seg small" role="group" aria-label="기간">
+        <a asp-page="/Insights/Trend" asp-route-category="@d.Filter.CategoryId" asp-route-corp="@d.Filter.CorporationId" asp-route-org="@d.Filter.OrgUnitId" class="@(d.Range == "12w" ? "on" : "")">12주</a>
+        <a asp-page="/Insights/Trend" asp-route-range="1y" asp-route-category="@d.Filter.CategoryId" asp-route-corp="@d.Filter.CorporationId" asp-route-org="@d.Filter.OrgUnitId" class="@(d.Range == "1y" ? "on" : "")" data-range-year>1년</a>
+    </div>
+    <span class="muted num">@d.From.ToString("yyyy-MM-dd") ~ @d.To.ToString("yyyy-MM-dd")@(d.Range == "1y" ? " · 주마다(그 주 마지막 기록)" : " · 날마다")</span>
+</div>
+<partial name="_AnalyticsFilter" model="form" />
+
+<p class="form-note" data-trend-note><svg class="ic"><use href="#i-clock" /></svg>
+    <span>스냅샷은 하루 한 번 서버가 남긴 그날의 모습이고, 수집을 시작한 @(d.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "날") 이후만 있습니다. 서버가 꺼져 있던 날은 기록이 없어 선을 잇지 않습니다. 지금 상태는 대시보드에서 봅니다.</span></p>
+
+@if (d.Points.Count == 0)
+{
+    <section class="card"><p class="empty" data-trend-empty>이 기간·조건의 스냅샷이 아직 없습니다. 서버가 하루 한 번 기록하므로 내일부터 추이가 쌓입니다.</p></section>
+}
+else
+{
+    <section class="card trend" data-trend>
+        <header class="card-head"><h2>과제 추이</h2><span class="spacer"></span>
+            @if (last != null)
+            {
+                <span class="muted num">@last.Date.ToString("MM-dd") 기준 진행 @last.Active · 지연 @last.Delayed · 위험 @last.Risk · 평균 @(last.AvgProgress?.ToString("0.#") ?? "-")%</span>
+            }
+        </header>
+        <div class="trend-charts">
+            <partial name="_LineChart" model="counts" />
+            <partial name="_LineChart" model="progress" />
+        </div>
+        <details class="trend-table">
+            <summary>표로 보기 (@d.Points.Count)</summary>
+            <div class="table-scroll">
+                <table class="simple-table">
+                    <thead><tr><th>날짜</th><th class="r">진행</th><th class="r">지연</th><th class="r">지연 위험</th><th class="r">평균 진행률</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in d.Points.AsEnumerable().Reverse())
+                        {
+                            <tr><td class="num">@p.Date.ToString("yyyy-MM-dd")</td><td class="r">@p.Active</td><td class="r">@p.Delayed</td><td class="r">@p.Risk</td><td class="r">@(p.AvgProgress?.ToString("0.#") ?? "-")%</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    </section>
+}
+
+<section class="card" data-equipment>
+    <header class="card-head"><h2>법인 × 기기 계획 수량</h2><span class="spacer"></span><span class="muted">과제 기기 내역 합계 · 진행(진행·보류) / 완료, 중단 제외</span></header>
+    @if (eq.Rows.Count == 0)
+    {
+        <p class="empty">기기 내역이 있는 과제가 없습니다.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="simple-table equipment-table">
+                <thead>
+                    <tr><th>법인</th>@foreach (var c in eq.Columns) {<th class="r">@c.Name</th>}<th class="r">합계</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in eq.Rows)
+                    {
+                        <tr data-equipment-row="@r.CorporationId">
+                            <td><b>@r.Corporation</b></td>
+                            @for (var i = 0; i < eq.Columns.Count; i++)
+                            {
+                                <td class="r">@Qty(r.Active[i], r.Done[i])</td>
+                            }
+                            <td class="r"><b>@Qty(r.ActiveTotal, r.DoneTotal)</b></td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr><td><b>합계</b></td>@for (var i = 0; i < eq.Columns.Count; i++) {<td class="r"><b>@Qty(eq.ActiveTotal(i), eq.DoneTotal(i))</b></td>}<td class="r"><b>@Qty(eq.Rows.Sum(r => r.ActiveTotal), eq.Rows.Sum(r => r.DoneTotal))</b></td></tr>
+                </tfoot>
+            </table>
+        </div>
+        <p class="legend"><span>칸: 진행 수량 / 완료 수량</span></p>
+    }
+</section>
+
+@functions {
+    static string Qty(int active, int done) => active == 0 && done == 0 ? "-" : $"{active} / {done}";
+}

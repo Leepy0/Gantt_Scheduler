@@ -14,9 +14,11 @@ public class IndexModel : PageModel
     private readonly ProjectService _projects;
     private readonly IClock _clock;
     private readonly AppDb _db;
+    private readonly AnalyticsService? _analytics;
 
-    public IndexModel(DashboardService dash, ProjectService projects, IClock clock, AppDb db)
+    public IndexModel(DashboardService dash, ProjectService projects, IClock clock, AppDb db, AnalyticsService? analytics = null)
     {
+        _analytics = analytics;
         _dash = dash;
         _projects = projects;
         _clock = clock;
@@ -29,9 +31,11 @@ public class IndexModel : PageModel
     [BindProperty(SupportsGet = true)] public int? Corp { get; set; }
     [BindProperty(SupportsGet = true)] public string? Scope { get; set; }
     [BindProperty(SupportsGet = true)] public string? Sort { get; set; }
+    [BindProperty(SupportsGet = true)] public int? Org { get; set; }
+    public List<PickOption> Orgs { get; private set; } = new();
     public List<Category> Categories { get; private set; } = new();
     public List<Location> Corporations { get; private set; } = new();
-    public DashboardQuery Query => new(Mine, Category, Corp, Scope, Sort);
+    public DashboardQuery Query => new(Mine, Category, Corp, Scope, Sort, Org);
 
     // 이 화면의 다른 조건은 그대로 두고 일부만 바꾼 쿼리 (범위·정렬 단추, KPI·막대 링크가 쓴다)
     public Dictionary<string, string> Route(string? scope = null, string? sort = null)
@@ -40,6 +44,7 @@ public class IndexModel : PageModel
         if (Mine) r["mine"] = "true";
         if (Category != null) r["category"] = Category.Value.ToString();
         if (Corp != null) r["corp"] = Corp.Value.ToString();
+        if (Org != null) r["org"] = Org.Value.ToString();
         // 범위는 늘 적는다 — 쿼리 없는 '/'는 다른 화면에서 온 것으로 보고 기억한 조건을 되살리기 때문에(dashboard.js),
         // 이 화면 안의 링크는 기본 조건이라도 쿼리를 가져야 한다
         r["scope"] = scope ?? Query.ScopeKey;
@@ -59,6 +64,7 @@ public class IndexModel : PageModel
         Categories = (await _db.Categories.AsNoTracking().ToListAsync()).OrderBy(c => c.SortOrder).ThenBy(c => c.Id).ToList();
         Corporations = (await _projects.LocationsAsync()).All.Where(l => l.Level == 1).OrderBy(l => l.SortOrder).ThenBy(l => l.Id).ToList();
         NewCounts = await _projects.NewCountsAsync();
+        if (_analytics != null) Orgs = await _analytics.OrgOptionsAsync();
         AsOf = KoreaClock.ToKst(_clock.UtcNow).ToString("MM-dd HH:mm");
         DataJson = AppJson.Serialize(new
         {

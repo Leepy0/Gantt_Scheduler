@@ -73,7 +73,9 @@
 }
 
 <section class="card flush">
-    <header class="card-head pad"><h2>변경 이력</h2><span class="count">@d.Total</span></header>
+    <header class="card-head pad"><h2>변경 이력</h2><span class="count">@d.Total</span><span class="spacer"></span>
+        @* 지금 조건(기간·과제·사람·구분·검색) 그대로 모든 쪽을 내려받는다 *@
+        <a class="btn small" id="history-excel" asp-page="/Insights/History" asp-page-handler="Excel" asp-all-route-data="Route(1)"><svg class="ic"><use href="#i-download" /></svg>Excel</a></header>
     @if (d.Rows.Count == 0)
     {
         <p class="empty">조건에 맞는 이력이 없습니다. 기간을 넓혀 보세요.</p>

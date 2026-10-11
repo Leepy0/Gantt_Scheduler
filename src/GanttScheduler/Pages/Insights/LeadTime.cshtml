@@ -46,6 +46,7 @@
                     <tr>
                         <th>단계</th><th class="r">표본</th><th class="r">평균(근무일)</th><th class="r">평균(일)</th><th>최소 ~ 최대(일)</th><th class="r">0일 표본</th>
                         <th class="r">지금 목표 대비</th><th class="r">처음 목표 대비</th><th class="r">기준선 대비</th><th class="r">목표 초과</th>
+                        <th class="r" title="지금 이 단계에 있는 진행 과제 · 그중 머문 근무일이 평균 소요일을 넘은 과제">진행 중 · 평균 초과</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -71,10 +72,42 @@
                             <td class="r @(r.AvgOverFirst > 0 ? "t-alarm" : r.AvgOverFirst < 0 ? "t-ok" : "")" data-lead-first>@(r.AvgOverFirst == null ? "-" : Signed(r.AvgOverFirst.Value) + "일")</td>
                             <td class="r @(r.AvgOverBaseline > 0 ? "t-alarm" : r.AvgOverBaseline < 0 ? "t-ok" : "")">@(r.AvgOverBaseline == null ? "-" : Signed(r.AvgOverBaseline.Value) + "일 (" + r.BaselineCount + "건)")</td>
                             <td class="r @(r.LateCount > 0 ? "t-alarm" : "")">@r.LateCount / @r.OverCount</td>
+                            <td class="r lead-active" data-lead-active>
+                                @if (r.Active == 0) {<span class="muted">-</span>}
+                                else
+                                {
+                                    <span>진행 중 @r.Active</span>
+                                    @if (r.ActiveOver > 0)
+                                    {
+                                        <text> · </text><a href="#over-@g.CategoryId" class="warn" data-lead-over>평균 초과 @r.ActiveOver</a>
+                                    }
+                                    else if (r.Count > 0)
+                                    {
+                                        <span class="muted"> · 평균 초과 0</span>
+                                    }
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
             </table>
         </div>
+        @if (g.Over is { Count: > 0 })
+        {
+            @* 단계 병목: 지금 단계에 평균 소요일보다 오래 머문 진행 과제 (리드타임과 같은 기준점·근무일) *@
+            <details class="bottleneck" id="over-@g.CategoryId" data-bottleneck open>
+                <summary>평균보다 오래 머문 진행 과제 @(g.Over.Count)건</summary>
+                <table class="simple-table">
+                    <thead><tr><th>과제</th><th>지금 단계</th><th class="r">머문 근무일</th><th class="r">평균 소요(근무일)</th></tr></thead>
+                    <tbody>
+                        @foreach (var o in g.Over)
+                        {
+                            <tr><td><a asp-page="/Projects/Detail" asp-route-id="@o.ProjectId">@o.Project</a></td><td>@o.Stage</td>
+                                <td class="r"><b>@o.Dwell</b></td><td class="r">@o.Avg.ToString("0.#")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </details>
+        }
     </section>
 }

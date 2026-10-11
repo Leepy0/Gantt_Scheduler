@@ -62,8 +62,71 @@ public record LoadView(List<DateOnly> Weeks, List<int> Available, List<LoadSecti
 // 단계 병목: 진행 과제가 지금 단계에 머문 근무일이 같은 유형·단계의 평균 소요일(근무일)을 넘는 과제
 public record BottleneckItem(int ProjectId, string Project, string Stage, int Dwell, double Avg);
 
+// 보고 확장(S10): 기간 미달 항목, 지연·위험 요약 한 줄(Reason: 최근 사유 — 서비스가 채운다), 직전 기간 대비 바뀐 과제
+public record WeeklyMissed(int ProjectId, string Project, string Kind, string Title, string? Owner, DateOnly Due);
+public record WeeklyDelayRow(int ProjectId, string Project, string? Stage, int DelayDays, int RiskDays, string? Reason, string Owner)
+{
+    public ChipView Chip => DelayDays > 0 ? Views.DueChip(-DelayDays, late: true) : new ChipView("warn", "clock", $"예상 +{RiskDays}일");
+}
+public record WeeklyFlip(int ProjectId, string Project, int DelayDays);
+
 public static partial class Reporting
 {
+    // 직접 지정한 보고 기간의 상한(일) — 넓은 기간은 사용자가 크기를 정하는 조회가 되므로 석 달 남짓으로 막는다
+    public const int MaxReportDays = 92;
+
+    // 보고 기간: 'week'(day 가 속한 월~일, 기본) · 'month'(day 가 속한 달) · 'custom'(from~to, 상한 MaxReportDays 일 — 넘으면 끝에서 상한만큼으로 줄이고 안내)
+    public static (DateOnly From, DateOnly To, string Kind, string? Notice) Period(string? kind, DateOnly? day, DateOnly? from, DateOnly? to, DateOnly today)
+    {
+        var d = day ?? today;
+        switch (kind)
+        {
+            case "month":
+            {
+                var first = new DateOnly(d.Year, d.Month, 1);
+                return (first, first.AddMonths(1).AddDays(-1), "month", null);
+            }
+            case "custom" when from != null || to != null:
+            {
+                var t = to ?? today;
+                var f = from ?? t.AddDays(-6);
+                if (f > t) (f, t) = (t, f);
+                string? notice = null;
+                if (t.DayNumber - f.DayNumber + 1 > MaxReportDays)
+                {
+                    f = t.AddDays(-(MaxReportDays - 1));
+                    notice = $"보고 기간은 {MaxReportDays}일까지라 시작일을 {f:yyyy-MM-dd} 로 맞췄습니다.";
+                }
+                return (f, t, "custom", notice);
+            }
+            default:
+            {
+                var (f, t) = WeekOf(d);
+                return (f, t, "week", null);
+            }
+        }
+    }
+
+    // 진행률 변경 기록(작업 변경 활동의 이전·새 값 — ProjectService.SetProgressValues)만 골라낸다. 값이 없는 옛 기록은 셀 수 없어 뺀다
+    public static IEnumerable<(int WorkId, int Old, int New)> ProgressChanges(IEnumerable<Activity> acts) =>
+        acts.Where(a => a.Type == ActivityType.WorkEdited && a.WorkItemId != null)
+            .Select(a => (a.WorkItemId!.Value, Ok: int.TryParse(a.OldValue, out var o) & int.TryParse(a.NewValue, out var n), Old: o, New: n))
+            .Where(x => x.Ok)
+            .Select(x => (x.Item1, x.Old, x.New));
+
+    // 직전 기간 끝의 스냅샷(prev)과 이번 보고의 지연(기준일 판정)을 견준 새로 지연·지연 해소 과제
+    public static (List<WeeklyFlip> NewDelayed, List<WeeklyFlip> Resolved) Flips(WeeklyReport report, IEnumerable<ProjectSnapshot> prev)
+    {
+        var before = prev.Where(s => s.State == ProjectState.Active).ToDictionary(s => s.ProjectId, s => s.DelayDays);
+        var now = report.Projects.ToDictionary(p => p.Id);
+        var newly = report.Projects.Where(p => p.DelayDays > 0 && before.GetValueOrDefault(p.Id) == 0)
+            .Select(p => new WeeklyFlip(p.Id, p.Title, p.DelayDays)).OrderByDescending(f => f.DelayDays).ThenBy(f => f.Project, StringComparer.Ordinal).ToList();
+        var titles = report.Projects.ToDictionary(p => p.Id, p => p.Title);
+        var resolved = before.Where(kv => kv.Value > 0 && now.TryGetValue(kv.Key, out var p) && p.DelayDays == 0)
+            .Select(kv => new WeeklyFlip(kv.Key, titles[kv.Key], kv.Value)).OrderBy(f => f.Project, StringComparer.Ordinal).ToList();
+        return (newly, resolved);
+    }
+
     // ── 스냅샷 ──────────────────────────────────────────────────────────
 
     // 과제 하나의 그날 모습. 화면 모델(Dashboard.ViewOf — 대시보드와 같은 계산)의 값을 그대로 옮긴다

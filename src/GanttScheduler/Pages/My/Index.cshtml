@@ -1,20 +1,29 @@
 @page
 @model GanttScheduler.Pages.My.IndexModel
 @{
-    ViewData["Title"] = "내 할 일";
+    ViewData["Title"] = Model.ReadOnly ? Model.Name + " 님의 할 일" : "내 할 일";
     ViewData["Nav"] = "my";
     var d = Model.Data;
     var total = d.Late.Count + d.Soon.Count + d.Later.Count;
 }
 
 <div class="page-head">
-    <h1>내 할 일</h1>
+    <h1>@(Model.ReadOnly ? Model.Name + " 님의 할 일" : "내 할 일")</h1>
     <span class="count" id="my-total">@total</span>
     <span class="muted">@Model.Name 님이 담당인 미완료 작업</span>
     <span class="spacer"></span>
-    <a class="btn" asp-page="/My/Notifications"><svg class="ic"><use href="#i-bell" /></svg>알림</a>
+    @if (!Model.ReadOnly)
+    {
+        <a class="btn" asp-page="/My/Notifications"><svg class="ic"><use href="#i-bell" /></svg>알림</a>
+    }
     <button type="button" class="btn no-print" data-print><svg class="ic"><use href="#i-print" /></svg><span class="hide-sm">인쇄</span></button>
 </div>
+
+@if (Model.ReadOnly)
+{
+    <p class="form-note readonly-banner" data-my-readonly><svg class="ic"><use href="#i-user" /></svg>
+        <span>@Model.Name 님의 할 일을 읽기 전용으로 보고 있습니다(분석 &gt; 부하에서 열림). 진행률 갱신은 본인 화면이나 과제 상세에서 합니다. <a asp-page="/Insights/Load">부하로 돌아가기</a></span></p>
+}
 
 @* 새 소식: 내 작업·내 과제·관심 과제·나를 고른 댓글에 다른 사람이 남긴 활동 (그 과제를 마지막으로 본 뒤, 최근 @Rules.NewActivityDays 일).
    자동 밀기·연쇄 이동으로 내 작업 일정이 바뀐 것도 나온다. 누르면 과제 상세의 그 활동으로 간다 *@
@@ -134,6 +143,10 @@ else
 
 <script id="page-data" type="application/json">@Html.Raw(AppJson.Serialize(new { noteMax = Limits.ActivityText }))</script>
 @section Scripts {
-    <script src="~/js/quick.js" asp-append-version="true"></script>
-    <script src="~/js/my.js" asp-append-version="true"></script>
+    @* 읽기 전용 보기에는 바로 갱신(quick·my.js)을 싣지 않는다 — 행은 과제 상세로 가는 링크만 남는다 *@
+    @if (!Model.ReadOnly)
+    {
+        <script src="~/js/quick.js" asp-append-version="true"></script>
+        <script src="~/js/my.js" asp-append-version="true"></script>
+    }
 }

@@ -1010,4 +1010,10 @@ public static class Rules
                 if (w.CoOwnerId is int c && c != w.OwnerId) yield return new LoadAssignment(c, CoOwnerWeight, start, end);
             }
     }
+
+    // 보고 기간 미달: 목표일(작업은 목표 종료일)이 기간 [from, to] 안이고 기준일까지 지났는데 끝나지 않았다(기준일 판정 — DoneBy).
+    // 이번 기간(asOf = 오늘)이면 오늘이 목표인 것은 아직 미달이 아니다. 단계가 끝났으면 그 작업은 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static bool MissedIn(DateOnly? due, DateOnly? done, DateOnly? stageDone, DateOnly from, DateOnly to, DateOnly asOf, DateOnly today) =>
+        due is DateOnly d && d >= from && d <= to && (asOf >= today ? d < today : d <= asOf)
+        && !DoneBy(done, asOf, today) && !DoneBy(stageDone, asOf, today);
 }

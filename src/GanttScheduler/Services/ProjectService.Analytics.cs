@@ -12,6 +12,10 @@ public partial class ProjectService
     // 이 요청에서 고른 사유 분류 — 일정 변경 활동(NewActivity)에 붙인다. 한 메서드 안에서만 유효하도록 using 으로 풀어 준다
     private int? _reasonCode;
 
+    // 사용자 이름 (다른 사람의 할 일 읽기 전용 보기). 없으면 null
+    public Task<string?> UserNameAsync(int userId) =>
+        _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.Name).FirstOrDefaultAsync();
+
     // 사유 시트의 분류 목록 (사용 중인 것만, 관리 화면 순서)
     public async Task<List<ReasonOption>> DelayReasonsAsync() =>
         (await _db.DelayReasons.AsNoTracking().Where(r => r.IsActive).ToListAsync())

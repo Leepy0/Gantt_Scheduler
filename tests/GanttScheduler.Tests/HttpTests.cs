@@ -32,6 +32,8 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         // 파일 로그·백업도 임시 폴더에 (프로젝트 폴더의 App_Data 에 남지 않게)
         Environment.SetEnvironmentVariable("Logs__Path", Path.Combine(_uploads, "logs"));
         Environment.SetEnvironmentVariable("Backup__FilesPath", Path.Combine(_uploads, "backups"));
+        // 일별 진척 스냅샷은 배경에서 DB 에 쓴다 — 시험의 DB 명령 수·데이터를 흔들지 않게 끈다(스냅샷 시험은 서비스로 직접 한다)
+        Environment.SetEnvironmentVariable("Snapshot__Enabled", "false");
         // Program.cs 가 시작하자마자 읽는 설정이라 환경 변수로 넘긴다
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("Seed__Demo", "true");

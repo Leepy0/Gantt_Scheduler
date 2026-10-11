@@ -1,0 +1,142 @@
+@page
+@model ChangesModel
+@using GanttScheduler.Pages.Insights
+@{
+    ViewData["Title"] = "변경 분석";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "changes";
+    var d = Model.Data;
+    var form = new AnalyticsFilterForm("/Insights/Changes", d.Filter, d.Categories, d.Corporations, d.Orgs, new() { ["months"] = d.MonthsCount.ToString() });
+    var monthMax = Math.Max(1, d.ByMonth.Select(m => m.Count).DefaultIfEmpty(0).Max());
+    var slipMax = Math.Max(1, d.ByMonth.Select(m => m.Cumulative).DefaultIfEmpty(0).Max());
+    var paretoMax = Math.Max(1, d.Pareto.Select(p => p.Count).DefaultIfEmpty(0).Max());
+    string Pct(double v, double max) => (v * 100.0 / max).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    string Short(string month) => month[2..].Replace("-", ".");
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<div class="toolbar">
+    <div class="seg small" role="group" aria-label="기간">
+        @foreach (var m in AnalyticsService.ChangeMonthOptions)
+        {
+            <a asp-page="/Insights/Changes" asp-route-months="@m" asp-route-category="@d.Filter.CategoryId" asp-route-corp="@d.Filter.CorporationId" asp-route-org="@d.Filter.OrgUnitId" class="@(d.MonthsCount == m ? "on" : "")">@(m)개월</a>
+        }
+    </div>
+    <span class="muted num">@d.From.ToString("yyyy-MM-dd") ~ @d.To.ToString("yyyy-MM-dd")</span>
+</div>
+<partial name="_AnalyticsFilter" model="form" />
+
+<p class="muted lead-note">일정 변경은 결정 단위로 셉니다 — 연쇄 이동·선행 연동처럼 한 번에 함께 옮겨진 변경은 1건입니다. 밀린 일수는 그 결정이 목표일(작업은 목표 종료일)을 늦춘 가장 큰 달력 일수이고, 처음 정하거나 지운 값(미정)은 세지 않습니다.</p>
+
+<section class="kpis wide" aria-label="변경 요약">
+    <div class="kpi" data-kpi="decisions"><span class="kpi-label">일정 변경 결정</span><span class="kpi-value">@d.Total</span><span class="kpi-sub">@(d.MonthsCount)개월</span></div>
+    <div class="kpi" data-kpi="slip"><span class="kpi-label">누적 밀림</span><span class="kpi-value">@(d.ByMonth.LastOrDefault()?.Cumulative ?? 0)</span><span class="kpi-sub">일 (결정마다 가장 큰 값)</span></div>
+    <div class="kpi" data-kpi="classified"><span class="kpi-label">사유 분류</span><span class="kpi-value">@(d.Total - d.Unclassified)</span><span class="kpi-sub">분류 없음 @(d.Unclassified)건</span></div>
+</section>
+
+<div class="grid-2">
+    <section class="card" data-changes-month>
+        <header class="card-head"><h2>월별 결정·누적 밀림</h2></header>
+        <div class="table-scroll">
+            <table class="simple-table month-table">
+                <thead><tr><th>월</th><th>결정 수</th><th class="r">밀림(일)</th><th>누적 밀림(일)</th></tr></thead>
+                <tbody>
+                    @foreach (var m in d.ByMonth)
+                    {
+                        <tr>
+                            <td class="num">@Short(m.Month)</td>
+                            <td><span class="hbar"><i style="width:@Pct(m.Count, monthMax)"></i></span><span class="num">@m.Count</span></td>
+                            <td class="r">@m.Slip</td>
+                            <td><span class="hbar warn"><i style="width:@Pct(m.Cumulative, slipMax)"></i></span><span class="num">@m.Cumulative</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card" data-pareto>
+        <header class="card-head"><h2>원인 파레토</h2><span class="spacer"></span><span class="muted">사유 분류별 결정 수 · 누적 비율</span></header>
+        @if (d.Pareto.Count == 0)
+        {
+            <p class="empty">분류를 고른 일정 변경이 아직 없습니다. 일정 변경 사유를 적을 때 '사유 분류'를 고르면 여기에 모입니다.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="simple-table pareto-table">
+                    <thead><tr><th>분류</th><th>건수</th><th class="r">비율</th><th class="r">누적</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in d.Pareto)
+                        {
+                            <tr data-pareto-row="@p.Name">
+                                <td>@p.Name@if (!p.Active) {<span class="chip">사용 중지</span>}</td>
+                                <td><span class="hbar"><i style="width:@Pct(p.Count, paretoMax)"></i></span><span class="num">@p.Count</span></td>
+                                <td class="r">@p.Share.ToString("0.#")%</td>
+                                <td class="r">@p.Cumulative.ToString("0.#")%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        @if (d.Unclassified > 0)
+        {
+            <p class="legend"><span>분류 없음 @(d.Unclassified)건은 비율에서 뺐습니다.</span></p>
+        }
+    </section>
+</div>
+
+<section class="card" data-replan-top>
+    <header class="card-head"><h2>재계획 상위 과제</h2><span class="spacer"></span><span class="muted">결정 수 많은 순 · 상위 10</span></header>
+    @if (d.Top.Count == 0)
+    {
+        <p class="empty">이 기간에 일정 변경이 없습니다.</p>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="simple-table">
+                <thead><tr><th>과제</th><th>유형 · 법인</th><th class="r">결정 수</th><th class="r">밀린 일수 합</th></tr></thead>
+                <tbody>
+                    @foreach (var t in d.Top)
+                    {
+                        <tr>
+                            <td><a asp-page="/Projects/Detail" asp-route-id="@t.ProjectId">@t.Project</a></td>
+                            <td class="muted">@t.Category · @t.Corporation</td>
+                            <td class="r"><b>@t.Decisions</b></td>
+                            <td class="r">@t.Slip</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@foreach (var (title, rows, key) in new[] { ("유형별 월간 결정 수", d.ByCategory, "category"), ("법인별 월간 결정 수", d.ByCorporation, "corp") })
+{
+    <section class="card" data-changes-group="@key">
+        <header class="card-head"><h2>@title</h2></header>
+        @if (rows.Count == 0)
+        {
+            <p class="empty">이 기간에 일정 변경이 없습니다.</p>
+        }
+        else
+        {
+            <div class="table-scroll">
+                <table class="simple-table month-grid">
+                    <thead><tr><th>@(key == "corp" ? "법인" : "유형")</th>@foreach (var m in d.Months) {<th class="r num">@Short(m)</th>}<th class="r">합계</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in rows)
+                        {
+                            <tr><td><b>@r.Name</b></td>@foreach (var c in r.Counts) {<td class="r @(c == 0 ? "muted" : "")">@c</td>}<td class="r"><b>@r.Total</b></td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+}
