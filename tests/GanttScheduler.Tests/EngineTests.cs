@@ -45,9 +45,79 @@ public class EngineRulesTests
 
         // 선행이 휴일(토요일)에 시작하면 다음 근무일부터 센다
         Assert.Equal(Day(10, 12), Rules.EarliestStart(new WorkLink { Type = LinkType.SS }, Day(10, 10), Day(10, 14), 1, Cal));
-        // FF 의 끝 기준: 선행 종료일 + 간격, 근무일로 맞춤
+        // FF 의 끝 기준: 선행 종료일 + 간격 근무일. 휴일(토요일) 종료는 직전 근무일(금요일)에 끝난 것으로 본다
         Assert.Equal(Day(10, 16), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF, LagDays = 2 }, Day(10, 14), Cal));
-        Assert.Equal(Day(10, 12), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF }, Day(10, 10), Cal));
+        Assert.Equal(Day(10, 9), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF }, Day(10, 10), Cal));
+        Assert.Equal(Day(10, 12), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF, LagDays = 1 }, Day(10, 10), Cal));
+    }
+
+    [Fact]
+    public void 같이_끝은_선행이_휴일에_끝나도_간격_0_을_간격_1_처럼_보지_않는다()
+    {
+        // 선행 10-14(수)~10-17(토): 일은 금요일 10-16 에 끝난다. 후행은 같은 토요일에 끝남(근무일 2일)
+        var a = W(1, "A", Day(10, 14), Day(10, 17));
+        var b = W(2, "B", Day(10, 15), Day(10, 17));
+        var p = ProjectOf(Day(10, 30), a, b);
+        var link = Link(p, a, b, LinkType.FF);
+
+        Assert.Equal(Day(10, 16), Rules.EarliestEnd(link, a.PlanEnd, Cal));
+        Assert.False(Rules.Violates(link, a, b, Cal));             // 같은 날 끝나도 된다(규칙 11)
+        Assert.Empty(Rules.Reschedule(p, Cal, new[] { a }));       // 밀지 않는다
+        b.PlanEnd = Day(10, 16);                                    // 금요일 종료로 적어도 같다
+        Assert.False(Rules.Violates(link, a, b, Cal));
+
+        // 간격 1 이면 다음 근무일(월 10-19)까지 — 한 근무일만 민다
+        link.LagDays = 1;
+        Assert.Equal(Day(10, 19), Rules.EarliestEnd(link, a.PlanEnd, Cal));
+        Assert.True(Rules.Violates(link, a, b, Cal));
+        var m = Assert.Single(Rules.Reschedule(p, Cal, new[] { a }));
+        Assert.Equal((Day(10, 16), Day(10, 19)), (m.NewStart, m.NewEnd));
+
+        // 여유: 같은 날 끝나는 후행이 단계 목표일(10-16 금)에 꽉 차면 둘 다 여유 0 (음수가 아니다)
+        var c = W(3, "C", Day(10, 14), Day(10, 17));
+        var d = W(4, "D", Day(10, 15), Day(10, 16));
+        var q = ProjectOf(Day(10, 16), c, d);
+        Link(q, c, d, LinkType.FF);
+        var floats = Rules.Floats(q, Cal);
+        Assert.Equal((0, 0), (floats[3], floats[4]));
+
+        // 진행 중 후행의 예상 종료도 늘리지 않는다
+        var e = W(5, "E", Day(10, 14), Day(10, 17));
+        var f = W(6, "F", Day(10, 12), Day(10, 16), actualStart: Day(10, 12));
+        var r = ProjectOf(Day(10, 30), e, f);
+        Link(r, e, f, LinkType.FF);
+        var x = Rules.ForwardPass(r, Cal, Day(10, 12));
+        Assert.Equal(Day(10, 16), x[f].End);
+        Assert.Null(x[f].Cause);
+
+        // 공휴일(10-09 한글날, 금) 종료는 목요일 10-08 에 끝난 것으로 본다
+        var holidays = new WorkCalendar(new[] { Day(10, 9) });
+        Assert.Equal(Day(10, 8), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF }, Day(10, 9), holidays));
+        Assert.Equal(Day(10, 12), Rules.EarliestEnd(new WorkLink { Type = LinkType.FF, LagDays = 1 }, Day(10, 9), holidays));
+        var g = W(7, "G", Day(10, 6), Day(10, 9));
+        var h = W(8, "H", Day(10, 7), Day(10, 8));
+        var s = ProjectOf(Day(10, 30), g, h);
+        Assert.False(Rules.Violates(Link(s, g, h, LinkType.FF), g, h, holidays));
+    }
+
+    [Fact]
+    public void 휴일에_시작하는_작업은_다음_근무일까지는_시작_지연이_아니다()
+    {
+        // 목표 시작 10-10(토) → 실제로는 월요일 10-12 에 시작한다
+        var a = W(1, "A", Day(10, 10), Day(10, 13));
+        var p = ProjectOf(Day(10, 30), a);
+        var x = Rules.ForwardPass(p, Cal, Day(10, 12));
+        Assert.False(x[a].StartLate);
+        Assert.Equal((Day(10, 10), Day(10, 13)), (x[a].Start, x[a].End));
+        Assert.Empty(Rules.ReplanMoves(p, Cal, Day(10, 12), x));    // 칩과 재계획 목록이 같은 기준
+        Assert.Equal("예정", Views.Work(a, Day(10, 12), Cal, stage: p.Stages[0], expected: x[a]).Chip.Text);   // '시작 지연'(노랑) 아님
+        Assert.True(Rules.ForwardPass(p, Cal, Day(10, 13))[a].StartLate);
+
+        // 금요일 공휴일(10-09 한글날) 시작도 같다. 공휴일이 아니면 금요일에 시작했어야 하므로 늦다
+        var b = W(2, "B", Day(10, 9), Day(10, 13));
+        var q = ProjectOf(Day(10, 30), b);
+        Assert.False(Rules.ForwardPass(q, new WorkCalendar(new[] { Day(10, 9) }), Day(10, 12))[b].StartLate);
+        Assert.True(Rules.ForwardPass(q, Cal, Day(10, 12))[b].StartLate);
     }
 
     [Fact]
@@ -380,6 +450,55 @@ public class EngineServiceTests : IClassFixture<TestDb>
     }
 
     [Fact]
+    public async Task 작업_시트_미리보기는_고친_실적으로_밀기_대상을_정해_저장_결과와_같다()
+    {
+        var id = await NewProjectAsync("엔진 미리보기 실적");
+        var stage = (await ViewAsync(id)).Stages[0];
+        var a = await AddWorkAsync(id, stage.Id, "A", Day(10, 12), Day(10, 14));
+        var b = await AddWorkAsync(id, stage.Id, "B", Day(10, 15), Day(10, 16), pre: a);
+
+        // 실적 시작을 넣고 목표 시작을 선행 종료 전으로 당긴다: 시작한 작업은 선행 날짜를 검사하지 않으므로 저장된다
+        PlanPreview started, saved;
+        using (var s = _db.NewScope())
+        {
+            started = await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16), actuals: new PreviewActuals(Day(10, 13), null, 0));
+            saved = await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16));    // 실적을 보내지 않는 경로(끌기)는 저장된 값으로 본다
+        }
+        Assert.Empty(started.Violations);
+        Assert.True(Assert.Single(saved.Violations).Blocking);
+        var view = await ViewAsync(id);
+        using (var s = _db.NewScope())
+            await s.Projects.SaveWorkAsync(Work(b, stage.Id, "B", Day(10, 13), Day(10, 16), reason: "먼저 시작", version: WorkOf(view, "B").Version,
+                actualStart: Day(10, 13)));
+        Assert.Equal(Day(10, 13), WorkOf(await ViewAsync(id), "B").ActualStart);
+
+        // 실적 시작을 지우면 밀기 대상이 되어 선행 날짜를 다시 본다: 미리보기가 막고, 저장도 같은 문구로 거절한다
+        PlanPreview cleared;
+        using (var s = _db.NewScope())
+            cleared = await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16), actuals: new PreviewActuals(null, null, 0));
+        var issue = Assert.Single(cleared.Violations);
+        Assert.True(issue.Blocking);
+        view = await ViewAsync(id);
+        using (var s = _db.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() =>
+                s.Projects.SaveWorkAsync(Work(b, stage.Id, "B", Day(10, 13), Day(10, 16), version: WorkOf(view, "B").Version)));
+            Assert.Equal((issue.Text, issue.Field), (ex.Message, ex.Field));
+        }
+
+        using (var s = _db.NewScope())
+        {
+            // 진행률만 올리면 (접속자의) 오늘 시작으로 본다 — 저장과 같다
+            Assert.Empty((await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16), actuals: new PreviewActuals(null, null, 30, Day(10, 9)))).Violations);
+            // 실적 종료만 넣거나 순서가 뒤집히면 저장과 같은 문구·필드로 막는다
+            Assert.Equal("actualStart", Assert.Single((await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16),
+                actuals: new PreviewActuals(null, Day(10, 16), 0))).Violations).Field);
+            Assert.Equal("actualStart", Assert.Single((await s.Projects.PreviewWorkPlanAsync(b, Day(10, 13), Day(10, 16),
+                actuals: new PreviewActuals(Day(10, 16), Day(10, 13), 0))).Violations).Field);
+        }
+    }
+
+    [Fact]
     public async Task 단계_목표일_미리보기는_연쇄_이동과_작업_포함을_저장과_같게_계산한다()
     {
         var id = await NewProjectAsync("엔진 미리보기 단계");
@@ -617,7 +736,10 @@ public class EngineServiceTests : IClassFixture<TestDb>
         Assert.Equal(("pred", p, "엔진 과제간 선행", ps.Id, true, Day(10, 19)), (mine.Role, mine.ProjectId, mine.ProjectTitle, mine.StageId, mine.Violated, mine.Earliest));
         var theirs = Assert.Single(pv.Stages[0].CrossLinks);
         Assert.Equal(("succ", q, true), (theirs.Role, theirs.ProjectId, theirs.Violated));
-        Assert.Equal((1, 1), (qv.LinkViolations, pv.LinkViolations));
+        Assert.Equal(((int?)1, (int?)1), (qv.LinkViolations, pv.LinkViolations));
+        // 연결을 읽지 않는 목록·대시보드 경로는 0(위반 없음)이 아니라 null(모름)
+        using (var s = _db.NewScope())
+            Assert.Null(Assert.Single(await s.Dashboard.ListAsync(new ProjectFilter(null, null, null, null, false)), v => v.Id == q).LinkViolations);
         Assert.Equal(Day(10, 16), qv.Stages[0].TargetDate);                // 자동으로 옮기지 않는다
         Assert.NotEqual(qUpdated, qv.UpdatedAt);                             // 상대 과제 화면의 변경 띠가 뜨도록
 
@@ -641,7 +763,7 @@ public class EngineServiceTests : IClassFixture<TestDb>
 
         // 후행 목표일을 맞추면 풀린다
         await SetTargetAsync(q, (await ViewAsync(q)).Stages[0], Day(10, 19));
-        Assert.Equal(0, (await ViewAsync(q)).LinkViolations);
+        Assert.Equal((int?)0, (await ViewAsync(q)).LinkViolations);
 
         // 선행 단계 목표일을 늦추는 미리보기: 다른 과제와 새로 어긋남을 (막지 않고) 알린다
         using (var s = _db.NewScope())

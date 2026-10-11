@@ -247,9 +247,9 @@
             var sideIcon = s.status === 'late' ? '<span class="alarm">' + icon('alert') + '</span>'
                 : s.status === 'done' ? '<span class="ok">' + icon('check') + '</span>'
                 : s.forecastOver > 0 ? '<span class="warn">' + icon('clock') + '</span>' : '';
-            // 다른 과제 단계와의 연결이 어긋나면 (서버 판정)
+            // 다른 과제 단계와의 연결이 어긋나면 (서버 판정). 자동으로 밀지 않는 위험 경고라 노랑 — 빨강은 지연 전용(단계 자체가 늦으면 위의 지연 표시)
             var crossBad = (s.crossLinks || []).filter(function (x) { return x.violated; });
-            if (crossBad.length) sideIcon = '<span class="alarm" title="' + esc(crossBad.map(function (x) { return crossLinkText(x) + ' — ' + crossViolationText(x); }).join('\n')) + '">' + icon('link') + '</span>' + sideIcon;
+            if (crossBad.length) sideIcon = '<span class="warn" title="' + esc(crossBad.map(function (x) { return crossLinkText(x) + ' — ' + crossViolationText(x); }).join('\n')) + '">' + icon('link') + '</span>' + sideIcon;
             var sub = s.completedDate ? '완료 ' + D.md(s.completedDate) : s.targetDate ? '목표 ' + D.md(s.targetDate) : '목표일 미정';
             if (s.status === 'late') sub += ' · 지연 ' + s.lateDays + '일';
             if (s.checkTotal) sub += ' · 체크 ' + s.checkDone + '/' + s.checkTotal;
@@ -518,6 +518,7 @@
     // 화면에 쌓인 목록(feedItems)은 최근부터 빈틈없이 이어진다 — 변경 응답이 새 최근 목록을 주면 합쳐서, 더 받아 둔 옛 활동을 잃지 않는다
     var feedItems = [];
     var feedEnd = false;          // 서버가 더 없다고 했다 (그 사이 다른 사람이 활동을 남겨 건수가 늘어도 다시 묻지 않게)
+    var feedGen = 0;              // 목록을 버리고 다시 쌓을 때마다 올린다 — 그 전에 나간 '더 보기' 응답(옛 커서)을 버리려고
     function byRecent(a, b) {
         var d = Date.parse(b.at) - Date.parse(a.at);
         return d !== 0 ? d : b.id - a.id;
@@ -541,6 +542,7 @@
             if (!list.some(function (a) { return known[a.id]; })) {
                 feedItems = [];
                 feedEnd = false;
+                feedGen++;
             }
         }
         mergeActivities(list);
@@ -565,9 +567,13 @@
         var btn = $('feed-more');
         var last = feedItems[feedItems.length - 1];
         if (!last) return;
+        var gen = feedGen;
         await App.busy(btn, async function () {
             try {
                 var r = await fetchActivities(last.id);
+                // 요청하는 사이 목록이 새 최근 목록으로 다시 쌓였으면(mergeRecent) 이 쪽은 옛 목록의 뒤라 붙이면 가운데가 빈다 — 버린다.
+                // 버튼은 그대로 보이므로 다시 누르면 새 목록의 끝부터 이어 받는다
+                if (gen !== feedGen) return;
                 mergeActivities(r.activities);
                 if (!r.more) feedEnd = true;
                 renderFeed();
@@ -640,9 +646,10 @@
             : '후행 단계 목표일이 이 단계가 허용하는 날(' + D.md(x.earliest) + ')보다 이릅니다';
     }
 
+    // 어긋난 연결은 노랑(위험) 칩 — 선행 쪽 과제처럼 자기 일정에는 문제가 없는 단계에도 붙으므로 지연(빨강)으로 보이지 않게 한다
     function crossChips(s) {
         return (s.crossLinks || []).map(function (x) {
-            return '<a class="chip ' + (x.violated ? 'alarm' : '') + '" href="' + App.url('/Projects/Detail?id=' + x.projectId) + '" title="' +
+            return '<a class="chip ' + (x.violated ? 'warn' : '') + '" href="' + App.url('/Projects/Detail?id=' + x.projectId) + '" title="' +
                 esc(crossLinkText(x) + (x.violated ? ' — ' + crossViolationText(x) : '')) + '" data-cross-chip>' +
                 icon(x.violated ? 'alert' : 'link') + esc((x.role === 'pred' ? '선행 ' : '후행 ') + x.projectTitle + ' · ' + x.stageName) + '</a>';
         }).join('');
@@ -1127,12 +1134,17 @@
             '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
     }
 
-    // box: 시트의 [data-feed]. 처음 받을 때는 목록을 바꾸고, '더 보기'는 뒤에 붙인다
+    // box: 시트의 [data-feed]. 처음 받을 때는 목록을 바꾸고, '더 보기'는 뒤에 붙인다.
+    // 처음부터 다시 받을 때(진행 내용 등록 뒤)는 세대(data-gen)를 올린다 — 그 전에 나간 '더 보기' 응답은 옛 목록의 커서라 버린다
     async function loadWorkFeed(box, workId, beforeId) {
-        if (!beforeId) box.innerHTML = '<li class="muted">불러오는 중…</li>';
+        var gen = +(box.dataset.gen || 0) + (beforeId ? 0 : 1);
+        if (!beforeId) {
+            box.dataset.gen = String(gen);
+            box.innerHTML = '<li class="muted">불러오는 중…</li>';
+        }
         try {
             var r = await fetchActivities(beforeId, workId);
-            if (!box.isConnected) return;
+            if (!box.isConnected || +box.dataset.gen !== gen) return;
             var old = box.querySelector('[data-work-more]');
             if (old) old.remove();
             var html = r.activities.map(workFeedItemHtml).join('');
@@ -1141,10 +1153,13 @@
             var last = r.activities[r.activities.length - 1];
             if (r.more && last) {
                 box.insertAdjacentHTML('beforeend', '<li data-work-more><button type="button" class="btn small ghost">' + icon('down') + '더 보기</button></li>');
-                box.querySelector('[data-work-more] button').addEventListener('click', function () { loadWorkFeed(box, workId, last.id); });
+                var moreBtn = box.querySelector('[data-work-more] button');
+                // 응답이 올 때까지 잠근다 — 두 번 누르면 같은 쪽을 두 번 받아 같은 활동이 두 번 붙는다
+                moreBtn.addEventListener('click', function () { return App.busy(moreBtn, function () { return loadWorkFeed(box, workId, last.id); }); });
             }
         } catch (err) {
-            if (!beforeId && box.isConnected) box.innerHTML = '<li class="muted">진행 내용을 불러오지 못했습니다. ' + esc(err.message) + '</li>';
+            if (!box.isConnected || +box.dataset.gen !== gen) return;
+            if (!beforeId) box.innerHTML = '<li class="muted">진행 내용을 불러오지 못했습니다. ' + esc(err.message) + '</li>';
             else App.toast(err.message, 'error');
         }
     }
@@ -1327,18 +1342,21 @@
                 }
                 ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', sync); });
 
-                // 미리보기: 목표 일정·단계·선행 연결이 바뀔 때마다 (근무일 수는 서버 값만 쓴다)
+                // 미리보기: 목표 일정·단계·선행 연결·실적이 바뀔 때마다 (근무일 수는 서버 값만 쓴다).
+                // 실적 시작이 있으면 밀기·선행 검사 대상이 아니므로 시트의 실적·진행률도 보내 저장과 같은 기준으로 보게 한다
                 preview = PlanPreview.attach(form.querySelector('[data-work-preview]'), {
                     url: function () {
                         if (!f.planStart.value || !f.planEnd.value) return null;
                         return previewUrl({
                             kind: 'work', id: isNew ? null : w.id, stageId: +f.stageId.value,
-                            from: f.planStart.value, to: f.planEnd.value, links: linksParam(selectedLinks(form))
+                            from: f.planStart.value, to: f.planEnd.value, links: linksParam(selectedLinks(form)),
+                            actualStart: f.actualStart.value, actualEnd: f.actualEnd.value, progress: String(+f.progress.value || 0),
+                            clientToday: App.localToday()
                         });
                     },
                     onResult: function (r) { planHint.textContent = r && r.workDays != null ? '근무일 ' + r.workDays + '일' : ''; }
                 });
-                ['planStart', 'planEnd'].forEach(function (n) { f[n].addEventListener('input', function () { preview.update(); }); });
+                ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', function () { preview.update(); }); });
                 f.stageId.addEventListener('change', function () { preview.update(); });
                 var preList = form.querySelector('[data-pre-list]');
                 preList.addEventListener('change', function (e) {
@@ -1351,11 +1369,12 @@
                 App.nameHint(f.owner, data.users, isNew ? null : w.owner);
                 App.nameHint(f.coOwner, data.users, isNew ? null : w.coOwner);
                 // '오늘'은 접속한 PC 의 날짜 (해외 법인에서 저녁에 눌러도 그 나라 날짜, App.userToday)
-                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); });
+                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); preview.update(); });
                 form.querySelector('[data-end-today]').addEventListener('click', function () {
                     if (!f.actualStart.value) f.actualStart.value = userToday();
                     f.actualEnd.value = userToday();
                     sync();
+                    preview.update();
                 });
                 sync();
                 refreshUi = function () { sync(); preview.update(); };

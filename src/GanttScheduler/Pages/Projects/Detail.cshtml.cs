@@ -123,18 +123,21 @@ public class DetailModel : PageModel
     // ── 일정 변경 미리보기·재계획·과제 간 연결 ──
 
     // 저장 전 미리보기(저장·활동 없음). kind:
-    //  work   — 작업 목표 일정 from~to (id 없으면 stageId 단계의 새 작업, stageId 가 있으면 그 단계로 옮김, links 는 'id:유형:간격' 을 쉼표로 — '-' 는 연결 없음, 없으면 지금 그대로)
+    //  work   — 작업 목표 일정 from~to (id 없으면 stageId 단계의 새 작업, stageId 가 있으면 그 단계로 옮김, links 는 'id:유형:간격' 을 쉼표로 — '-' 는 연결 없음, 없으면 지금 그대로).
+    //           작업 시트는 실적도 보낸다: progress 가 오면 actualStart·actualEnd(없으면 비운 것)·clientToday 를 저장과 같이 본다
     //  stage  — 단계(id) 목표일 date (cascade: 이후 미완료 단계 연쇄 이동, works: 이후 단계의 미착수 작업 포함)
     //  replan — 과제(id)를 오늘 기준 예측대로 재계획하면 옮겨질 작업
     //  day    — 날짜(date) 하나의 휴일 안내 (새 단계 목표일)
     public async Task<IActionResult> OnGetPreviewAsync(string? kind, int? id, DateOnly? from, DateOnly? to, int? stageId, string? links,
-                                                       DateOnly? date, bool cascade, bool works)
+                                                       DateOnly? date, bool cascade, bool works,
+                                                       DateOnly? actualStart = null, DateOnly? actualEnd = null, int? progress = null, DateOnly? clientToday = null)
     {
         try
         {
+            var actuals = progress is int pr ? new PreviewActuals(actualStart, actualEnd, pr, clientToday) : null;
             var preview = kind switch
             {
-                "work" when from != null && to != null => await _projects.PreviewWorkPlanAsync(id, from.Value, to.Value, stageId, ParseLinks(links)),
+                "work" when from != null && to != null => await _projects.PreviewWorkPlanAsync(id, from.Value, to.Value, stageId, ParseLinks(links), actuals),
                 "work" => throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart"),
                 "stage" when id != null => await _projects.PreviewStageTargetAsync(id.Value, date, cascade, works),
                 "replan" when id != null => await _projects.ReplanPreviewAsync(id.Value),

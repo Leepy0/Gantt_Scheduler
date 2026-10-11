@@ -35,6 +35,10 @@ public record PlanPreview
     public List<string> Notes { get; init; } = new();   // 휴일 안내 (서버 달력 기준)
 }
 
+// 작업 시트의 실적 입력. 미리보기가 저장(SaveWorkAsync)과 같은 실적 시작으로 밀기 대상 여부·선행 검사·예상 종료를 정하게 한다 —
+// 진행률만 올리면 접속자의 오늘(ClientToday) 시작, 실적 종료가 있으면 완료. 비운 실적 시작은 null 로 온다
+public record PreviewActuals(DateOnly? ActualStart, DateOnly? ActualEnd, int Progress, DateOnly? ClientToday = null);
+
 // 재계획 저장: 미리보기에서 본 이동(작업·버전·새 일정)을 함께 보내 그사이 일정이 바뀌었으면 다시 보게 한다
 public record ReplanRow(int WorkId, int? Version, DateOnly PlanStart, DateOnly PlanEnd);
 
@@ -50,8 +54,10 @@ public partial class ProjectService
 
     // 작업의 목표 일정을 from~to 로 바꾸면(선택: 다른 단계로 옮기거나 선행 연결을 바꾸면) 무엇이 달라지는가.
     // workId 가 없으면 stageId 단계에 새로 넣는 작업으로 본다. links 가 null 이면 지금 연결 그대로.
-    // 실적 시작은 저장된 값으로 본다(미리보기는 일정만 다룬다)
-    public async Task<PlanPreview> PreviewWorkPlanAsync(int? workId, DateOnly from, DateOnly to, int? stageId = null, List<LinkInput>? links = null)
+    // actuals 가 null 이면 실적은 저장된 값으로 본다(끌기처럼 일정만 바꾸는 시트). 작업 시트는 고친 실적을 보낸다 —
+    // 실적 시작이 있으면 밀지도 선행 날짜를 검사하지도 않으므로, 저장된 값으로 보면 미리보기와 저장 결과가 어긋난다
+    public async Task<PlanPreview> PreviewWorkPlanAsync(int? workId, DateOnly from, DateOnly to, int? stageId = null, List<LinkInput>? links = null,
+                                                        PreviewActuals? actuals = null)
     {
         var targetStageId = stageId;
         if (workId != null)
@@ -78,14 +84,33 @@ public partial class ProjectService
         if (await DayNoteAsync(to, "종료일") is { } n2) notes.Add(n2);
         var result = new PlanPreview { WorkDays = from <= to ? cal.WorkingDays(from, to) : null, Notes = notes };
 
+        // 실적: 저장과 같은 식으로 정한다(종료가 있으면 100%, 진행률만 올렸으면 오늘 시작)
+        var actualStart = w.ActualStart;
+        var actualEnd = w.ActualEnd;
+        var progress = w.Progress;
+        if (actuals != null)
+        {
+            (actualStart, actualEnd, progress) = (actuals.ActualStart, actuals.ActualEnd, actuals.Progress);
+            if (actualEnd != null) progress = 100;
+            else if (progress > 0 && actualStart == null) actualStart = Rules.UserToday(actuals.ClientToday, today);
+        }
+
         // 저장(SaveWorkAsync)과 같은 순서로 검사한다 — 저장이 거절할 내용이면 막는 문제로 알린다
         List<LinkSpec> wanted;
         var planChanged = isNew || w.PlanStart != from || w.PlanEnd != to;
         try
         {
             if (from > to) throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
-            ValidateWorkDates(p, isNew ? null : w, from, to, w.ActualStart, w.ActualEnd);
-            var movable = Rules.IsMovable(w.ActualStart, stage);
+            if (actuals != null)
+            {
+                if (actuals.ActualEnd != null && actuals.ActualStart == null)
+                    throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
+                if (actuals.ActualStart != null && actuals.ActualEnd != null && actuals.ActualStart.Value > actuals.ActualEnd.Value)
+                    throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
+                Rules.ValidateProgress(actuals.Progress);
+            }
+            ValidateWorkDates(p, isNew ? null : w, from, to, actualStart, actualEnd);
+            var movable = Rules.IsMovable(actualStart, stage);
             var becameMovable = !isNew && movable && !Rules.IsMovable(w, p.Stages.First(s => s.Works.Contains(w)));
             wanted = ValidatePredecessors(p, isNew ? null : w, all, WantedLinks(p, isNew ? null : w, links, null), from, to, movable,
                 planChanged || becameMovable, cal);
@@ -96,6 +121,9 @@ public partial class ProjectService
         }
 
         var before = Snapshot(p, cal, today);
+        // 실적은 '이미 시작한 후행과 어긋남' 비교 전에 넣는다 — 그 안내는 일정 변경이 새로 만든 어긋남만 알린다.
+        // 실적 시작이 생긴 작업은 밀기(Reschedule)에서도 빠진다(저장과 같다)
+        (w.ActualStart, w.ActualEnd, w.Progress) = (actualStart, actualEnd, progress);
         var conflictsBefore = StartedConflicts(p, cal);
 
         // 복사본에 저장과 같은 변경을 적용한다: 단계 이동, 목표 일정, 선행 연결

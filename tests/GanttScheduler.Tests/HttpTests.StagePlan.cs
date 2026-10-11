@@ -68,6 +68,14 @@ public partial class HttpTests
         var rows = (await preview.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows");
         Assert.Equal(Sid(2), rows[2].GetProperty("stageId").GetInt32());
         Assert.Equal(5, rows[2].GetProperty("gapWorkDays").GetInt32());
+        Assert.Equal(JsonValueKind.Null, rows[2].GetProperty("targetNote").ValueKind);   // 근무일 — 휴일 안내 없음
+        // 휴일 목표일이면 그 줄에 서버가 안내 문구를 준다(schedule.js 는 이 값만 그린다)
+        preview = await client.SendAsync(Json(token, "SchedulePreview", new
+        {
+            projectId = id, rows = new[] { new { stageId = Sid(2), targetDate = "2026-10-09", completedDate = (string?)null } },
+        }));
+        rows = (await preview.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("rows");
+        Assert.Equal("목표일이 휴일(한글날)입니다.", rows[2].GetProperty("targetNote").GetString());
         var last = Sid(2);
         using var s = _factory.Db.NewScope();
         Assert.Null((await s.Db.Stages.FirstAsync(x => x.Id == last)).TargetDate);

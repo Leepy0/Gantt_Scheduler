@@ -523,12 +523,14 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.locator(SHEET + ' [data-cross]').scrollIntoViewIfNeeded();
         await shot(page, 'd08e-cross-link', false);
         await closeSheet(page);
-        assert(await stageRow(page, '입고').locator('.alarm use[href="#i-link"]').count() === 1, '간트 이름 칸에 연결 경고가 없음');
+        assert(await stageRow(page, '입고').locator('.warn use[href="#i-link"]').count() === 1, '간트 이름 칸에 연결 경고(노랑)가 없음');
         // 목록 보기의 단계 카드 칩 → 상대 과제로 이동, 상대 과제 단계에도 경고
         await page.click('#view-mode [data-view=list]');
-        await page.locator('#schedule-list .stage-card', { hasText: '입고' }).locator('[data-cross-chip].alarm').click();
+        await page.locator('#schedule-list .stage-card', { hasText: '입고' }).locator('[data-cross-chip].warn').click();
         await page.waitForFunction(() => document.getElementById('p-title') && document.getElementById('p-title').textContent.includes('멕시코 에어컨'));
-        await page.locator('#schedule-list [data-cross-chip].alarm', { hasText: '광주 냉장고 3라인' }).waitFor();
+        await page.locator('#schedule-list [data-cross-chip].warn', { hasText: '광주 냉장고 3라인' }).waitFor();
+        // 연결 위반은 위험(노랑)이다 — 자기 일정에 문제가 없는 선행 쪽 과제에 지연(빨강) 칩이 붙지 않는다
+        assert(await page.locator('#schedule-list [data-cross-chip].alarm').count() === 0, '과제 간 연결 위반이 빨강으로 보임');
         await shot(page, 'd08f-cross-warn');
         await page.click('#view-mode [data-view=gantt]');
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
@@ -1296,6 +1298,60 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert(await page.locator('#history-notice').isVisible(), '기간 상한 안내가 없음');
     });
 
+    await step('작업 시트 진행 내용 더 보기 — 빠르게 두 번 눌러도 같은 활동이 두 번 붙지 않음', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        // 한 작업에 진행 내용을 한 쪽(50건)보다 많이 남기고, 그 작업의 활동 전체 건수를 센다
+        const total = await page.evaluate(async () => {
+            const id = +new URLSearchParams(location.search).get('id');
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const get = async (u) => (await fetch(u, { headers: { Accept: 'application/json' } })).json();
+            const p = (await get('/Projects/Detail?handler=Data&id=' + id)).project;
+            const stage = p.stages.find((s) => s.works.some((w) => w.title === '주행 시험'));
+            const work = stage.works.find((w) => w.title === '주행 시험');
+            for (let i = 0; i < 55; i++) {
+                const res = await fetch('/Projects/Detail?handler=Comment', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                    body: JSON.stringify({ projectId: id, stageId: stage.id, workId: work.id, text: '진행 내용 ' + (i + 1) }),
+                });
+                if (!res.ok) throw new Error('Comment ' + res.status);
+            }
+            let n = 0, before = null;
+            for (;;) {
+                const r = await get('/Projects/Detail?handler=Activities&id=' + id + '&workId=' + work.id + (before ? '&beforeId=' + before : ''));
+                n += r.activities.length;
+                if (!r.more || !r.activities.length) return n;
+                before = r.activities[r.activities.length - 1].id;
+            }
+        });
+        assert(total > 55, '작업 활동이 쌓이지 않음: ' + total);
+        await page.reload();
+        await page.waitForSelector('#gantt .g-row.work');
+        // '더 보기' 응답을 늦춰 두 번째 누름이 응답 전에 들어가게 한다
+        const slow = (u) => u.href.includes('handler=Activities') && u.href.includes('beforeId=');
+        await page.route(slow, async (r) => { await new Promise((res) => setTimeout(res, 600)); await r.continue(); });
+        try {
+            await workRow(page, '주행 시험').locator('.g-name').click();
+            await page.waitForSelector(SHEET + ' [data-work-more] button');
+            const items = () => page.locator(SHEET + ' [data-feed] > li:not([data-work-more])').count();
+            assert((await items()) === 50, '처음에 50건이 아님: ' + (await items()));
+            await page.locator(SHEET + ' [data-work-more] button').dblclick();
+            await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open] [data-feed] > li:not([data-work-more])').length > 50);
+            await page.waitForTimeout(900);     // 두 번째 요청이 나갔다면 그 응답까지 기다린다
+            while (await page.locator(SHEET + ' [data-work-more] button').count()) {
+                const n = await items();
+                await page.locator(SHEET + ' [data-work-more] button').click();
+                await page.waitForFunction((k) => document.querySelectorAll('dialog.sheet[open] [data-feed] > li:not([data-work-more])').length > k, n);
+            }
+            const texts = await page.locator(SHEET + ' [data-feed] > li .feed-text').allInnerTexts();
+            assert(texts.length === total, '모두 받은 뒤 건수가 다름(겹침): ' + texts.length + ' / ' + total);
+            const notes = texts.filter((t) => /^진행 내용 \d+$/.test(t));
+            assert(notes.length === 55 && new Set(notes).size === 55, '같은 진행 내용이 두 번 붙음');
+            await closeSheet(page);
+        } finally {
+            await page.unroute(slow);
+        }
+    });
+
     await step('대시보드 간트 — 과제가 많아도 페이지가 늘지 않고 간트 안에서 스크롤, 머리글은 붙어 있음', async () => {
         // 진행 과제를 잠시 늘린다(복제) — 끝나면 지운다
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
@@ -1802,7 +1858,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
     await step('모바일 과제 간 연결 — 단계 카드의 경고 칩과 단계 시트의 연결 목록', async () => {
         await openProject(m, '광주 냉장고 3라인 AGV 도입');
         await m.click('#view-mode [data-view=list]');
-        await m.waitForSelector('#schedule-list .stage-cross [data-cross-chip].alarm');
+        await m.waitForSelector('#schedule-list .stage-cross [data-cross-chip].warn');
         await noOverflow('과제 간 연결 칩');
         await m.locator('#schedule-list .stage-head', { hasText: '입고' }).click();
         await m.waitForSelector(SHEET + ' [data-cross-list] li.bad');
@@ -1826,6 +1882,9 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await noOverflow('리드타임');
         await m.goto(BASE + '/Insights/History');
         await noOverflow('변경 이력');
+        // 날짜 두 칸이 한 줄을 나눠 써서 날짜가 잘리지 않는다(고르기 칸은 다음 줄)
+        const dates = await m.$$eval('.filter-row input[type=date]', (els) => els.map((e) => ({ w: e.getBoundingClientRect().width, top: e.getBoundingClientRect().top })));
+        assert(dates.length === 2 && dates.every((d) => d.w >= 140) && dates[0].top === dates[1].top, '변경 이력 날짜 칸이 좁음: ' + JSON.stringify(dates));
         await shot(m, 'm10-insights-history');
         await m.goto(BASE + '/Projects/Edit');
         await m.waitForSelector('#edit-form');

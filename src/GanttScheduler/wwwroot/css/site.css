@@ -713,7 +713,8 @@ body.bare .notice { top: 8px; }
     .weekly-dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
     .weekly-dl dd { margin-bottom: 8px; }
     .files > li { padding: 8px 12px; gap: 8px; }
-    .filter-row input[type=date] { flex: 1; min-width: 0; }
+    /* 날짜 두 칸(과 사이의 ~)이 한 줄을 나눠 쓴다. 고르기 칸과 같은 줄에 두면 날짜가 잘려 읽을 수 없어 고르기 칸은 다음 줄로 보낸다 */
+    .filter-row input[type=date] { flex: 1 1 calc(50% - 16px); min-width: 0; }
     .top-update span { display: none; }
     .top-update { width: 32px; height: 32px; justify-content: center; padding: 0; border-radius: 16px; }
     .top-update .ic { width: 16px; height: 16px; }
@@ -894,7 +895,7 @@ dialog.sheet:focus { outline: none; }
 .cross-list > li { display: flex; align-items: center; gap: 8px; min-height: 40px; border-bottom: 1px solid var(--line); }
 .cross-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
 .cross-main a { overflow-wrap: anywhere; }
-.cross-bad { display: flex; align-items: center; gap: 4px; color: var(--alarm); font-size: var(--fs-xs); font-weight: 600; }
+.cross-bad { display: flex; align-items: center; gap: 4px; color: var(--warn); font-size: var(--fs-xs); font-weight: 600; }
 .cross-bad .ic { width: 12px; height: 12px; }
 .cross-add { padding: 12px; border-radius: var(--r-sm); background: var(--surface-2); gap: 12px; }
 .stage-cross { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 8px; }

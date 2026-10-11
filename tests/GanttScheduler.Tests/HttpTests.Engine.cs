@@ -60,6 +60,13 @@ public partial class HttpTests
         Assert.Equal("planStart", issue.GetProperty("field").GetString());
         r = await OkJsonAsync(await client.GetAsync($"/Projects/Detail?handler=Preview&kind=work&id={x.B}&from=2026-10-13&to=2026-10-14&links=-"));
         Assert.Equal(0, r.GetProperty("preview").GetProperty("violations").GetArrayLength());
+        // 작업 시트가 보낸 실적으로 본다: 실적 시작을 넣었거나 진행률만 올렸으면(오늘 시작) 시작한 작업이라 선행 날짜를 검사하지 않는다
+        r = await OkJsonAsync(await client.GetAsync($"/Projects/Detail?handler=Preview&kind=work&id={x.B}&from=2026-10-13&to=2026-10-14&actualStart=2026-10-13&progress=0"));
+        Assert.Equal(0, r.GetProperty("preview").GetProperty("violations").GetArrayLength());
+        r = await OkJsonAsync(await client.GetAsync($"/Projects/Detail?handler=Preview&kind=work&id={x.B}&from=2026-10-13&to=2026-10-14&progress=20&clientToday=2026-10-13"));
+        Assert.Equal(0, r.GetProperty("preview").GetProperty("violations").GetArrayLength());
+        r = await OkJsonAsync(await client.GetAsync($"/Projects/Detail?handler=Preview&kind=work&id={x.B}&from=2026-10-13&to=2026-10-14&progress=0"));
+        Assert.True(r.GetProperty("preview").GetProperty("violations")[0].GetProperty("blocking").GetBoolean());
 
         // 단계 목표일·휴일 안내
         r = await OkJsonAsync(await client.GetAsync($"/Projects/Detail?handler=Preview&kind=stage&id={x.StageId}&date=2027-01-04&cascade=true&works=true"));

@@ -203,9 +203,11 @@ public static class Rules
     public static DateOnly EarliestStart(WorkLink link, WorkItem predecessor, WorkItem successor, WorkCalendar cal) =>
         EarliestStart(link, predecessor.PlanStart, predecessor.PlanEnd, WorkDays(successor, cal), cal);
 
-    // FF 연결에서 후행이 끝날 수 있는 가장 이른 날 (선행 종료일 + 간격, 근무일로 맞춤)
+    // FF 연결에서 후행이 끝날 수 있는 가장 이른 날 (선행 종료일 + 간격 근무일).
+    // 휴일 종료는 FS 처럼 직전 근무일에 끝난 것으로 본다 — 토요일 종료로 적힌 선행은 금요일에 일을 마치므로, 간격 0 이면 후행도
+    // 금요일(또는 같은 토요일)에 끝나도 된다. 다음 근무일로 올리면 간격 0 이 간격 1 처럼 한 근무일 더 민다
     public static DateOnly EarliestEnd(WorkLink link, DateOnly predecessorEnd, WorkCalendar cal) =>
-        cal.NextWorkingDay(cal.AddWorkingDays(predecessorEnd, Math.Max(0, link.LagDays)));
+        cal.AddWorkingDays(cal.EarliestStartAfter(predecessorEnd, link.LagDays), -1);
 
     // start 로 잡은 일정이 가장 이른 날보다 먼저 시작하는가. 휴일 시작은 다음 근무일에 시작하는 것으로 본다
     // (Place 와 같은 기준 — 토요일 시작으로 적힌 작업은 월요일부터 일하므로 금요일에 끝난 선행과 어긋나지 않는다)
@@ -477,7 +479,8 @@ public static class Rules
             var e = EarliestStart(link, pred.Start, pred.End, days, cal);
             if (e > earliest) { earliest = e; why = work; }
         }
-        var startLate = w.PlanStart < today;
+        // 휴일 시작은 다음 근무일에 시작하는 것으로 본다(StartsBefore — 이동 판정과 같은 기준). 토요일 시작으로 적힌 작업이 월요일에 시작하면 늦지 않다
+        var startLate = StartsBefore(w.PlanStart, today, cal);
         if (!StartsBefore(w.PlanStart, earliest, cal)) return new Expected(w.PlanStart, w.PlanEnd, startLate, null);
         var (ns, ne) = Place(earliest, days, cal);
         return new Expected(ns, ne, startLate, why);

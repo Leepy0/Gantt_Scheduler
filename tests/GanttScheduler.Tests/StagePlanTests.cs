@@ -391,6 +391,19 @@ public class StagePlanServiceTests : IClassFixture<TestDb>
         Assert.Equal(Day(11, 1), rows.Single(r => r.StageId == inbound.Id).InboundHint);    // 10-20 + 해상 12일
         Assert.Null(rows.Single(r => r.StageId == inspection.Id).InboundHint);
         Assert.Null((await ViewAsync(id)).Stages[0].TargetDate);                           // 저장하지 않는다
+
+        // 휴일 안내(TargetNote)는 서버 달력으로 그 단계 줄에 붙는다 — 화면은 이 값만 그린다. 근무일·목표일 없음은 null
+        rows = await s.Projects.SchedulePreviewAsync(id, new()
+        {
+            new(st[0].Id, Day(10, 9), null),        // 한글날
+            new(st[1].Id, Day(10, 10), null),       // 토요일
+            new(st[2].Id, Day(10, 12), null),       // 근무일
+        });
+        Assert.Equal(st.Select(x => x.Id), rows.Select(r => r.StageId));
+        Assert.Equal("목표일이 휴일(한글날)입니다.", rows[0].TargetNote);
+        Assert.Equal("목표일이 휴일입니다.", rows[1].TargetNote);
+        Assert.Null(rows[2].TargetNote);
+        Assert.All(rows.Skip(3), r => Assert.Null(r.TargetNote));
     }
 
     [Fact]
