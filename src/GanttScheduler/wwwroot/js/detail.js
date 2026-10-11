@@ -515,8 +515,23 @@
         }).sort(byRecent);
     }
 
+    // 서버가 준 최근 목록을 받아 둔 목록에 합친다. 그 사이 다른 사람이 한 쪽보다 많이 남겼으면 두 목록이 겹치지 않아 가운데가 빈다 —
+    // 그때는 이어지지 않는 옛 목록을 버리고 새 최근 목록부터 다시 쌓는다('더 보기'가 빈틈 없이 이어 받게)
+    function mergeRecent(list) {
+        list = list || [];
+        if (feedItems.length && list.length && list.length < (P.activityTotal || 0)) {
+            var known = {};
+            feedItems.forEach(function (a) { known[a.id] = true; });
+            if (!list.some(function (a) { return known[a.id]; })) {
+                feedItems = [];
+                feedEnd = false;
+            }
+        }
+        mergeActivities(list);
+    }
+
     function renderFeed() {
-        mergeActivities(P.activities);
+        mergeRecent(P.activities);
         var total = Math.max(P.activityTotal || 0, feedItems.length);
         $('activity-count').textContent = total ? String(total) : '';
         $('feed').innerHTML = feedItems.length ? feedItems.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';

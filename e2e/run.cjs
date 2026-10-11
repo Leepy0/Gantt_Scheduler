@@ -1118,13 +1118,46 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length === k, added.total + 1);
         assert((await page.locator('#feed > li .feed-text').first().innerText()).includes('더 보기 뒤 남긴 메모'), '새 메모가 맨 위가 아님');
 
+        // 그 사이 다른 화면이 한 쪽(50건)보다 많이 남기면 변경 응답의 최근 목록이 받아 둔 목록과 겹치지 않는다 —
+        // 가운데가 빈 채 이어 붙이지 않고 최근 목록부터 다시 쌓아, '더 보기'로 빠짐없이 받는지 본다
+        const gap = 52;   // 짝수 번 켜고 꺼서 체크 상태는 그대로
+        await page.evaluate(async (n) => {
+            const id = +new URLSearchParams(location.search).get('id');
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const r = await fetch('/Projects/Detail?handler=Data&id=' + id, { headers: { Accept: 'application/json' } });
+            const p = (await r.json()).project;
+            const check = p.stages.find((x) => !x.completedDate && x.checks.length).checks[0];
+            let done = check.done;
+            for (let i = 0; i < n; i++) {
+                done = !done;
+                const res = await fetch('/Projects/Detail?handler=ToggleCheck', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                    body: JSON.stringify({ id: check.id, done }),
+                });
+                if (!res.ok) throw new Error('ToggleCheck ' + res.status);
+            }
+        }, gap);
+        await page.fill('#comment-text', '빈틈 확인 메모');
+        await page.click('#comment-form button[type=submit]');
+        await page.waitForFunction(() => (document.querySelector('#feed > li .feed-text') || {}).textContent === '빈틈 확인 메모');
+        const expectedTotal = added.total + 1 + gap + 1;
+        assert((await page.locator('#feed > li').count()) === 50, '이어지지 않는 옛 목록이 남음: ' + (await page.locator('#feed > li').count()));
+        assert(await page.locator('#feed-more').isVisible(), '다시 쌓은 뒤 더 보기 단추가 없음');
+        while (await page.locator('#feed-more').isVisible()) {
+            const n = await page.locator('#feed > li').count();
+            await page.click('#feed-more');
+            await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length > k || document.getElementById('feed-more').hidden, n);
+        }
+        assert((await page.locator('#feed > li').count()) === expectedTotal, '빈틈 뒤 모두 받은 건수가 다름: ' + (await page.locator('#feed > li').count()) + ' / ' + expectedTotal);
+        assert((await page.locator('#activity-count').innerText()).trim() === String(expectedTotal), '탭 숫자가 전체 건수가 아님(빈틈 뒤)');
+
         // 이 과제 전체 이력 → 과제 조건이 걸린 변경 이력
         await page.click('#feed-history');
         await page.waitForURL(/\/Insights\/History\?projectId=/);
         await page.waitForSelector('#history-project');
         assert((await page.locator('#history-project').innerText()).includes('광주 냉장고 3라인 AGV 도입'), '과제 조건 표시가 없음');
         const total = +(await page.locator('.card-head .count').innerText());
-        assert(total === added.total + 1, '과제 이력 건수가 다름: ' + total + ' / ' + (added.total + 1));
+        assert(total === expectedTotal, '과제 이력 건수가 다름: ' + total + ' / ' + expectedTotal);
         const titles = await page.locator('.history .history-body > a').allInnerTexts();
         assert(titles.length === 50 && titles.every((t) => t === '광주 냉장고 3라인 AGV 도입'), '다른 과제 이력이 섞임');
         assert((await page.locator('.pager').innerText()).includes('1 / '), '쪽 이동이 없음');
