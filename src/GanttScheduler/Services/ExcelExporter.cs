@@ -405,6 +405,80 @@ public class ExcelExporter
         return Save(wb);
     }
 
+    // ── 가져오기 양식 ─────────────────────────────────────────────────────
+    // 과제·작업 시트는 1행이 머리글이고 2행부터 적는다(ProjectImporter 가 머리글 이름으로 열을 찾는다).
+    // 단계 목표일은 유형마다 단계가 달라 고정 열 대신 '단계명=날짜; 단계명=날짜' 한 칸에 적는다(유형별 시트보다 틀릴 곳이 적다)
+    public byte[] ImportTemplate(ImportLists lists)
+    {
+        const int rows = 300;     // 날짜 서식·목록 고르기를 미리 걸어 두는 줄 수
+        using var wb = NewWorkbook();
+        var c = ProjectService.ImportColumns.Project;
+        var ps = wb.Worksheets.Add(ProjectService.ImportColumns.ProjectSheet);
+        Header(ps, 1, (c[0], 34), (c[1], 14), (c[2], 12), (c[3], 22), (c[4], 10), (c[5], 12), (c[6], 14), (c[7], 30), (c[8], 46));
+        ps.Range(2, 6, rows + 1, 6).Style.DateFormat.Format = "yyyy-mm-dd";
+        ps.Range(2, 1, rows + 1, c.Length).Style.NumberFormat.Format = "@";
+        ps.Range(2, 6, rows + 1, 6).Style.NumberFormat.Format = "yyyy-mm-dd";
+
+        var w = ProjectService.ImportColumns.Work;
+        var ws = wb.Worksheets.Add(ProjectService.ImportColumns.WorkSheet);
+        Header(ws, 1, (w[0], 34), (w[1], 12), (w[2], 30), (w[3], 10), (w[4], 12), (w[5], 12), (w[6], 24));
+        ws.Range(2, 1, rows * 5 + 1, w.Length).Style.NumberFormat.Format = "@";
+        ws.Range(2, 5, rows * 5 + 1, 6).Style.NumberFormat.Format = "yyyy-mm-dd";
+
+        // 목록(참고용): 유형과 단계, 법인, 법인 아래 위치 경로, 사용자
+        var ls = wb.Worksheets.Add(ProjectService.ImportColumns.ListSheet);
+        Header(ls, 1, ("유형", 14), ("단계 (순서대로)", 50), ("", 2), ("법인", 12), ("", 2), ("법인", 12), ("위치 (법인 아래 경로)", 30), ("", 2), ("사용자", 14));
+        for (var i = 0; i < lists.Categories.Count; i++)
+        {
+            ls.Cell(i + 2, 1).Value = lists.Categories[i].Name;
+            ls.Cell(i + 2, 2).Value = string.Join(", ", lists.Categories[i].Stages);
+        }
+        var corps = lists.Locations.Select(l => l.Corporation).Distinct().ToList();
+        for (var i = 0; i < corps.Count; i++) ls.Cell(i + 2, 4).Value = corps[i];
+        for (var i = 0; i < lists.Locations.Count; i++)
+        {
+            ls.Cell(i + 2, 6).Value = lists.Locations[i].Corporation;
+            ls.Cell(i + 2, 7).Value = lists.Locations[i].Path;
+        }
+        for (var i = 0; i < lists.Users.Count; i++) ls.Cell(i + 2, 9).Value = lists.Users[i];
+        // 유형·법인 칸은 목록에서 고르게 한다(오타 방지). 목록이 비어 있으면 걸지 않는다
+        if (lists.Categories.Count > 0)
+            ps.Range(2, 2, rows + 1, 2).CreateDataValidation().List(ls.Range(2, 1, lists.Categories.Count + 1, 1), true);
+        if (corps.Count > 0)
+            ps.Range(2, 3, rows + 1, 3).CreateDataValidation().List(ls.Range(2, 4, corps.Count + 1, 4), true);
+
+        var guide = wb.Worksheets.Add("안내");
+        guide.ShowGridLines = false;
+        guide.Column(1).Width = 16;
+        guide.Column(2).Width = 100;
+        var lines = new (string Key, string Text)[]
+        {
+            ("과제 시트", "한 줄에 과제 하나. 1행 머리글은 지우거나 바꾸지 마세요. 과제명·유형·법인·착수일은 꼭 적습니다."),
+            ("유형", "'목록' 시트의 유형 이름 (칸을 누르면 고를 수 있습니다)."),
+            ("법인 · 위치", "법인 이름과, 그 아래 위치를 '제품군>라인>층' 처럼 > 로 이어 적습니다. 위치를 비우면 법인 전체입니다."),
+            ("담당", "사용자 이름. 비우면 올린 사람입니다. 목록에 없는 이름은 가져올 때 '새로 만들 담당자'로 확인을 받습니다."),
+            ("착수일 · 날짜", "2026-10-12, 2026.10.12, 2026/10/12, 10/12(올해) 모두 됩니다. 날짜 서식 칸이면 그대로 읽습니다."),
+            ("단계 목표일", "'단계명=날짜; 단계명=날짜' 처럼 한 칸에 적습니다. 예) 검토=2026-11-02; 품의=2026-11-16. 적지 않은 단계는 목표일 미정입니다."),
+            ("작업 시트", "선택. 과제명(과제 시트와 같게)·단계명·작업명·담당·목표 시작·목표 종료·선행 작업명. 종료를 비우면 하루짜리 작업입니다."),
+            ("선행 작업명", "같은 과제의 작업 이름(끝나면 시작). 여러 개는 ; 로 나눕니다. 선행이 끝나기 전에 시작하면 오류로 알려 줍니다."),
+            ("템플릿 작업", "작업 시트에 그 과제의 줄이 없으면 유형의 템플릿 작업을 만듭니다. 줄이 있으면 그 줄만으로 만듭니다."),
+            ("가져오기", "올리면 먼저 미리보기로 행·열마다 문제를 보여 줍니다. 문제가 하나라도 있으면 아무것도 등록하지 않습니다. " +
+                         $"한 번에 과제 {ProjectService.MaxImportProjects}줄, 작업 {ProjectService.MaxImportWorks}줄까지."),
+        };
+        guide.Cell(1, 1).Value = "과제 가져오기 양식";
+        guide.Cell(1, 1).Style.Font.Bold = true;
+        guide.Cell(1, 1).Style.Font.FontSize = 16;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            guide.Cell(i + 3, 1).Value = lines[i].Key;
+            guide.Cell(i + 3, 1).Style.Font.Bold = true;
+            guide.Cell(i + 3, 2).Value = lines[i].Text;
+            guide.Cell(i + 3, 2).Style.Alignment.WrapText = true;
+        }
+        ps.SetTabActive();
+        return Save(wb);
+    }
+
     private static string Lines(IEnumerable<string> items) => string.Join("\n", items.Select(x => "· " + x));
 
     // ── 표시 문구 ────────────────────────────────────────────────────────

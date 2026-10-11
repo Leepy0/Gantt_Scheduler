@@ -65,6 +65,7 @@ builder.Services.AddSingleton(_ => new NotifyState(AppPaths.Notify(config, build
 builder.Services.AddScoped<DigestService>();
 builder.Services.AddSingleton<ExcelExporter>();
 builder.Services.AddSingleton<PdfExporter>();
+builder.Services.AddSingleton<ProjectImporter>();
 
 // 자동 업데이트
 var build = AppBuild.FromAssembly();

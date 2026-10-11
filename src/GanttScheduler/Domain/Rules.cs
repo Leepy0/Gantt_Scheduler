@@ -898,4 +898,37 @@ public static class Rules
         if (progress > 0 && actualStart == null) return (progress, UserToday(clientToday, today));
         return (progress, actualStart);
     }
+
+    // ── 유형 템플릿 작업 (과제 등록 때 단계마다 만드는 작업) ──────────────
+    // 단계 시작 기준일은 목표일 초안(DraftTargets)과 같은 기준을 쓴다: 첫 단계는 착수일, 이후 단계는 앞에서 정해진 마지막 목표일의
+    // 다음 근무일(그 단계 기간은 앞 단계 목표일 뒤부터 이 단계 목표일까지). 앞 단계에 목표일이 하나도 없으면 착수일이다
+
+    public const int MaxTemplateOffset = 999;
+    public const int MaxTemplateDuration = 999;
+
+    public static void ValidateTemplateWork(int offsetWorkDays, int durationWorkDays)
+    {
+        if (offsetWorkDays < 0 || offsetWorkDays > MaxTemplateOffset)
+            throw new RuleException($"시작(단계 시작부터)은 0~{MaxTemplateOffset} 근무일로 입력해 주세요.", "offsetWorkDays");
+        if (durationWorkDays < 1 || durationWorkDays > MaxTemplateDuration)
+            throw new RuleException($"기간은 1~{MaxTemplateDuration} 근무일로 입력해 주세요.", "durationWorkDays");
+    }
+
+    // 단계마다 시작 기준일(근무일). targets: 단계 순서대로의 목표일(등록할 때 정한 값, 없으면 초안 — 비어 있을 수 있다)
+    public static List<DateOnly> StageStarts(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    {
+        var result = new List<DateOnly>(targets.Count);
+        var basis = cal.NextWorkingDay(start);
+        foreach (var t in targets)
+        {
+            result.Add(basis);
+            if (t != null) basis = cal.EarliestStartAfter(t.Value, 0);
+        }
+        return result;
+    }
+
+    // 템플릿 작업 하나의 일정: 단계 시작 기준일에서 offset 근무일 뒤에 시작해 duration 근무일
+    public static (DateOnly Start, DateOnly End) PlaceTemplateWork(DateOnly stageStart, int offsetWorkDays, int durationWorkDays, WorkCalendar cal) =>
+        Place(cal.AddWorkingDays(cal.NextWorkingDay(stageStart), Math.Clamp(offsetWorkDays, 0, MaxTemplateOffset)),
+              Math.Clamp(durationWorkDays, 1, MaxTemplateDuration), cal);
 }

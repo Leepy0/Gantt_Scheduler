@@ -109,6 +109,8 @@ public class StageTemplate
     // 기본 기간(근무일): 앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지. 등록 화면의 목표일 초안에만 쓰고
     // 과제에는 복사하지 않는다(초안은 제안일 뿐 목표일은 사람이 정한다 — 규칙 1). 없으면 초안을 비운다
     public int? DefaultWorkDays { get; set; }
+    // 과제를 등록할 때 이 단계에 함께 만들 작업(템플릿 작업). 등록 시점에 복사한다 — 이후 템플릿을 고쳐도 기존 과제는 그대로(규칙 9)
+    public List<TemplateWork> Works { get; set; } = new();
 }
 
 // 단계 템플릿의 기본 체크리스트 — 과제 생성 시 CheckItem 으로 복사된다
@@ -441,4 +443,20 @@ public class DeletedProjectLog
     public string? Reason { get; set; }
     public DateTime PurgedAt { get; set; }
     public string PurgedBy { get; set; } = "";      // 사람 이름, 또는 자동 정리('보관 기간 경과')
+}
+
+// 단계 템플릿 아래의 작업 템플릿. 과제 등록 때 단계마다 작업으로 만든다:
+// 시작 = 단계 시작 기준일(첫 단계는 착수일, 이후는 앞 단계 목표일 다음 근무일)에서 OffsetWorkDays 근무일 뒤, 기간 DurationWorkDays 근무일.
+// 선행은 같은 단계 템플릿 안의 작업만 가리킨다(과제에서는 '끝나면 시작' 연결이 된다)
+public class TemplateWork
+{
+    public int Id { get; set; }
+    public int StageTemplateId { get; set; }
+    public StageTemplate? StageTemplate { get; set; }
+    public string Title { get; set; } = "";
+    public int OffsetWorkDays { get; set; }
+    public int DurationWorkDays { get; set; } = 1;
+    public int? PredecessorTemplateWorkId { get; set; }
+    public TemplateWork? PredecessorTemplateWork { get; set; }
+    public int SortOrder { get; set; }
 }

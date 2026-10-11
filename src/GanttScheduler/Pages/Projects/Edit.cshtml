@@ -102,6 +102,11 @@
             <div id="draft-fields" hidden></div>
             <span class="hint">유형의 단계별 기본 기간(근무일)으로 계산한 초안입니다. 날짜를 고치면 그 뒤 단계는 고친 날짜부터 다시 계산합니다. 비우면 목표일 미정으로 등록됩니다.</span>
         </div>
+        @* 유형 템플릿 작업: 고른 유형에 작업 템플릿이 있을 때만 edit.js 가 보인다(개수 표시) *@
+        <div class="field" id="template-works-field" data-field="templateWorks" hidden>
+            <label class="check"><input type="checkbox" asp-for="Form.TemplateWorks" id="template-works" /><span id="template-works-label">템플릿 작업 함께 만들기</span></label>
+            <span class="hint">단계마다 유형에 정해 둔 작업을 단계 시작일(첫 단계는 착수일, 이후는 앞 단계 목표일 다음 근무일)부터 근무일로 잡아 만듭니다. 담당은 과제 담당입니다.</span>
+        </div>
     }
 
     <div class="form-actions">

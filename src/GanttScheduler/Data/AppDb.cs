@@ -38,6 +38,7 @@ public class AppDb : DbContext
     public DbSet<Baseline> Baselines => Set<Baseline>();
     public DbSet<BaselineItem> BaselineItems => Set<BaselineItem>();
     public DbSet<DeletedProjectLog> DeletedProjectLogs => Set<DeletedProjectLog>();
+    public DbSet<TemplateWork> TemplateWorks => Set<TemplateWork>();
 
     // 휴지통에 있지 않은 과제와 그 활동. 지운 과제는 모든 조회에서 이것으로 뺀다 — 전역 필터(HasQueryFilter)는 섀도 빌드의 가짜 EF 에 없어
     // 조회마다 명시적으로 고른다. 휴지통·영구 삭제·이전 작업만 Projects 를 그대로 쓴다
@@ -300,6 +301,16 @@ public class AppDb : DbContext
             e.Property(x => x.Reason).HasMaxLength(Limits.Reason);
             e.Property(x => x.PurgedBy).HasMaxLength(Limits.UserName).IsRequired();
             e.HasIndex(x => x.PurgedAt);
+        });
+
+        // ── 유형 템플릿 작업 ──
+        b.Entity<TemplateWork>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(Limits.WorkTitle).IsRequired();
+            e.HasOne(x => x.StageTemplate).WithMany(t => t.Works).HasForeignKey(x => x.StageTemplateId).OnDelete(DeleteBehavior.Cascade);
+            // 같은 표를 가리키는 선행은 cascade 를 걸 수 없다(SQL Server 다중 경로). 지울 때는 서비스가 먼저 끊는다.
+            // NoAction: 단계 템플릿 삭제로 함께 지워지는 행끼리의 참조는 문장 끝에 검사되므로 막히지 않는다
+            e.HasOne(x => x.PredecessorTemplateWork).WithMany().HasForeignKey(x => x.PredecessorTemplateWorkId).OnDelete(DeleteBehavior.NoAction);
         });
     }
 }
