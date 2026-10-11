@@ -19,18 +19,7 @@
     var $ = function (id) { return document.getElementById(id); };
     var detailUrl = function (handler) { return App.url('/Projects/Detail?handler=' + handler); };
 
-    // 휴일 표시용(입력 안내). 일정 계산은 서버가 한다
-    var holidays = {};
-    (data.holidays || []).forEach(function (h) { holidays[h.date] = h.name; });
-    function isOff(date) {
-        var w = D.dow(D.num(date));
-        return w === 0 || w === 6 || holidays[date] != null;
-    }
-    function workDays(from, to) {
-        var n = 0;
-        for (var d = D.num(from), end = D.num(to); d <= end; d++) if (!isOff(D.str(d))) n++;
-        return n;
-    }
+    // 근무일 수·휴일 안내·의존 밀기는 서버가 계산한다(미리보기 ?handler=Preview). 화면의 휴일 판정은 간트 음영(gantt.js)에만 쓴다
 
     // 진행 중인 변경 요청 수 — 그동안은 '다른 사용자가 바꿨습니다' 확인을 하지 않는다(내 저장을 남의 변경으로 착각하지 않게)
     var pending = 0;
@@ -234,9 +223,20 @@
                 }
             }
         } else {
-            // 아직 시작 전: 목표 기간을 점선으로, 이미 목표 종료를 넘겼으면 지연 구간 표시
-            bars.push({ from: w.planStart, to: w.planEnd, top: top, h: h, cls: 'ghost', title: '시작 전' });
-            if (w.late) bars.push({ from: D.add(w.planEnd, 1), to: today, top: top, h: h, cls: 'late', title: '지연 ' + w.lateDays + '일' });
+            // 아직 시작 전: 오늘 기준 예상 일정(서버의 전진 계산 — 시작일이 지났거나 선행이 늦어지면 뒤로)을 점선으로.
+            // 예상이 목표보다 늦으면 노랑 점선(위험), 이미 목표 종료를 넘겼으면 그 사이를 지연 구간으로
+            var es = w.expectedStart || w.planStart, ee = w.expectedEnd || w.planEnd;
+            var shifted = es !== w.planStart || ee !== w.planEnd;
+            bars.push({
+                from: es, to: ee, top: top, h: h, cls: 'ghost' + (shifted ? ' fc' : ''),
+                title: shifted
+                    ? '예상 ' + es + ' ~ ' + ee + (w.expectedSlip > 0 ? ' (목표보다 ' + w.expectedSlip + '근무일 늦음)' : '') + (w.startLate ? ' · 시작 지연' : '')
+                    : '시작 전'
+            });
+            if (w.late) {
+                var lateTo = es > today ? today : D.add(es, -1);
+                if (lateTo > w.planEnd) bars.push({ from: D.add(w.planEnd, 1), to: lateTo, top: top, h: h, cls: 'late', title: '지연 ' + w.lateDays + '일' });
+            }
         }
         return bars;
     }
@@ -247,6 +247,9 @@
             var sideIcon = s.status === 'late' ? '<span class="alarm">' + icon('alert') + '</span>'
                 : s.status === 'done' ? '<span class="ok">' + icon('check') + '</span>'
                 : s.forecastOver > 0 ? '<span class="warn">' + icon('clock') + '</span>' : '';
+            // 다른 과제 단계와의 연결이 어긋나면 (서버 판정). 자동으로 밀지 않는 위험 경고라 노랑 — 빨강은 지연 전용(단계 자체가 늦으면 위의 지연 표시)
+            var crossBad = (s.crossLinks || []).filter(function (x) { return x.violated; });
+            if (crossBad.length) sideIcon = '<span class="warn" title="' + esc(crossBad.map(function (x) { return crossLinkText(x) + ' — ' + crossViolationText(x); }).join('\n')) + '">' + icon('link') + '</span>' + sideIcon;
             var sub = s.completedDate ? '완료 ' + D.md(s.completedDate) : s.targetDate ? '목표 ' + D.md(s.targetDate) : '목표일 미정';
             if (s.status === 'late') sub += ' · 지연 ' + s.lateDays + '일';
             if (s.checkTotal) sub += ' · 체크 ' + s.checkDone + '/' + s.checkTotal;
@@ -278,6 +281,7 @@
                 if (w.depViolation) side += '<span class="alarm" title="선행 작업보다 먼저 시작">' + icon('link') + '</span>';
                 else if (w.critical) side += '<span class="warn" title="여유 없음">' + icon('bolt') + '</span>';
                 if (w.late) side += '<span class="alarm">' + icon('alert') + '</span>';
+                else if (w.startLate) side += '<span class="warn" title="시작일이 지났는데 시작하지 않음">' + icon('clock') + '</span>';
                 rows.push({
                     key: 'w' + w.id, cls: 'work', title: w.title, sub: owners(w), height: 42,
                     side: side + '<span>' + w.progress + '%</span>',
@@ -294,7 +298,8 @@
             var to = workById(l.to);
             var from = workById(l.from);
             var cls = to && to.depViolation ? 'bad' : (to && from && to.critical && from.critical ? 'crit' : '');
-            return { from: 'w' + l.from, to: 'w' + l.to, cls: cls };
+            var type = l.type || 'fs';
+            return { from: 'w' + l.from, to: 'w' + l.to, cls: cls, type: type, fromSide: type === 'ss' ? 'start' : 'end', toSide: type === 'ff' ? 'end' : 'start' };
         });
     }
 
@@ -333,11 +338,18 @@
             var warn = s.forecastOver > 0
                 ? '<div class="stage-warn">' + icon('clock') + '작업 기준 예상 종료 ' + D.md(s.forecast) + ' · 목표일보다 ' + s.forecastOver + '일 늦음</div>'
                 : '';
+            var cross = (s.crossLinks || []).length ? '<div class="stage-cross">' + crossChips(s) + '</div>' : '';
             var works = s.works.map(function (w) {
-                var range = '목표 ' + D.md(w.planStart) + '~' + D.md(w.planEnd) + ' (' + w.planWorkDays + '일)' +
+                // 시작 전인데 오늘 기준 예상이 목표와 다르면 함께 보인다 (서버의 전진 계산)
+                var expected = !w.actualStart && !w.closedOn && w.expectedStart && (w.expectedStart !== w.planStart || w.expectedEnd !== w.planEnd)
+                    ? ' · 예상 ' + D.md(w.expectedStart) + '~' + D.md(w.expectedEnd) + (w.expectedSlip > 0 ? ' (+' + w.expectedSlip + '근무일)' : '')
+                    : '';
+                var range = '목표 ' + D.md(w.planStart) + '~' + D.md(w.planEnd) + ' (' + w.planWorkDays + '일)' + expected +
                     (w.actualStart ? ' · 실적 ' + D.md(w.actualStart) + '~' + (w.actualEnd ? D.md(w.actualEnd) : w.closedOn ? '(단계 완료 ' + D.md(w.closedOn) + ')' : '') : '');
                 var who = owners(w);
-                var pre = w.predecessors.map(function (id) { return titles[id]; }).filter(Boolean);
+                var pre = incomingLinks(w.id).map(function (l) {
+                    return titles[l.from] ? titles[l.from] + (l.type !== 'fs' || l.lag ? '(' + linkLabel(l.type, l.lag) + ')' : '') : '';
+                }).filter(Boolean);
                 var chips = workChip(w);
                 if (w.depViolation) chips += chip('alarm', 'link', '선행보다 이름');
                 else if (w.critical) chips += chip('warn', 'bolt', '임계');
@@ -351,7 +363,7 @@
             return '<section class="stage-card ' + s.status + '">' +
                 '<button type="button" class="stage-head" data-stage="' + s.id + '"><h3>' + esc(s.name) + '</h3>' + stageChip(s) +
                 (s.checkTotal ? chip(s.checkDone === s.checkTotal ? 'ok' : '', 'tasks', '체크 ' + s.checkDone + '/' + s.checkTotal) : '') +
-                '<span class="stage-dates">' + dates + '</span></button>' + warn +
+                '<span class="stage-dates">' + dates + '</span></button>' + warn + cross +
                 (works ? '<ul class="work-list">' + works + '</ul>' : '') +
                 '<div class="stage-foot"><button type="button" class="btn small" data-add-work="' + s.id + '">' + icon('plus') + '작업</button></div>' +
                 '</section>';
@@ -379,6 +391,9 @@
         });
         setPressed('show-baseline', showBaseline);
         setPressed('show-links', showLinks);
+        // 재계획: 예측과 목표가 다른 미착수 작업이 있을 때만 (서버가 센 수)
+        $('replan').hidden = !(P.replanCount > 0);
+        $('replan-count').textContent = P.replanCount > 0 ? String(P.replanCount) : '';
         if (tab !== 'schedule') return;      // 숨겨진 상태에서는 폭을 잴 수 없다
         if (isGantt) renderGantt(keepScroll); else renderList();
     }
@@ -487,6 +502,7 @@
         if (type === 'cloned') return ['copy', ''];
         if (type === 'created' || type === 'stageAdded' || type === 'workAdded') return ['plus', ''];
         if (type === 'stageRemoved' || type === 'workRemoved') return ['trash', ''];
+        if (type === 'linkChanged') return ['link', ''];
         return ['edit', ''];
     }
 
@@ -498,10 +514,71 @@
             '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></div></li>';
     }
 
+    // 활동은 서버가 최근 것만 싣는다(P.activities, 전체 건수 P.activityTotal). 나머지는 '더 보기'로 나눠 받는다.
+    // 화면에 쌓인 목록(feedItems)은 최근부터 빈틈없이 이어진다 — 변경 응답이 새 최근 목록을 주면 합쳐서, 더 받아 둔 옛 활동을 잃지 않는다
+    var feedItems = [];
+    var feedEnd = false;          // 서버가 더 없다고 했다 (그 사이 다른 사람이 활동을 남겨 건수가 늘어도 다시 묻지 않게)
+    var feedGen = 0;              // 목록을 버리고 다시 쌓을 때마다 올린다 — 그 전에 나간 '더 보기' 응답(옛 커서)을 버리려고
+    function byRecent(a, b) {
+        var d = Date.parse(b.at) - Date.parse(a.at);
+        return d !== 0 ? d : b.id - a.id;
+    }
+    function mergeActivities(list) {
+        var seen = {};
+        feedItems = (list || []).concat(feedItems).filter(function (a) {
+            if (seen[a.id]) return false;
+            seen[a.id] = true;
+            return true;
+        }).sort(byRecent);
+    }
+
+    // 서버가 준 최근 목록을 받아 둔 목록에 합친다. 그 사이 다른 사람이 한 쪽보다 많이 남겼으면 두 목록이 겹치지 않아 가운데가 빈다 —
+    // 그때는 이어지지 않는 옛 목록을 버리고 새 최근 목록부터 다시 쌓는다('더 보기'가 빈틈 없이 이어 받게)
+    function mergeRecent(list) {
+        list = list || [];
+        if (feedItems.length && list.length && list.length < (P.activityTotal || 0)) {
+            var known = {};
+            feedItems.forEach(function (a) { known[a.id] = true; });
+            if (!list.some(function (a) { return known[a.id]; })) {
+                feedItems = [];
+                feedEnd = false;
+                feedGen++;
+            }
+        }
+        mergeActivities(list);
+    }
+
     function renderFeed() {
-        var list = P.activities || [];
-        $('activity-count').textContent = list.length ? String(list.length) : '';
-        $('feed').innerHTML = list.length ? list.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        mergeRecent(P.activities);
+        var total = Math.max(P.activityTotal || 0, feedItems.length);
+        $('activity-count').textContent = total ? String(total) : '';
+        $('feed').innerHTML = feedItems.length ? feedItems.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        var more = !feedEnd && feedItems.length < total;
+        $('feed-more').hidden = !more;
+        $('feed-status').textContent = total > 0 ? (more ? '최근 ' + feedItems.length + '건 / 전체 ' + total + '건' : '전체 ' + total + '건') : '';
+    }
+
+    // 활동 한 쪽 받기 (beforeId 다음부터). workId 를 주면 그 작업의 활동만
+    function fetchActivities(beforeId, workId) {
+        return App.get(detailUrl('Activities') + '&id=' + P.id + (beforeId ? '&beforeId=' + beforeId : '') + (workId ? '&workId=' + workId : ''));
+    }
+
+    async function moreFeed() {
+        var btn = $('feed-more');
+        var last = feedItems[feedItems.length - 1];
+        if (!last) return;
+        var gen = feedGen;
+        await App.busy(btn, async function () {
+            try {
+                var r = await fetchActivities(last.id);
+                // 요청하는 사이 목록이 새 최근 목록으로 다시 쌓였으면(mergeRecent) 이 쪽은 옛 목록의 뒤라 붙이면 가운데가 빈다 — 버린다.
+                // 버튼은 그대로 보이므로 다시 누르면 새 목록의 끝부터 이어 받는다
+                if (gen !== feedGen) return;
+                mergeActivities(r.activities);
+                if (!r.more) feedEnd = true;
+                renderFeed();
+            } catch (err) { App.toast(err.message, 'error'); }
+        });
     }
 
     function renderAll(keepScroll) {
@@ -519,10 +596,23 @@
             (optional ? ' <span class="opt">선택</span>' : '') + '</span>' + inner + '</label>';
     }
 
-    // 날짜 입력 아래의 안내: 휴일이면 알려 준다
-    function offNote(date, what) {
-        if (!date || !isOff(date)) return '';
-        return what + '이 휴일' + (holidays[date] ? '(' + holidays[date] + ')' : '') + '입니다. ';
+    // 저장 전 미리보기(plan-preview.js) 주소
+    function previewUrl(params) { return PlanPreview.url(params); }
+
+    // 작업 시트의 선행 연결 → 미리보기 인자 ('id:유형:간격' 을 쉼표로, 없으면 '-')
+    function linksParam(links) {
+        return links.length ? links.map(function (l) { return l.predecessorId + ':' + l.type + ':' + l.lagDays; }).join(',') : '-';
+    }
+
+    // 이 작업으로 들어오는 선행 연결 (유형·간격 포함)
+    function incomingLinks(workId) {
+        return (P.links || []).filter(function (l) { return l.to === workId; });
+    }
+
+    var LINK_TYPES = [['fs', '끝나면 시작'], ['ss', '같이 시작'], ['ff', '같이 끝']];
+    function linkLabel(type, lag) {
+        var name = (LINK_TYPES.filter(function (t) { return t[0] === type; })[0] || LINK_TYPES[0])[1];
+        return name + (lag > 0 ? ' +' + lag + '근무일' : '');
     }
 
     // ── 시트: 단계 ──────────────────────────────────────────────────
@@ -540,6 +630,127 @@
     function cascadeWorksHtml(s) {
         if (!s || !s.laterWorks) return '';
         return '<label class="check"><input type="checkbox" name="cascadeWorks" />이후 단계의 미착수 작업 ' + s.laterWorks + '건도 같은 근무일 수만큼 이동</label>';
+    }
+
+    // ── 과제 간 단계 연결 (단계 시트 안) ──────────────────────────────
+    // 다른 과제 단계와 잇는다. 자동으로 밀지 않고 어긋나면 두 과제에 경고만 보인다(서버가 판정 — CrossLinkView.Violated)
+    function crossLinkText(x) {
+        var date = x.stageDate ? (x.stageDone ? '완료 ' : '목표 ') + D.md(x.stageDate) : '날짜 미정';
+        return (x.role === 'pred' ? '선행' : '후행') + ' · ' + x.projectTitle + ' · ' + x.stageName + ' (' + date + (x.lag ? ', 간격 ' + x.lag + '근무일' : '') + ')';
+    }
+
+    function crossViolationText(x) {
+        if (!x.violated) return '';
+        return x.role === 'pred'
+            ? '선행 단계가 허용하는 날(' + D.md(x.earliest) + ')보다 이 단계 목표일이 이릅니다'
+            : '후행 단계 목표일이 이 단계가 허용하는 날(' + D.md(x.earliest) + ')보다 이릅니다';
+    }
+
+    // 어긋난 연결은 노랑(위험) 칩 — 선행 쪽 과제처럼 자기 일정에는 문제가 없는 단계에도 붙으므로 지연(빨강)으로 보이지 않게 한다
+    function crossChips(s) {
+        return (s.crossLinks || []).map(function (x) {
+            return '<a class="chip ' + (x.violated ? 'warn' : '') + '" href="' + App.url('/Projects/Detail?id=' + x.projectId) + '" title="' +
+                esc(crossLinkText(x) + (x.violated ? ' — ' + crossViolationText(x) : '')) + '" data-cross-chip>' +
+                icon(x.violated ? 'alert' : 'link') + esc((x.role === 'pred' ? '선행 ' : '후행 ') + x.projectTitle + ' · ' + x.stageName) + '</a>';
+        }).join('');
+    }
+
+    function crossLinksSectionHtml() {
+        return '<div class="sheet-section" data-cross><h3>다른 과제 단계와 연결 <span class="count" data-cross-count></span></h3>' +
+            '<ul class="cross-list" data-cross-list></ul>' +
+            '<div class="cross-add form" data-cross-add hidden>' +
+            '<label class="field"><span class="label">방향</span><select data-cross-role>' +
+            '<option value="pred">선행 — 그 단계가 끝난 뒤에 이 단계 목표일</option>' +
+            '<option value="succ">후행 — 이 단계가 끝난 뒤에 그 단계 목표일</option></select></label>' +
+            '<label class="field"><span class="label">과제 검색</span><input type="search" data-cross-q maxlength="100" placeholder="과제명 일부" autocomplete="off" /></label>' +
+            '<label class="field" data-field="otherStageId"><span class="label">단계</span><select data-cross-stage></select></label>' +
+            '<label class="field" data-field="lagDays"><span class="label">간격 (근무일)</span><input type="number" data-cross-lag min="0" max="250" step="1" value="0" inputmode="numeric" /></label>' +
+            '<div class="inline-btns"><button type="button" class="btn small primary" data-cross-save>' + icon('link') + '연결</button>' +
+            '<button type="button" class="btn small" data-cross-cancel>취소</button></div></div>' +
+            '<div class="inline-btns" data-cross-open-row><button type="button" class="btn small" data-cross-open>' + icon('link') + '다른 과제 단계에 연결</button></div>' +
+            '<span class="hint">연결해도 일정을 자동으로 옮기지 않습니다. 어긋나면 두 과제의 단계에 경고가 보입니다.</span></div>';
+    }
+
+    // 연결 목록·추가 칸. 입력에 name 을 두지 않는다 — 누르는 즉시 저장되므로 시트의 '작성 중인 내용' 확인 대상이 아니다
+    function bindCrossLinks(form, sheet, sid) {
+        var box = form.querySelector('[data-cross]');
+        var list = box.querySelector('[data-cross-list]');
+        var add = box.querySelector('[data-cross-add]');
+        var q = box.querySelector('[data-cross-q]');
+        var stageSel = box.querySelector('[data-cross-stage]');
+        var timer = null, seq = 0;
+
+        function refresh() {
+            var cur = stageById(sid);
+            var links = cur ? cur.crossLinks || [] : [];
+            box.querySelector('[data-cross-count]').textContent = links.length ? String(links.length) : '';
+            list.innerHTML = links.length ? links.map(function (x) {
+                return '<li' + (x.violated ? ' class="bad"' : '') + '><span class="cross-main">' +
+                    '<a href="' + App.url('/Projects/Detail?id=' + x.projectId) + '">' + esc(crossLinkText(x)) + '</a>' +
+                    (x.violated ? '<span class="cross-bad">' + icon('alert') + esc(crossViolationText(x)) + '</span>' : '') + '</span>' +
+                    '<button type="button" class="btn icon small ghost" data-cross-del="' + x.id + '" aria-label="연결 해제" title="연결 해제">' + icon('x') + '</button></li>';
+            }).join('') : '<li class="muted">연결된 다른 과제 단계가 없습니다.</li>';
+        }
+
+        function search() {
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                var my = ++seq;
+                App.get(detailUrl('LinkTargets') + '&id=' + P.id + '&q=' + encodeURIComponent(q.value.trim())).then(function (r) {
+                    if (my !== seq) return;
+                    stageSel.innerHTML = r.projects.length ? r.projects.map(function (p) {
+                        return '<optgroup label="' + esc(p.title) + '">' + p.stages.map(function (st) {
+                            var d = st.completedDate ? '완료 ' + D.md(st.completedDate) : st.targetDate ? '목표 ' + D.md(st.targetDate) : '목표일 미정';
+                            return '<option value="' + st.id + '">' + esc(p.title + ' · ' + st.name + ' (' + d + ')') + '</option>';
+                        }).join('') + '</optgroup>';
+                    }).join('') : '<option value="">찾은 과제가 없습니다</option>';
+                }, function (err) { sheet.setError(err.message); });
+            }, 300);
+        }
+
+        box.querySelector('[data-cross-open]').addEventListener('click', function () {
+            add.hidden = false;
+            box.querySelector('[data-cross-open-row]').hidden = true;
+            search();
+            q.focus();
+        });
+        box.querySelector('[data-cross-cancel]').addEventListener('click', function () {
+            add.hidden = true;
+            box.querySelector('[data-cross-open-row]').hidden = false;
+            sheet.setError(null);
+        });
+        q.addEventListener('input', search);
+        // 검색 칸에서 Enter 는 시트 저장이 아니라 검색이다
+        q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+        box.querySelector('[data-cross-save]').addEventListener('click', function (e) {
+            var btn = e.currentTarget;
+            App.busy(btn, async function () {
+                try {
+                    await api('AddStageLink', {
+                        stageId: sid, otherStageId: +stageSel.value || 0, role: box.querySelector('[data-cross-role]').value,
+                        lagDays: parseInt(box.querySelector('[data-cross-lag]').value, 10) || 0
+                    });
+                    sheet.setError(null);
+                    add.hidden = true;
+                    box.querySelector('[data-cross-open-row]').hidden = false;
+                    App.toast('다른 과제 단계와 연결했습니다.');
+                } catch (err) { sheet.setError(err.message, err.field); }
+                refresh();
+            });
+        });
+        list.addEventListener('click', function (e) {
+            var del = e.target.closest('[data-cross-del]');
+            if (!del) return;
+            App.busy(del, async function () {
+                try {
+                    await api('RemoveStageLink', { id: +del.dataset.crossDel, projectId: P.id });
+                    sheet.setError(null);
+                    App.toast('연결을 해제했습니다.');
+                } catch (err) { sheet.setError(err.message, err.field); }
+                refresh();
+            });
+        });
+        refresh();
     }
 
     function openStageSheet(s) {
@@ -561,12 +772,16 @@
                 '<span class="muted">검수일 + 해상 운송 ' + P.oceanLeadDays + '일</span>' +
                 '<button type="button" class="btn small" data-apply-hint>적용</button></div>';
         }
+        if (isNew) html += '<div data-target-preview></div>';
         if (!isNew) {
             html += '<div data-reason hidden class="form">' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유"></textarea>') +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
                 cascadeWorksHtml(s) +
                 '</div>';
+            // 저장 전 미리보기: 목표일을 바꾸면 함께 옮겨지는 단계·작업과 예상 종료 전/후 (서버 계산)
+            html += '<div data-target-preview></div>';
+            html += crossLinksSectionHtml();
             html += '<div class="sheet-section" data-field="check"><h3>체크리스트 <span class="count" data-check-count></span></h3>' +
                 '<ul class="check-list" data-checks></ul>' +
                 '<div class="add-inline"><input data-new-check maxlength="200" placeholder="완료 조건 추가" aria-label="체크 항목" />' +
@@ -626,15 +841,32 @@
                 var done = form.elements.completedDate;
                 var future = form.querySelector('[data-future]');
                 var hint = form.querySelector('[data-target-hint]');
+                var f = form.elements;
+                // 목표일을 바꾸면(이미 정한 목표일) 연쇄 이동·작업 포함까지 반영한 미리보기, 처음 정하거나 그대로면 휴일 안내만
+                var preview = PlanPreview.attach(form.querySelector('[data-target-preview]'), {
+                    url: function () {
+                        var v = target.value;
+                        if (!isNew && s.targetDate && v !== s.targetDate) {
+                            return previewUrl({
+                                kind: 'stage', id: sid, date: v || null,
+                                cascade: f.cascade && f.cascade.checked ? 'true' : null,
+                                works: f.cascadeWorks && f.cascadeWorks.checked ? 'true' : null
+                            });
+                        }
+                        return v ? previewUrl({ kind: 'day', date: v }) : null;
+                    },
+                    noMoves: '다른 단계·작업은 옮겨지지 않습니다.'
+                });
 
                 function onTarget() {
-                    var notes = offNote(target.value, '목표일');
+                    var notes = '';
                     if (!isNew && s.baselineDate) {
                         var slip = target.value ? D.diff(target.value, s.baselineDate) : null;
                         notes += '기준선 ' + s.baselineDate + (slip == null ? '' : slip === 0 ? ' (그대로)' : ' (' + signed(slip) + '일)');
                     }
                     hint.textContent = notes;
                     if (reasonBox) reasonBox.hidden = !(s.targetDate && target.value !== s.targetDate);
+                    preview.update();
                 }
                 var closeWorks = form.querySelector('[data-close-works]');
                 function onDone() {
@@ -647,7 +879,9 @@
                 }
 
                 target.addEventListener('input', onTarget);
+                ['cascade', 'cascadeWorks'].forEach(function (n) { if (f[n]) f[n].addEventListener('change', function () { preview.update(); }); });
                 onTarget();
+                if (!isNew) bindCrossLinks(form, sheet, sid);
                 if (done) { done.addEventListener('input', onDone); onDone(); }
                 refreshUi = function () { onTarget(); if (done) onDone(); };
 
@@ -723,10 +957,12 @@
         });
     }
 
-    // 간트에서 단계 목표 막대의 끝을 끌었을 때: 사유를 받아 저장하고, 취소하면 원래대로 되돌린다
+    // 간트에서 단계 목표 막대의 끝을 끌었을 때: 끈 날짜(고칠 수 있음)·연쇄 이동 선택으로 무엇이 옮겨지는지 미리 보이고,
+    // 사유를 받아 저장한다. 취소하면 원래대로 되돌린다
     function openTargetChange(s, newDate) {
         if (!s || newDate === s.targetDate) { renderSchedule(true); return; }
         var later = P.stages.filter(function (x) { return x.sort > s.sort && !x.completedDate && x.targetDate; }).length;
+        var preview = null;
         App.sheet({
             title: '목표일 변경 · ' + s.name,
             draftKey: 'target.' + s.id,
@@ -740,21 +976,46 @@
                 if (cur.completedDate !== s.completedDate) changed.push(cur.completedDate ? '완료 ' + cur.completedDate : '완료 취소');
                 if (changed.length) sheet.conflictNote(null, changed.join(' · '));
                 s = cur;
+                if (preview) preview.now();
                 return CONFLICT;
             },
-            html: '<div class="form-note"><b>' + s.targetDate + ' → ' + newDate + '</b><span class="muted">' + signed(D.diff(newDate, s.targetDate)) + '일</span></div>' +
-                (offNote(newDate, '목표일') ? '<p class="form-warn">' + icon('alert') + '<span>' + offNote(newDate, '목표일') + '</span></p>' : '') +
+            html: '<div class="form-note" data-target-note></div>' +
+                field('targetDate', '바꿀 목표일', '<input type="date" name="targetDate" required value="' + newDate + '" />') +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유" required></textarea>') +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
-                cascadeWorksHtml(s),
+                cascadeWorksHtml(s) +
+                '<div data-target-preview></div>',
             primary: '변경',
-            onOpen: function (form) { form.elements.reason.focus(); },
-            onClose: function (saved) { if (!saved) renderSchedule(true); },
+            onOpen: function (form) {
+                var f = form.elements;
+                var note = form.querySelector('[data-target-note]');
+                preview = PlanPreview.attach(form.querySelector('[data-target-preview]'), {
+                    url: function () {
+                        return previewUrl({
+                            kind: 'stage', id: s.id, date: f.targetDate.value || null,
+                            cascade: f.cascade && f.cascade.checked ? 'true' : null,
+                            works: f.cascadeWorks && f.cascadeWorks.checked ? 'true' : null
+                        });
+                    },
+                    noMoves: '다른 단계·작업은 옮겨지지 않습니다.',
+                    onResult: function (r) {
+                        var shift = r && r.shift != null ? '근무일 ' + signed(r.shift) + '일' : '';
+                        note.innerHTML = '<b>' + (s.targetDate || '미정') + ' → ' + (f.targetDate.value || '미정') + '</b>' + (shift ? '<span class="muted">' + shift + '</span>' : '');
+                    }
+                });
+                note.innerHTML = '<b>' + (s.targetDate || '미정') + ' → ' + newDate + '</b>';
+                f.targetDate.addEventListener('input', function () { preview.update(); });
+                ['cascade', 'cascadeWorks'].forEach(function (n) { if (f[n]) f[n].addEventListener('change', function () { preview.update(); }); });
+                preview.now();
+                f.reason.focus();
+            },
+            onClose: function (saved) { if (preview) preview.stop(); if (!saved) renderSchedule(true); },
             onSubmit: async function (form) {
+                var f = form.elements;
                 await api('SaveStage', {
-                    projectId: P.id, id: s.id, name: s.name, targetDate: newDate, completedDate: s.completedDate,
-                    reason: form.elements.reason.value, cascade: form.elements.cascade ? form.elements.cascade.checked : false,
-                    cascadeWorks: form.elements.cascadeWorks ? form.elements.cascadeWorks.checked : false, version: s.version
+                    projectId: P.id, id: s.id, name: s.name, targetDate: f.targetDate.value || null, completedDate: s.completedDate,
+                    reason: f.reason.value, cascade: f.cascade ? f.cascade.checked : false,
+                    cascadeWorks: f.cascadeWorks ? f.cascadeWorks.checked : false, version: s.version
                 });
                 App.toast('목표일을 변경했습니다.');
             }
@@ -773,10 +1034,10 @@
         return body;
     }
 
-    // 간트에서 작업 목표 막대를 끌었을 때
+    // 간트에서 작업 목표 막대를 끌었을 때: 끈 일정(고칠 수 있음)으로 함께 밀리는 작업·단계 예상 종료를 미리 보이고 사유를 받아 저장한다
     function openPlanChange(w, from, to) {
         if (!w || (from === w.planStart && to === w.planEnd)) { renderSchedule(true); return; }
-        var notes = offNote(from, '시작일') + offNote(to, '종료일');
+        var preview = null;
         App.sheet({
             title: '목표 일정 변경 · ' + w.title,
             draftKey: 'plan.' + w.id,
@@ -786,31 +1047,121 @@
                 sheet.clearConflictNotes();
                 if (cur.planStart !== w.planStart || cur.planEnd !== w.planEnd) sheet.conflictNote(null, '목표 일정 ' + cur.planStart + ' ~ ' + cur.planEnd);
                 w = cur;      // 끌어 온 날짜 말고는 최신 값으로 저장한다
+                if (preview) preview.now();
                 return CONFLICT;
             },
-            html: '<div class="form-note"><b>' + D.md(w.planStart) + ' ~ ' + D.md(w.planEnd) + ' → ' + D.md(from) + ' ~ ' + D.md(to) + '</b>' +
-                '<span class="muted">근무일 ' + w.planWorkDays + '일 → ' + workDays(from, to) + '일</span></div>' +
-                (notes ? '<p class="form-warn">' + icon('alert') + '<span>' + notes + '</span></p>' : '') +
+            html: '<div class="form-note" data-plan-note></div>' +
+                '<div class="field-row">' +
+                field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + from + '" />') +
+                field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + to + '" />') +
+                '</div>' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
-                '<span class="hint">후행 작업이 있으면 아직 시작하지 않은 작업은 함께 밀립니다.</span>',
+                '<div data-plan-preview></div>',
             primary: '변경',
-            onOpen: function (form) { form.elements.reason.focus(); },
-            onClose: function (saved) { if (!saved) renderSchedule(true); },
+            onOpen: function (form) {
+                var f = form.elements;
+                var note = form.querySelector('[data-plan-note]');
+                function head(days) {
+                    note.innerHTML = '<b>' + D.md(w.planStart) + ' ~ ' + D.md(w.planEnd) + ' → ' + D.md(f.planStart.value) + ' ~ ' + D.md(f.planEnd.value) + '</b>' +
+                        '<span class="muted">근무일 ' + w.planWorkDays + '일' + (days != null ? ' → ' + days + '일' : '') + '</span>';
+                }
+                preview = PlanPreview.attach(form.querySelector('[data-plan-preview]'), {
+                    url: function () {
+                        if (!f.planStart.value || !f.planEnd.value) return null;
+                        return previewUrl({ kind: 'work', id: w.id, from: f.planStart.value, to: f.planEnd.value });
+                    },
+                    noMoves: '함께 옮겨지는 다른 작업이 없습니다.',
+                    onResult: function (r) { head(r ? r.workDays : null); }
+                });
+                head(null);
+                ['planStart', 'planEnd'].forEach(function (n) { f[n].addEventListener('input', function () { preview.update(); }); });
+                preview.now();
+                f.reason.focus();
+            },
+            onClose: function (saved) { if (preview) preview.stop(); if (!saved) renderSchedule(true); },
             onSubmit: async function (form) {
-                await api('SaveWork', workPayload(w, { planStart: from, planEnd: to, reason: form.elements.reason.value }));
+                var f = form.elements;
+                await api('SaveWork', workPayload(w, { planStart: f.planStart.value || null, planEnd: f.planEnd.value || null, reason: f.reason.value }));
                 App.toast('목표 일정을 변경했습니다.');
             }
         });
     }
 
-    function workFeedHtml(workId) {
-        var list = (P.activities || []).filter(function (a) { return a.workId === workId; });
-        if (!list.length) return '<li class="muted">아직 기록이 없습니다.</li>';
-        return list.map(function (a) {
-            return '<li><div class="feed-text">' + esc(a.text) + '</div>' +
-                (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
-                '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
-        }).join('');
+    // ── 시트: 오늘 기준 재계획 ──────────────────────────────────────
+    // 예측(오늘·실적·의존 관계로 전파)과 목표가 다른 미착수 작업을 예측대로 옮긴다. 옮겨질 작업을 서버가 계산해 보이고,
+    // 사유 한 번으로 저장한다(작업마다 이력 1건, 같은 묶음). 그사이 일정이 바뀌면(409) 다시 계산해 보인다
+    function openReplanSheet() {
+        var preview = null;
+        App.sheet({
+            title: '재계획 — 오늘 기준 예측으로 옮기기',
+            wide: true,
+            draftKey: 'replan.' + P.id,
+            html: '<p class="hint">시작일이 지났거나 늦어진 선행 작업 때문에 예측 일정이 목표보다 늦은 미착수 작업의 목표 일정을 예측대로 옮깁니다. ' +
+                '진행 중·완료 작업과 단계 목표일은 바꾸지 않습니다.</p>' +
+                '<div data-replan-preview></div>' +
+                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>'),
+            primary: '재계획',
+            onOpen: function (form) {
+                preview = PlanPreview.attach(form.querySelector('[data-replan-preview]'), {
+                    url: function () { return previewUrl({ kind: 'replan', id: P.id }); },
+                    movedTitle: '옮겨질 작업',
+                    noMoves: '예측과 다른 미착수 작업이 없습니다.'
+                });
+                preview.now();
+            },
+            onConflict: function (form, sheet) {
+                sheet.clearConflictNotes();
+                if (preview) preview.now();
+                return '그사이 다른 사용자가 일정을 바꿨습니다. 다시 계산한 목록을 확인한 뒤 다시 저장해 주세요.';
+            },
+            onClose: function () { if (preview) preview.stop(); },
+            onSubmit: async function (form) {
+                var r = preview && preview.result();
+                if (!r || !r.moved.length) { App.toast('옮길 작업이 없습니다.'); return false; }
+                await api('Replan', {
+                    projectId: P.id, reason: form.elements.reason.value, version: P.version,
+                    rows: r.moved.map(function (m) { return { workId: m.id, version: m.version, planStart: m.newStart, planEnd: m.newEnd }; })
+                });
+                App.toast('작업 ' + r.moved.length + '건을 예측 일정으로 옮겼습니다.');
+            }
+        });
+    }
+
+    // 작업 시트의 진행 내용: 그 작업의 활동만 서버에서 따로 받는다(과제 데이터에는 최근 활동 일부만 있다)
+    function workFeedItemHtml(a) {
+        return '<li><div class="feed-text">' + esc(a.text) + '</div>' +
+            (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
+            '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
+    }
+
+    // box: 시트의 [data-feed]. 처음 받을 때는 목록을 바꾸고, '더 보기'는 뒤에 붙인다.
+    // 처음부터 다시 받을 때(진행 내용 등록 뒤)는 세대(data-gen)를 올린다 — 그 전에 나간 '더 보기' 응답은 옛 목록의 커서라 버린다
+    async function loadWorkFeed(box, workId, beforeId) {
+        var gen = +(box.dataset.gen || 0) + (beforeId ? 0 : 1);
+        if (!beforeId) {
+            box.dataset.gen = String(gen);
+            box.innerHTML = '<li class="muted">불러오는 중…</li>';
+        }
+        try {
+            var r = await fetchActivities(beforeId, workId);
+            if (!box.isConnected || +box.dataset.gen !== gen) return;
+            var old = box.querySelector('[data-work-more]');
+            if (old) old.remove();
+            var html = r.activities.map(workFeedItemHtml).join('');
+            if (!beforeId) box.innerHTML = html || '<li class="muted">아직 기록이 없습니다.</li>';
+            else box.insertAdjacentHTML('beforeend', html);
+            var last = r.activities[r.activities.length - 1];
+            if (r.more && last) {
+                box.insertAdjacentHTML('beforeend', '<li data-work-more><button type="button" class="btn small ghost">' + icon('down') + '더 보기</button></li>');
+                var moreBtn = box.querySelector('[data-work-more] button');
+                // 응답이 올 때까지 잠근다 — 두 번 누르면 같은 쪽을 두 번 받아 같은 활동이 두 번 붙는다
+                moreBtn.addEventListener('click', function () { return App.busy(moreBtn, function () { return loadWorkFeed(box, workId, last.id); }); });
+            }
+        } catch (err) {
+            if (!box.isConnected || +box.dataset.gen !== gen) return;
+            if (!beforeId) box.innerHTML = '<li class="muted">진행 내용을 불러오지 못했습니다. ' + esc(err.message) + '</li>';
+            else App.toast(err.message, 'error');
+        }
     }
 
     function openWorkSheet(w, stageId) {
@@ -830,19 +1181,42 @@
                 return '<option value="' + s.id + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + '</option>';
             }).join('');
         }
-        // 선행 작업 후보: 같은 과제의 다른 작업
-        function preListHtml(checkedIds) {
+        // 선행 작업 후보: 같은 과제의 다른 작업. 고른 선행마다 유형(끝나면 시작·같이 시작·같이 끝)과 간격(근무일)을 둔다.
+        // selected: [{predecessorId, type, lagDays}]
+        function preListHtml(selected) {
             var others = allWorks().filter(function (x) { return isNew || x.work.id !== w.id; });
             return others.length
                 ? '<div class="pick-list">' + others.map(function (x) {
-                    var on = checkedIds.indexOf(x.work.id) >= 0;
-                    return '<label class="check"><input type="checkbox" name="pre" value="' + x.work.id + '"' + (on ? ' checked' : '') + ' />' +
-                        '<span>' + esc(x.work.title) + ' <span class="muted">' + esc(x.stage.name) + ' · ~' + D.md(x.work.planEnd) + '</span></span></label>';
+                    var id = x.work.id;
+                    var on = selected.filter(function (l) { return l.predecessorId === id; })[0];
+                    var type = on ? on.type : 'fs';
+                    return '<div class="pre-row" data-pre-row="' + id + '">' +
+                        '<label class="check"><input type="checkbox" name="pre" value="' + id + '"' + (on ? ' checked' : '') + ' />' +
+                        '<span>' + esc(x.work.title) + ' <span class="muted">' + esc(x.stage.name) + ' · ' + D.md(x.work.planStart) + '~' + D.md(x.work.planEnd) + '</span></span></label>' +
+                        '<span class="pre-opts"' + (on ? '' : ' hidden') + '>' +
+                        '<select name="preType.' + id + '" aria-label="' + esc(x.work.title) + ' 의존 유형">' +
+                        LINK_TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === type ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') +
+                        '</select>' +
+                        '<input type="number" name="preLag.' + id + '" min="0" max="250" step="1" inputmode="numeric" value="' + (on ? on.lagDays : 0) + '" aria-label="' + esc(x.work.title) + ' 간격(근무일)" />' +
+                        '<span class="hint">근무일 뒤</span></span></div>';
                 }).join('') + '</div>'
                 : '<span class="hint">다른 작업이 없습니다.</span>';
         }
+        // 지금 시트에서 고른 선행 연결
+        function selectedLinks(form) {
+            return Array.prototype.slice.call(form.querySelectorAll('input[name=pre]:checked')).map(function (x) {
+                var id = +x.value;
+                var type = form.elements['preType.' + id];
+                var lag = form.elements['preLag.' + id];
+                return { predecessorId: id, type: type ? type.value : 'fs', lagDays: Math.max(0, parseInt(lag && lag.value, 10) || 0) };
+            });
+        }
+        function savedLinks(workId) {
+            return incomingLinks(workId).map(function (l) { return { predecessorId: l.from, type: l.type || 'fs', lagDays: l.lag || 0 }; });
+        }
+        var baseLinks = isNew ? [] : savedLinks(w.id);
         var stageOptions = stageOptionsHtml(stage.id);
-        var preHtml = '<div data-pre-list>' + preListHtml(isNew ? [] : w.predecessors) + '</div>';
+        var preHtml = '<div data-pre-list>' + preListHtml(baseLinks) + '</div>';
 
         var status = '';
         if (!isNew) {
@@ -866,7 +1240,10 @@
             '</div><span class="hint" data-plan-hint></span>' +
             (isNew ? '' : '<div data-reason hidden>' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표 일정을 바꾸는 이유"></textarea>') + '</div>') +
-            '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 끝난 다음 근무일부터 시작</span></span>' + preHtml + '</div>' +
+            '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span></span>' + preHtml +
+            '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
+            // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
+            '<div data-work-preview></div>' +
             '<div class="field-row">' +
             field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
             field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
@@ -880,15 +1257,19 @@
             field('note', '메모', '<textarea name="note" rows="2" maxlength="1000">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
 
         if (!isNew) {
-            html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed>' + workFeedHtml(w.id) + '</ul>' +
+            html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
                 '<textarea data-comment data-draft="comment" rows="2" maxlength="1000" placeholder="이 작업의 진행 내용 남기기" aria-label="진행 내용"></textarea>' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button></div></div>';
         }
 
         // 동시 수정 뒤 '다른 사용자가 바꾼 값' 표시용 이름
-        function titlesOf(ids) {
-            return (ids || []).map(function (id) { var x = workById(id); return x ? x.title : ''; }).filter(Boolean).join(', ') || '없음';
+        function linksText(links) {
+            return (links || []).map(function (l) {
+                var x = workById(l.predecessorId);
+                return x ? x.title + '(' + linkLabel(l.type, l.lagDays) + ')' : '';
+            }).filter(Boolean).join(', ') || '없음';
         }
+        var preview = null;
 
         App.sheet({
             title: isNew ? '작업 추가' : '작업 · ' + w.title,
@@ -915,14 +1296,18 @@
                 mergeField(sheet, f.actualEnd, 'actualEnd', w.actualEnd, cur.actualEnd, cur.actualEnd || '없음');
                 mergeField(sheet, f.progress, 'progress', w.progress, cur.progress, cur.progress + '%');
                 mergeField(sheet, f.note, 'note', w.note, cur.note);
-                // 선행 작업(체크 상자 묶음)도 같은 방법: 내가 고르지 않았으면 최신 선행으로 맞춘다.
+                // 선행 연결(체크 상자·유형·간격 묶음)도 같은 방법: 내가 고치지 않았으면 최신 선행으로 맞춘다.
                 // 후보 목록은 최신 과제로 다시 그린다 — 시트를 연 뒤 생긴 작업이 선행으로 걸렸으면 그 상자가 있어야 다시 저장해도 연결이 남는다
-                var key = function (ids) { return (ids || []).slice().sort(function (a, b) { return a - b; }).join(','); };
-                var mine = Array.prototype.slice.call(form.querySelectorAll('input[name=pre]:checked')).map(function (x) { return +x.value; });
-                var untouched = key(mine) === key(w.predecessors);
-                var keep = (untouched ? cur.predecessors : mine).filter(function (id) { return !!workById(id); });   // 삭제된 작업은 뺀다
+                var key = function (links) {
+                    return (links || []).map(function (l) { return l.predecessorId + ':' + l.type + ':' + l.lagDays; }).sort().join(',');
+                };
+                var mine = selectedLinks(form);
+                var latest = savedLinks(cur.id);
+                var untouched = key(mine) === key(baseLinks);
+                var keep = (untouched ? latest : mine).filter(function (l) { return !!workById(l.predecessorId); });   // 삭제된 작업은 뺀다
                 form.querySelector('[data-pre-list]').innerHTML = preListHtml(keep);
-                if (key(w.predecessors) !== key(cur.predecessors)) sheet.conflictNote('predecessors', titlesOf(cur.predecessors), untouched);
+                if (key(baseLinks) !== key(latest)) sheet.conflictNote('predecessors', linksText(latest), untouched);
+                baseLinks = latest;
                 w = cur;
                 refreshUi();
                 return CONFLICT;
@@ -953,25 +1338,46 @@
                     out.textContent = f.progress.value + '%';
                     var now = userToday();
                     future.hidden = !((f.actualStart.value && f.actualStart.value > now) || (f.actualEnd.value && f.actualEnd.value > now));
-                    if (reasonBox) reasonBox.hidden = !(f.planStart.value !== w.planStart || f.planEnd.value !== w.planEnd);
-                    var hint = '';
-                    if (f.planStart.value && f.planEnd.value && f.planStart.value <= f.planEnd.value) {
-                        hint = '근무일 ' + workDays(f.planStart.value, f.planEnd.value) + '일. ';
-                    }
-                    planHint.textContent = hint + offNote(f.planStart.value, '시작일') + offNote(f.planEnd.value, '종료일');
+                    if (reasonBox) reasonBox.hidden = isNew || !(f.planStart.value !== w.planStart || f.planEnd.value !== w.planEnd);
                 }
                 ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', sync); });
+
+                // 미리보기: 목표 일정·단계·선행 연결·실적이 바뀔 때마다 (근무일 수는 서버 값만 쓴다).
+                // 실적 시작이 있으면 밀기·선행 검사 대상이 아니므로 시트의 실적·진행률도 보내 저장과 같은 기준으로 보게 한다
+                preview = PlanPreview.attach(form.querySelector('[data-work-preview]'), {
+                    url: function () {
+                        if (!f.planStart.value || !f.planEnd.value) return null;
+                        return previewUrl({
+                            kind: 'work', id: isNew ? null : w.id, stageId: +f.stageId.value,
+                            from: f.planStart.value, to: f.planEnd.value, links: linksParam(selectedLinks(form)),
+                            actualStart: f.actualStart.value, actualEnd: f.actualEnd.value, progress: String(+f.progress.value || 0),
+                            clientToday: App.localToday()
+                        });
+                    },
+                    onResult: function (r) { planHint.textContent = r && r.workDays != null ? '근무일 ' + r.workDays + '일' : ''; }
+                });
+                ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', function () { preview.update(); }); });
+                f.stageId.addEventListener('change', function () { preview.update(); });
+                var preList = form.querySelector('[data-pre-list]');
+                preList.addEventListener('change', function (e) {
+                    var box = e.target.closest('input[name=pre]');
+                    if (box) box.closest('.pre-row').querySelector('.pre-opts').hidden = !box.checked;
+                    preview.update();
+                });
+                preList.addEventListener('input', function (e) { if (e.target.type === 'number') preview.update(); });
+                preview.now();
                 App.nameHint(f.owner, data.users, isNew ? null : w.owner);
                 App.nameHint(f.coOwner, data.users, isNew ? null : w.coOwner);
                 // '오늘'은 접속한 PC 의 날짜 (해외 법인에서 저녁에 눌러도 그 나라 날짜, App.userToday)
-                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); });
+                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); preview.update(); });
                 form.querySelector('[data-end-today]').addEventListener('click', function () {
                     if (!f.actualStart.value) f.actualStart.value = userToday();
                     f.actualEnd.value = userToday();
                     sync();
+                    preview.update();
                 });
                 sync();
-                refreshUi = sync;
+                refreshUi = function () { sync(); preview.update(); };
 
                 var addComment = form.querySelector('[data-add-comment]');
                 if (addComment) {
@@ -984,16 +1390,17 @@
                                 box.value = '';
                                 box.defaultValue = '';
                                 sheet.saveDraft();
-                                form.querySelector('[data-feed]').innerHTML = workFeedHtml(w.id);
+                                await loadWorkFeed(form.querySelector('[data-feed]'), w.id);
                                 sheet.setError(null);
                             } catch (err) { sheet.setError(err.message, err.field); }
                         });
                     });
                 }
+                if (!isNew) loadWorkFeed(form.querySelector('[data-feed]'), w.id);
             },
+            onClose: function () { if (preview) preview.stop(); },
             onSubmit: async function (form) {
                 var f = form.elements;
-                var pre = Array.prototype.slice.call(form.querySelectorAll('input[name=pre]:checked')).map(function (x) { return +x.value; });
                 await api('SaveWork', {
                     id: isNew ? null : w.id,
                     stageId: +f.stageId.value,
@@ -1008,7 +1415,7 @@
                     note: f.note.value,
                     reason: f.reason ? f.reason.value : null,
                     version: isNew ? null : w.version,
-                    predecessors: pre,
+                    links: selectedLinks(form),
                     clientToday: App.localToday()
                 });
                 App.toast(isNew ? '작업을 추가했습니다.' : '작업을 저장했습니다.');
@@ -1151,11 +1558,12 @@
 
     $('go-today').addEventListener('click', function () { if (gantt) gantt.scrollToToday(); });
     $('add-stage').addEventListener('click', function () { openStageSheet(null); });
+    $('replan').addEventListener('click', openReplanSheet);
     // 단계 일정 표: 모든 단계의 목표일·완료일을 한 시트에서 고친다 (schedule.js)
     $('edit-schedule').addEventListener('click', function () {
         StageSchedule.open({
             project: function () { return P; }, api: api, previewUrl: detailUrl('SchedulePreview'), mergeField: mergeField, conflict: CONFLICT,
-            isOff: isOff, holidays: holidays, userToday: userToday
+            userToday: userToday
         });
     });
     $('add-work').addEventListener('click', function () {
@@ -1202,6 +1610,8 @@
             note.remove();
         });
     })();
+
+    $('feed-more').addEventListener('click', moreFeed);
 
     $('comment-form').addEventListener('submit', function (e) {
         e.preventDefault();

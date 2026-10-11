@@ -99,6 +99,14 @@ public class ExcelExporter
             ("실적 시작", 12), ("실적 종료", 12), ("기준선 대비(일)", 13), ("선행 작업", 22), ("메모", 30));
 
         var titles = p.Stages.SelectMany(s => s.Works).ToDictionary(w => w.Id, w => w.Title);
+        // 선행 이름 뒤에 유형·간격 (끝나면 시작·간격 0 은 그대로 이름만 — 예전 양식과 같게)
+        var links = p.Links.GroupBy(l => (l.From, l.To)).ToDictionary(g => g.Key, g => g.First());
+        string Pre(int to, int from)
+        {
+            var name = titles.TryGetValue(from, out var t) ? t : "";
+            if (!links.TryGetValue((from, to), out var l) || (l.Type == "fs" && l.Lag == 0)) return name;
+            return $"{name}({Rules.LinkText(Rules.ParseLinkType(l.Type), l.Lag)})";
+        }
         var r = head + 1;
         foreach (var s in p.Stages)
         {
@@ -133,7 +141,7 @@ public class ExcelExporter
                 Date(ws.Cell(r, 11), w.ActualStart);
                 Date(ws.Cell(r, 12), w.ActualEnd);
                 Slip(ws.Cell(r, 13), w.SlipDays);
-                ws.Cell(r, 14).Value = string.Join(", ", w.Predecessors.Select(id => titles.TryGetValue(id, out var t) ? t : "")) + (w.Critical ? (w.Predecessors.Count > 0 ? " · " : "") + "임계" : "");
+                ws.Cell(r, 14).Value = string.Join(", ", w.Predecessors.Select(id => Pre(w.Id, id))) + (w.Critical ? (w.Predecessors.Count > 0 ? " · " : "") + "임계" : "");
                 ws.Cell(r, 15).Value = w.Note ?? "";
                 r++;
             }

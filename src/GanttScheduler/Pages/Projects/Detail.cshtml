@@ -42,6 +42,8 @@
             <button type="button" class="btn small toggle" id="show-baseline" aria-pressed="false"><svg class="ic"><use href="#i-pin" /></svg>기준선</button>
             <button type="button" class="btn small toggle" id="show-links" aria-pressed="false"><svg class="ic"><use href="#i-link" /></svg>의존선</button>
             <span class="spacer"></span>
+            @* 오늘 기준 예측과 목표가 다른 미착수 작업이 있을 때만 보인다 (서버가 센 ProjectView.ReplanCount) *@
+            <button type="button" class="btn small" id="replan" hidden><svg class="ic"><use href="#i-refresh" /></svg>재계획 <span class="count" id="replan-count"></span></button>
             <button type="button" class="btn small" id="edit-schedule"><svg class="ic"><use href="#i-calendar" /></svg>단계 일정 편집</button>
             <button type="button" class="btn small" id="add-stage"><svg class="ic"><use href="#i-plus" /></svg>단계</button>
             <button type="button" class="btn small primary" id="add-work"><svg class="ic"><use href="#i-plus" /></svg>작업</button>
@@ -54,6 +56,8 @@
                 <span><i class="lg cur"></i>실적(진행 중)</span>
                 <span><i class="lg over"></i>목표 초과 완료</span>
                 <span><i class="lg late"></i>지연</span>
+                <span><i class="lg ghost"></i>시작 전</span>
+                <span><i class="lg ghost fc"></i>예상이 목표보다 늦음</span>
                 <span><i class="lg fc"></i>작업 기준 예상 종료</span>
                 <span><i class="lg base"></i>기준선</span>
                 <span><i class="lg crit"></i>임계(여유 없음)</span>
@@ -91,7 +95,16 @@
             </label>
             <div class="form-actions"><button type="submit" class="btn primary" id="comment-btn">등록</button></div>
         </form>
-        <div class="card flush"><ul class="feed" id="feed"></ul></div>
+        <div class="card flush">
+            <ul class="feed" id="feed"></ul>
+            @* 활동은 최근 것부터 나눠 받는다(ProjectService.ActivityPageSize). 기간·사람·종류로 찾을 때는 변경 이력 화면으로 *@
+            <div class="feed-foot">
+                <span class="muted num" id="feed-status" aria-live="polite"></span>
+                <span class="spacer"></span>
+                <button type="button" class="btn small no-print" id="feed-more" hidden><svg class="ic"><use href="#i-down" /></svg>더 보기</button>
+                <a class="btn small ghost no-print" id="feed-history" asp-page="/Insights/History" asp-route-projectId="@Model.Project.Id"><svg class="ic"><use href="#i-list" /></svg>이 과제 전체 이력</a>
+            </div>
+        </div>
     </section>
 </div>
 
@@ -99,5 +112,6 @@
 @section Scripts {
     <script src="~/js/gantt.js" asp-append-version="true"></script>
     <script src="~/js/schedule.js" asp-append-version="true"></script>
+    <script src="~/js/plan-preview.js" asp-append-version="true"></script>
     <script src="~/js/detail.js" asp-append-version="true"></script>
 }

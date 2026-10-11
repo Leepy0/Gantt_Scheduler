@@ -14,7 +14,8 @@ public record StageScheduleInput(int ProjectId, List<StageScheduleRow>? Rows, st
 // 단계 일정 표 미리보기: 저장 전의 날짜로 다시 계산한 근무일 간격·추천 입고일 (화면이 계산하지 않도록 서버가 준다)
 public record StagePlanRow(int StageId, DateOnly? TargetDate, DateOnly? CompletedDate);
 
-public record StagePlanView(int StageId, int? GapWorkDays, DateOnly? InboundHint);
+// TargetNote: 목표일이 휴일이면 그 안내 (화면이 휴일을 판정하지 않도록 서버가 준다)
+public record StagePlanView(int StageId, int? GapWorkDays, DateOnly? InboundHint, string? TargetNote = null);
 
 // 등록 화면의 목표일 초안 한 줄. Kept: 사람이 고친 값(초안이 아님), Gap: 앞 단계 목표일(첫 단계는 착수일)부터의 근무일
 public record StageDraftRow(int TemplateId, string Name, string Kind, int? DefaultWorkDays, DateOnly? TargetDate, bool Kept,
@@ -98,8 +99,11 @@ public partial class ProjectService
         var lead = (await LocationsAsync()).Get(p.CorporationId)?.OceanLeadDays ?? 0;
         var gaps = Rules.TargetGaps(p.StartDate, stages.Select(s => s.TargetDate).ToList(), cal);
         var inbound = Rules.InboundRecommendation(stages, lead);
-        return stages.Select((s, i) => new StagePlanView(s.Id, gaps[i],
-            s.Kind == StageKind.Inbound && s.CompletedDate == null ? inbound : null)).ToList();
+        var result = new List<StagePlanView>();
+        for (var i = 0; i < stages.Count; i++)
+            result.Add(new StagePlanView(stages[i].Id, gaps[i], stages[i].Kind == StageKind.Inbound && stages[i].CompletedDate == null ? inbound : null,
+                await DayNoteAsync(stages[i].TargetDate, "목표일")));
+        return result;
     }
 
     // 단계 일정 표 저장: 여러 단계의 목표일·완료일을 한 번에 바꾼다.

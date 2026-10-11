@@ -17,8 +17,10 @@ public class HistoryModel : PageModel
     [BindProperty(SupportsGet = true)] public string? Kind { get; set; }
     [BindProperty(SupportsGet = true)] public string? Q { get; set; }
     [BindProperty(SupportsGet = true, Name = "p")] public int PageNo { get; set; } = 1;
+    // 과제 하나의 이력만 (상세 활동 탭의 '이 과제 전체 이력')
+    [BindProperty(SupportsGet = true)] public int? ProjectId { get; set; }
 
     public HistoryPage Data { get; private set; } = null!;
 
-    public async Task OnGetAsync() => Data = await _insights.HistoryAsync(new HistoryFilter(From, To, ByUser, Kind, Q, PageNo));
+    public async Task OnGetAsync() => Data = await _insights.HistoryAsync(new HistoryFilter(From, To, ByUser, Kind, Q, PageNo, ProjectId));
 }

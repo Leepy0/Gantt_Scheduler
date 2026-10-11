@@ -30,6 +30,7 @@ public class AppDb : DbContext
     public DbSet<CheckItem> CheckItems => Set<CheckItem>();
     public DbSet<WorkLink> WorkLinks => Set<WorkLink>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+    public DbSet<StageLink> StageLinks => Set<StageLink>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -187,6 +188,19 @@ public class AppDb : DbContext
             e.HasOne(x => x.Project).WithMany(p => p.Activities).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.At);
+            // 과제 하나의 활동을 최근 순으로 나눠 읽는다(상세 '더 보기'·변경 이력의 과제 조건). ProjectId 만의 FK 인덱스를 대신한다
+            e.HasIndex(x => new { x.ProjectId, x.At });
+        });
+
+        // ── 과제 간 단계 의존 ──
+        b.Entity<StageLink>(e =>
+        {
+            // 두 FK 모두 Restrict — 같은 단계 테이블로 가는 cascade 경로가 둘이 되면 SQL Server 가 거절한다.
+            // 단계·과제를 지울 때는 서비스(ProjectService.RemoveStageLinksAsync)가 관련 연결을 먼저 지운다
+            e.HasOne(x => x.PredecessorStage).WithMany().HasForeignKey(x => x.PredecessorStageId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.SuccessorStage).WithMany().HasForeignKey(x => x.SuccessorStageId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.PredecessorStageId, x.SuccessorStageId }).IsUnique();
+            e.HasIndex(x => x.SuccessorStageId);
         });
     }
 }

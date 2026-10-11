@@ -180,6 +180,15 @@ async function mockStartFailure(p) {
 const stageRow = (page, name) => page.locator('#gantt .g-row.stage', { hasText: name }).locator('.g-name');
 const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: name });
 
+// 지금 연 상세 화면의 과제 JSON (서버가 계산한 값 — 미리보기와 저장 결과를 비교할 때)
+async function projectData(p) {
+    return p.evaluate(async () => {
+        const id = new URLSearchParams(location.search).get('id');
+        return (await App.get(App.url('/Projects/Detail?handler=Data&id=' + id))).project;
+    });
+}
+const worksOf = (P) => P.stages.flatMap((s) => s.works);
+
 (async () => {
     const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
 
@@ -414,6 +423,117 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await submitSheet(page);
         assert((await page.locator('#gantt .g-links svg > path').count()) === links + 1, '의존선이 추가되지 않음');
         await shot(page, 'd08-detail-gantt-links');
+    });
+
+    await step('저장 전 미리보기 — 막대를 끌면 함께 밀리는 후행 작업과 단계 예상 종료를 표로 보이고, 저장 결과가 미리보기와 같음', async () => {
+        const succ = worksOf(await projectData(page)).find((w) => w.title === '안전 인증 서류 준비');
+        await page.click('#zoom [data-zoom=day]');
+        const bar = workRow(page, '검수 문서 검토').locator('.g-bar.draggable');
+        await bar.scrollIntoViewIfNeeded();
+        const box = await bar.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 28, box.y + box.height / 2, { steps: 4 });     // 하루
+        await page.mouse.up();
+        await page.waitForSelector(SHEET + ' [data-plan-preview]');
+        // 끈 일정은 시트에서 고칠 수 있다: 종료를 후행 시작일까지 늘리면 후행이 밀린다 (계산은 서버)
+        await page.fill(SHEET + ' input[name=planEnd]', succ.planStart);
+        const row = page.locator(SHEET + ' [data-preview-moves] tr[data-work="' + succ.id + '"]');
+        await row.waitFor();
+        const cells = await row.locator('td').allInnerTexts();
+        assert(cells[1].includes(succ.planStart.slice(5)), '지금 일정 칸이 다름: ' + cells.join(' | '));
+        assert(await page.locator(SHEET + ' [data-preview-stages] li').count() >= 1, '단계 예상 종료 전/후 줄이 없음');
+        assert((await page.locator(SHEET + ' [data-plan-note]').innerText()).includes('근무일'), '근무일 수(서버 값)가 없음');
+        await page.locator(SHEET + ' [data-plan-preview]').scrollIntoViewIfNeeded();
+        await shot(page, 'd08b-plan-preview', false);
+        await page.fill(SHEET + ' textarea[name=reason]', '검수 문서 보완');
+        await submitSheet(page);
+        const moved = worksOf(await projectData(page)).find((w) => w.id === succ.id);
+        assert(cells[2].includes(moved.planStart.slice(5) + '~' + moved.planEnd.slice(5)),
+            '저장 결과가 미리보기와 다름: ' + cells[2] + ' / ' + moved.planStart + '~' + moved.planEnd);
+        await page.click('#zoom [data-zoom=week]');
+    });
+
+    await step('의존 유형·간격 — 작업 시트에서 선행마다 유형·간격을 고르면 막히는 이유를 저장 전에 보이고, 저장하면 유형별 의존선·연결 변경 이력', async () => {
+        const pred = worksOf(await projectData(page)).find((w) => w.title === '검수 문서 검토');
+        await workRow(page, '안전 인증 서류 준비').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        const opts = page.locator(SHEET + ' [data-pre-row="' + pred.id + '"] .pre-opts');
+        assert(await opts.isVisible(), '고른 선행에 유형·간격 칸이 없음');
+        assert(await page.locator(SHEET + ' .pre-row .pre-opts[hidden]').count() >= 1, '고르지 않은 선행에도 유형·간격 칸이 보임');
+        // 간격을 크게 주면 저장하기 전에 막히는 이유를 보인다
+        await page.fill(SHEET + ' input[name="preLag.' + pred.id + '"]', '30');
+        await page.waitForSelector(SHEET + ' [data-work-preview] [data-preview-issue=block]');
+        // 같이 시작 +2근무일이면 통과
+        await page.selectOption(SHEET + ' select[name="preType.' + pred.id + '"]', 'ss');
+        await page.fill(SHEET + ' input[name="preLag.' + pred.id + '"]', '2');
+        await page.waitForFunction(() => {
+            const el = document.querySelector('dialog.sheet[open] [data-work-preview]');
+            return el && !el.hasAttribute('aria-busy') && !el.querySelector('[data-preview-issue=block]');
+        });
+        await opts.scrollIntoViewIfNeeded();
+        await shot(page, 'd08c-link-type', false);
+        await submitSheet(page);
+        assert((await page.locator('#gantt .g-links svg > path[data-link-type=ss]').count()) === 1, '같이 시작 의존선이 없음');
+        const P = await projectData(page);
+        const link = P.links.find((l) => l.from === pred.id);
+        assert(link && link.type === 'ss' && link.lag === 2, '유형·간격이 저장되지 않음: ' + JSON.stringify(link));
+        assert(P.activities.some((a) => a.type === 'linkChanged' && a.text.includes('같이 시작 +2근무일')), '연결 변경 이력이 없음');
+        // 다시 열면 고른 유형·간격이 남아 있다
+        await workRow(page, '안전 인증 서류 준비').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        assert((await page.inputValue(SHEET + ' select[name="preType.' + pred.id + '"]')) === 'ss', '유형이 남지 않음');
+        assert((await page.inputValue(SHEET + ' input[name="preLag.' + pred.id + '"]')) === '2', '간격이 남지 않음');
+        await closeSheet(page);
+    });
+
+    await step('재계획 — 시작일이 지난 미착수 작업이 있으면 단추가 보이고, 오늘 기준 예측으로 옮겨질 작업을 표로 보임', async () => {
+        await openProject(page, '베트남 세탁기 2라인 AMR 확대');
+        await page.waitForSelector('#replan:not([hidden])');
+        assert(Number(await page.locator('#replan-count').innerText()) >= 1, '재계획 대상 수가 없음');
+        // 간트: 시작 전 작업은 예상 일정(서버 전진 계산)에 노랑 점선
+        assert((await workRow(page, '출하 검사').locator('.g-bar.ghost.fc').count()) === 1, '예상 일정 막대가 없음');
+        await page.click('#replan');
+        await page.waitForSelector(SHEET + ' [data-replan-preview] [data-preview-moves] tbody tr');
+        const text = await page.locator(SHEET + ' [data-preview-moves]').innerText();
+        assert(text.includes('출하 검사') && text.includes('시작 지연'), '옮겨질 작업 표가 다름: ' + text);
+        await shot(page, 'd08d-replan', false);
+        await closeSheet(page);        // 저장은 모바일 단계에서 한다
+    });
+
+    await step('과제 간 연결 — 단계 시트에서 다른 과제 단계에 이으면 어긋날 때 두 과제의 단계에 경고 칩, 칩을 누르면 상대 과제', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        const P = await projectData(page);
+        const stage = P.stages.find((s) => s.name === '입고');
+        // 상대 과제에서 이 단계 목표일보다 늦은 미완료 단계를 선행으로 고르면 어긋난다
+        const targets = await page.evaluate(async (id) => (await App.get(App.url('/Projects/Detail?handler=LinkTargets&id=' + id +
+            '&q=' + encodeURIComponent('멕시코 에어컨')))).projects, P.id);
+        const other = targets[0].stages.find((s) => !s.completedDate && s.targetDate && s.targetDate > stage.targetDate);
+        assert(other, '고를 상대 단계가 없음');
+        await stageRow(page, '입고').click();
+        await page.waitForSelector(SHEET + ' [data-cross]');
+        await page.click(SHEET + ' [data-cross-open]');
+        await page.selectOption(SHEET + ' [data-cross-role]', 'pred');
+        await page.fill(SHEET + ' [data-cross-q]', '멕시코 에어컨');
+        await page.waitForSelector(SHEET + ' [data-cross-stage] option[value="' + other.id + '"]', { state: 'attached' });
+        await page.selectOption(SHEET + ' [data-cross-stage]', String(other.id));
+        await page.click(SHEET + ' [data-cross-save]');
+        await page.waitForSelector(SHEET + ' [data-cross-list] li.bad');
+        assert((await page.locator(SHEET + ' [data-cross-list]').innerText()).includes('멕시코 에어컨 용기 표준화'), '연결 목록에 상대 과제가 없음');
+        await page.locator(SHEET + ' [data-cross]').scrollIntoViewIfNeeded();
+        await shot(page, 'd08e-cross-link', false);
+        await closeSheet(page);
+        assert(await stageRow(page, '입고').locator('.warn use[href="#i-link"]').count() === 1, '간트 이름 칸에 연결 경고(노랑)가 없음');
+        // 목록 보기의 단계 카드 칩 → 상대 과제로 이동, 상대 과제 단계에도 경고
+        await page.click('#view-mode [data-view=list]');
+        await page.locator('#schedule-list .stage-card', { hasText: '입고' }).locator('[data-cross-chip].warn').click();
+        await page.waitForFunction(() => document.getElementById('p-title') && document.getElementById('p-title').textContent.includes('멕시코 에어컨'));
+        await page.locator('#schedule-list [data-cross-chip].warn', { hasText: '광주 냉장고 3라인' }).waitFor();
+        // 연결 위반은 위험(노랑)이다 — 자기 일정에 문제가 없는 선행 쪽 과제에 지연(빨강) 칩이 붙지 않는다
+        assert(await page.locator('#schedule-list [data-cross-chip].alarm').count() === 0, '과제 간 연결 위반이 빨강으로 보임');
+        await shot(page, 'd08f-cross-warn');
+        await page.click('#view-mode [data-view=gantt]');
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
     });
 
     await step('기준선 다시 확정', async () => {
@@ -1064,6 +1184,225 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await shot(page, 'd17-insights-history');
     });
 
+    await step('활동 더 보기 — 최근 50건만 먼저 싣고 나머지는 나눠 받음, 이 과제 전체 이력으로 이동', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        // 활동을 50건 넘게 쌓는다: 미완료 단계의 체크를 켜고 끄기(짝수 번이라 원래 상태로 돌아온다). 주간 보고에 오르지 않는 활동이다
+        const added = await page.evaluate(async () => {
+            const id = +new URLSearchParams(location.search).get('id');
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const call = async (handler, body) => {
+                const r = await fetch('/Projects/Detail?handler=' + handler + (body ? '' : '&id=' + id), body
+                    ? { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token }, body: JSON.stringify(body) }
+                    : { headers: { Accept: 'application/json' } });
+                const b = await r.json();
+                if (!b.ok) throw new Error(handler + ': ' + (b.error || r.status));
+                return b;
+            };
+            let p = (await call('Data')).project;
+            let stage = p.stages.find((x) => !x.completedDate && x.checks.length);
+            if (!stage) {
+                stage = p.stages.find((x) => !x.completedDate);
+                p = (await call('SaveCheck', { stageId: stage.id, id: null, text: '활동 더 보기 확인용' })).project;
+                stage = p.stages.find((x) => x.id === stage.id);
+            }
+            const check = stage.checks[0];
+            let done = check.done;
+            for (let i = 0; i < 60; i++) { done = !done; await call('ToggleCheck', { id: check.id, done }); }
+            return { id, total: (await call('Data')).project.activityTotal };
+        });
+        assert(added.total > 60, '활동이 쌓이지 않음: ' + added.total);
+        await page.reload();
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForSelector('#feed > li');
+        assert((await page.locator('#feed > li').count()) === 50, '처음에 50건이 아님: ' + (await page.locator('#feed > li').count()));
+        assert((await page.locator('#activity-count').innerText()).trim() === String(added.total), '탭 숫자가 전체 건수가 아님');
+        assert(await page.locator('#feed-more').isVisible(), '더 보기 단추가 없음');
+        assert((await page.locator('#feed-status').innerText()).includes('전체 ' + added.total + '건'), '건수 안내가 없음');
+        await page.locator('.feed-foot').scrollIntoViewIfNeeded();
+        await shot(page, 'd46-activity-more', false);
+        const firstIds = await page.locator('#feed > li .feed-text').allInnerTexts();
+        await page.click('#feed-more');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length > 50);
+        // 끝까지 받으면 단추가 사라지고 전체 건수만큼 쌓인다 (겹치거나 빠진 항목 없이)
+        while (await page.locator('#feed-more').isVisible()) {
+            const n = await page.locator('#feed > li').count();
+            await page.click('#feed-more');
+            await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length > k || document.getElementById('feed-more').hidden, n);
+        }
+        assert((await page.locator('#feed > li').count()) === added.total, '모두 받은 뒤 건수가 다름: ' + (await page.locator('#feed > li').count()));
+        const allTexts = await page.locator('#feed > li .feed-text').allInnerTexts();
+        assert(firstIds.every((t, i) => allTexts[i] === t), '처음 50건 순서가 바뀜');
+        // 새 활동을 남기면 받아 둔 옛 활동을 잃지 않고 맨 위에 더해진다
+        await page.fill('#comment-text', '더 보기 뒤 남긴 메모');
+        await page.click('#comment-form button[type=submit]');
+        await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length === k, added.total + 1);
+        assert((await page.locator('#feed > li .feed-text').first().innerText()).includes('더 보기 뒤 남긴 메모'), '새 메모가 맨 위가 아님');
+
+        // 그 사이 다른 화면이 한 쪽(50건)보다 많이 남기면 변경 응답의 최근 목록이 받아 둔 목록과 겹치지 않는다 —
+        // 가운데가 빈 채 이어 붙이지 않고 최근 목록부터 다시 쌓아, '더 보기'로 빠짐없이 받는지 본다
+        const gap = 52;   // 짝수 번 켜고 꺼서 체크 상태는 그대로
+        await page.evaluate(async (n) => {
+            const id = +new URLSearchParams(location.search).get('id');
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const r = await fetch('/Projects/Detail?handler=Data&id=' + id, { headers: { Accept: 'application/json' } });
+            const p = (await r.json()).project;
+            const check = p.stages.find((x) => !x.completedDate && x.checks.length).checks[0];
+            let done = check.done;
+            for (let i = 0; i < n; i++) {
+                done = !done;
+                const res = await fetch('/Projects/Detail?handler=ToggleCheck', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                    body: JSON.stringify({ id: check.id, done }),
+                });
+                if (!res.ok) throw new Error('ToggleCheck ' + res.status);
+            }
+        }, gap);
+        await page.fill('#comment-text', '빈틈 확인 메모');
+        await page.click('#comment-form button[type=submit]');
+        await page.waitForFunction(() => (document.querySelector('#feed > li .feed-text') || {}).textContent === '빈틈 확인 메모');
+        const expectedTotal = added.total + 1 + gap + 1;
+        assert((await page.locator('#feed > li').count()) === 50, '이어지지 않는 옛 목록이 남음: ' + (await page.locator('#feed > li').count()));
+        assert(await page.locator('#feed-more').isVisible(), '다시 쌓은 뒤 더 보기 단추가 없음');
+        while (await page.locator('#feed-more').isVisible()) {
+            const n = await page.locator('#feed > li').count();
+            await page.click('#feed-more');
+            await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length > k || document.getElementById('feed-more').hidden, n);
+        }
+        assert((await page.locator('#feed > li').count()) === expectedTotal, '빈틈 뒤 모두 받은 건수가 다름: ' + (await page.locator('#feed > li').count()) + ' / ' + expectedTotal);
+        assert((await page.locator('#activity-count').innerText()).trim() === String(expectedTotal), '탭 숫자가 전체 건수가 아님(빈틈 뒤)');
+
+        // 이 과제 전체 이력 → 과제 조건이 걸린 변경 이력
+        await page.click('#feed-history');
+        await page.waitForURL(/\/Insights\/History\?projectId=/);
+        await page.waitForSelector('#history-project');
+        assert((await page.locator('#history-project').innerText()).includes('광주 냉장고 3라인 AGV 도입'), '과제 조건 표시가 없음');
+        const total = +(await page.locator('.card-head .count').innerText());
+        assert(total === expectedTotal, '과제 이력 건수가 다름: ' + total + ' / ' + expectedTotal);
+        const titles = await page.locator('.history .history-body > a').allInnerTexts();
+        assert(titles.length === 50 && titles.every((t) => t === '광주 냉장고 3라인 AGV 도입'), '다른 과제 이력이 섞임');
+        assert((await page.locator('.pager').innerText()).includes('1 / '), '쪽 이동이 없음');
+        await page.locator('.pager a', { hasText: '다음' }).click();
+        await page.waitForURL(/p=2/);
+        assert(page.url().includes('projectId=' + added.id), '쪽을 넘기면 과제 조건이 풀림: ' + page.url());
+        await page.selectOption('select[name=kind]', 'progress');
+        await page.click('.filters button[type=submit]');
+        await page.waitForURL(/kind=progress/);
+        assert(page.url().includes('projectId=' + added.id), '조회하면 과제 조건이 풀림');
+        assert((await page.locator('.history .chip').allInnerTexts()).every((t) => t === '진행'), '다른 구분이 섞임');
+        await shot(page, 'd46b-history-project');
+        await page.click('#history-all');
+        await page.waitForURL((u) => u.pathname === '/Insights/History' && !u.search.includes('projectId'));
+        assert((await page.locator('#history-project').count()) === 0, '모든 과제로 돌아가지 않음');
+        // 여러 과제의 이력은 1년까지 — 넘게 고르면 시작일을 맞추고 안내
+        await page.goto(BASE + '/Insights/History?from=2020-01-01&to=' + kstToday());
+        assert(await page.locator('#history-notice').isVisible(), '기간 상한 안내가 없음');
+    });
+
+    await step('작업 시트 진행 내용 더 보기 — 빠르게 두 번 눌러도 같은 활동이 두 번 붙지 않음', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        // 한 작업에 진행 내용을 한 쪽(50건)보다 많이 남기고, 그 작업의 활동 전체 건수를 센다
+        const total = await page.evaluate(async () => {
+            const id = +new URLSearchParams(location.search).get('id');
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const get = async (u) => (await fetch(u, { headers: { Accept: 'application/json' } })).json();
+            const p = (await get('/Projects/Detail?handler=Data&id=' + id)).project;
+            const stage = p.stages.find((s) => s.works.some((w) => w.title === '주행 시험'));
+            const work = stage.works.find((w) => w.title === '주행 시험');
+            for (let i = 0; i < 55; i++) {
+                const res = await fetch('/Projects/Detail?handler=Comment', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                    body: JSON.stringify({ projectId: id, stageId: stage.id, workId: work.id, text: '진행 내용 ' + (i + 1) }),
+                });
+                if (!res.ok) throw new Error('Comment ' + res.status);
+            }
+            let n = 0, before = null;
+            for (;;) {
+                const r = await get('/Projects/Detail?handler=Activities&id=' + id + '&workId=' + work.id + (before ? '&beforeId=' + before : ''));
+                n += r.activities.length;
+                if (!r.more || !r.activities.length) return n;
+                before = r.activities[r.activities.length - 1].id;
+            }
+        });
+        assert(total > 55, '작업 활동이 쌓이지 않음: ' + total);
+        await page.reload();
+        await page.waitForSelector('#gantt .g-row.work');
+        // '더 보기' 응답을 늦춰 두 번째 누름이 응답 전에 들어가게 한다
+        const slow = (u) => u.href.includes('handler=Activities') && u.href.includes('beforeId=');
+        await page.route(slow, async (r) => { await new Promise((res) => setTimeout(res, 600)); await r.continue(); });
+        try {
+            await workRow(page, '주행 시험').locator('.g-name').click();
+            await page.waitForSelector(SHEET + ' [data-work-more] button');
+            const items = () => page.locator(SHEET + ' [data-feed] > li:not([data-work-more])').count();
+            assert((await items()) === 50, '처음에 50건이 아님: ' + (await items()));
+            await page.locator(SHEET + ' [data-work-more] button').dblclick();
+            await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open] [data-feed] > li:not([data-work-more])').length > 50);
+            await page.waitForTimeout(900);     // 두 번째 요청이 나갔다면 그 응답까지 기다린다
+            while (await page.locator(SHEET + ' [data-work-more] button').count()) {
+                const n = await items();
+                await page.locator(SHEET + ' [data-work-more] button').click();
+                await page.waitForFunction((k) => document.querySelectorAll('dialog.sheet[open] [data-feed] > li:not([data-work-more])').length > k, n);
+            }
+            const texts = await page.locator(SHEET + ' [data-feed] > li .feed-text').allInnerTexts();
+            assert(texts.length === total, '모두 받은 뒤 건수가 다름(겹침): ' + texts.length + ' / ' + total);
+            const notes = texts.filter((t) => /^진행 내용 \d+$/.test(t));
+            assert(notes.length === 55 && new Set(notes).size === 55, '같은 진행 내용이 두 번 붙음');
+            await closeSheet(page);
+        } finally {
+            await page.unroute(slow);
+        }
+    });
+
+    await step('대시보드 간트 — 과제가 많아도 페이지가 늘지 않고 간트 안에서 스크롤, 머리글은 붙어 있음', async () => {
+        // 진행 과제를 잠시 늘린다(복제) — 끝나면 지운다
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        const post = (handler, body) => page.evaluate(async ([h, b]) => {
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const r = await fetch('/Projects/Detail?handler=' + h, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token }, body: JSON.stringify(b),
+            });
+            const x = await r.json();
+            if (!x.ok) throw new Error(h + ': ' + (x.error || r.status));
+            return x;
+        }, [handler, body]);
+        const src = +new URL(page.url()).searchParams.get('id');
+        const ids = [];
+        try {
+            for (let i = 0; i < 8; i++) {
+                const r = await post('Clone', { projectId: src, title: '간트 스크롤 확인 ' + (i + 1), startDate: null, includeWorks: false });
+                ids.push(+new URL(r.redirect, BASE).searchParams.get('id'));
+            }
+            await page.setViewportSize({ width: 1440, height: 640 });
+            await page.goto(BASE + '/');
+            await page.waitForSelector('#gantt.gantt-host.tall .g-row');
+            const g = await page.evaluate(() => {
+                const s = document.querySelector('#gantt .g-scroll');
+                return { sh: s.scrollHeight, ch: s.clientHeight, max: getComputedStyle(s).maxHeight, rows: document.querySelectorAll('#gantt .g-row').length };
+            });
+            assert(g.rows >= 9, '간트 행이 늘지 않음: ' + g.rows);
+            assert(g.max !== 'none' && g.ch <= parseFloat(g.max), '간트 높이 제한이 없음: ' + JSON.stringify(g));
+            assert(g.sh > g.ch + 100, '간트 안에서 스크롤되지 않음: ' + JSON.stringify(g));
+            // 안쪽으로 내려도 날짜 머리글은 위에 붙어 있고, 맨 아래 행까지 내려 볼 수 있다
+            await page.evaluate(() => { document.querySelector('#gantt .g-scroll').scrollTop = 99999; });
+            const pos = await page.evaluate(() => {
+                const s = document.querySelector('#gantt .g-scroll').getBoundingClientRect();
+                const h = document.querySelector('#gantt .g-head').getBoundingClientRect();
+                const rows = document.querySelectorAll('#gantt .g-row');
+                const last = rows[rows.length - 1].getBoundingClientRect();
+                return { scroll: s.top, head: h.top, lastBottom: last.bottom, scrollBottom: s.bottom };
+            });
+            assert(Math.abs(pos.head - pos.scroll) <= 1, '머리글이 붙어 있지 않음: ' + JSON.stringify(pos));
+            assert(pos.lastBottom <= pos.scrollBottom + 1, '마지막 행이 보이지 않음: ' + JSON.stringify(pos));
+            await page.locator('#gantt').scrollIntoViewIfNeeded();
+            await shot(page, 'd47-dashboard-gantt-scroll', false);
+        } finally {
+            await page.setViewportSize({ width: 1440, height: 900 });
+            await openProject(page, '광주 냉장고 3라인 AGV 도입');
+            for (const id of ids) await post('Delete', { id });
+        }
+        await page.goto(BASE + '/');
+        assert((await page.locator('#gantt .g-row', { hasText: '간트 스크롤 확인' }).count()) === 0, '확인용 복제 과제가 남음');
+    });
+
     await step('Excel·PDF 내보내기', async () => {
         const targets = [
             ['과제목록.xlsx', '/Projects?handler=Excel&state=all'],
@@ -1419,6 +1758,22 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await shot(m, 'm04-detail-list');
     });
 
+    await step('모바일 재계획 — 하단 시트의 표에서 옮겨질 작업을 보고 사유를 넣어 저장하면 단추가 사라짐', async () => {
+        await m.waitForSelector('#replan:not([hidden])');
+        const item = m.locator('#schedule-list .work-item', { has: m.locator('.work-title', { hasText: '출하 검사' }) });
+        assert((await item.innerText()).includes('예상'), '시작 전 작업에 예상 일정이 없음');
+        await m.click('#replan');
+        await m.waitForSelector(SHEET + ' [data-preview-moves] tbody tr');
+        const over = await m.evaluate(() => { const b = document.querySelector('dialog.sheet[open] .sheet-body'); return b.scrollWidth - b.clientWidth; });
+        assert(over <= 0, '재계획 시트가 가로로 넘침 ' + over);
+        await noOverflow('재계획 시트');
+        await shot(m, 'm04b-replan', false);
+        await m.fill(SHEET + ' textarea[name=reason]', '제어기 조립 지연 반영');
+        await submitSheet(m);
+        await m.waitForSelector('#replan', { state: 'hidden' });
+        assert(!(await item.innerText()).includes('예상'), '재계획한 뒤에도 예상 일정이 목표와 다름');
+    });
+
     await step('모바일 작업 시트', async () => {
         // 다른 작업의 '선행: 제어기 조립' 표시와 겹치지 않게 제목으로 찾는다
         const item = m.locator('#schedule-list .work-item', { has: m.locator('.work-title', { hasText: '제어기 조립' }) });
@@ -1430,6 +1785,20 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await setRange(m, SHEET + ' input[name=progress]', 85);
         await submitSheet(m);
         assert((await item.innerText()).includes('85%'), '진행률이 저장되지 않음');
+    });
+
+    await step('모바일 작업 시트 — 선행마다 유형·간격 칸(터치 크기), 근무일 수는 서버 미리보기', async () => {
+        await m.locator('#schedule-list .work-item', { has: m.locator('.work-title', { hasText: '출하 검사' }) }).click();
+        await m.waitForSelector(SHEET);
+        const sel = m.locator(SHEET + ' .pre-row .pre-opts:not([hidden]) select').first();
+        await sel.scrollIntoViewIfNeeded();
+        const h = await sel.evaluate((el) => el.getBoundingClientRect().height);
+        assert(h >= 44, '유형 선택이 터치하기에 작음: ' + h);
+        await m.waitForFunction(() => /근무일 \d+일/.test(document.querySelector('dialog.sheet[open] [data-plan-hint]').textContent));
+        const over = await m.evaluate(() => { const b = document.querySelector('dialog.sheet[open] .sheet-body'); return b.scrollWidth - b.clientWidth; });
+        assert(over <= 0, '작업 시트가 가로로 넘침 ' + over);
+        await shot(m, 'm05b-work-link-type', false);
+        await closeSheet(m);
     });
 
     await step('모바일 간트 보기·단계 시트', async () => {
@@ -1486,6 +1855,21 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
+    await step('모바일 과제 간 연결 — 단계 카드의 경고 칩과 단계 시트의 연결 목록', async () => {
+        await openProject(m, '광주 냉장고 3라인 AGV 도입');
+        await m.click('#view-mode [data-view=list]');
+        await m.waitForSelector('#schedule-list .stage-cross [data-cross-chip].warn');
+        await noOverflow('과제 간 연결 칩');
+        await m.locator('#schedule-list .stage-head', { hasText: '입고' }).click();
+        await m.waitForSelector(SHEET + ' [data-cross-list] li.bad');
+        await m.locator(SHEET + ' [data-cross]').scrollIntoViewIfNeeded();
+        const over = await m.evaluate(() => { const b = document.querySelector('dialog.sheet[open] .sheet-body'); return b.scrollWidth - b.clientWidth; });
+        assert(over <= 0, '단계 시트가 가로로 넘침 ' + over);
+        await shot(m, 'm07d-cross-link', false);
+        await closeSheet(m);
+        await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
+    });
+
     await step('모바일 자료·분석·과제 등록·관리 화면', async () => {
         await m.click('.tabs [data-tab=files]');
         await noOverflow('자료');
@@ -1498,6 +1882,9 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await noOverflow('리드타임');
         await m.goto(BASE + '/Insights/History');
         await noOverflow('변경 이력');
+        // 날짜 두 칸이 한 줄을 나눠 써서 날짜가 잘리지 않는다(고르기 칸은 다음 줄)
+        const dates = await m.$$eval('.filter-row input[type=date]', (els) => els.map((e) => ({ w: e.getBoundingClientRect().width, top: e.getBoundingClientRect().top })));
+        assert(dates.length === 2 && dates.every((d) => d.w >= 140) && dates[0].top === dates[1].top, '변경 이력 날짜 칸이 좁음: ' + JSON.stringify(dates));
         await shot(m, 'm10-insights-history');
         await m.goto(BASE + '/Projects/Edit');
         await m.waitForSelector('#edit-form');
@@ -1510,6 +1897,24 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
         await shot(m, 'm11-update');
+    });
+
+    await step('모바일 활동 더 보기·과제 전체 이력', async () => {
+        await m.goto(BASE + '/Projects?state=all');
+        await m.locator('.ptable-row', { hasText: '광주 냉장고 3라인 AGV 도입' }).first().click();
+        await m.waitForSelector('#summary .summary-meta');
+        await m.click('.tabs [data-tab=activity]');
+        await m.waitForSelector('#feed > li');
+        assert(await m.locator('#feed-more').isVisible(), '더 보기 단추가 없음');
+        await m.click('#feed-more');
+        await m.waitForFunction(() => document.querySelectorAll('#feed > li').length > 50);
+        await noOverflow('활동 더 보기');
+        await m.locator('.feed-foot').scrollIntoViewIfNeeded();
+        await shot(m, 'm13-activity-more', false);
+        await m.click('#feed-history');
+        await m.waitForSelector('#history-project');
+        await noOverflow('과제 전체 이력');
+        await shot(m, 'm13b-history-project', false);
     });
 
     await step('모바일 업데이트 — 시작되지 않아 되돌린 버전 안내', async () => {
