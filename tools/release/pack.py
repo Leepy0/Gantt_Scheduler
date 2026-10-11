@@ -23,6 +23,11 @@ import sys
 import tempfile
 import zipfile
 
+# Windows 러너의 파이썬은 표준 출력이 cp1252 라 한글 안내를 찍다가 죽는다. 출력만 UTF-8 로 고정한다
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 p = argparse.ArgumentParser()
 p.add_argument("--dir", help="dotnet publish 결과 폴더")
 p.add_argument("--out", help="결과를 둘 폴더")
