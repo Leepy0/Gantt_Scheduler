@@ -182,7 +182,7 @@ public partial class HttpTests : IClassFixture<AppFactory>
         Assert.Equal("idle", st.GetProperty("phase").GetString());
 
         // 통합테스터는 관리자가 아니다 (테스트 DB 에 관리자가 이미 있다)
-        foreach (var handler in new[] { "Check", "Download", "Apply", "Rollback", "Discard", "Settings" })
+        foreach (var handler in new[] { "Check", "Download", "Apply", "Rollback", "Discard", "Settings", "DismissFailure", "Upload" })
         {
             var req = new HttpRequestMessage(HttpMethod.Post, "/Admin/Update?handler=" + handler)
             {

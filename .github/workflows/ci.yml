@@ -36,6 +36,9 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
+          # 패키지 캐시 (잠금 파일이 바뀔 때만 새로 받는다)
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: 준비
         run: |
@@ -47,7 +50,9 @@ jobs:
         id: build
         run: |
           set -o pipefail
-          dotnet build GanttScheduler.slnx -c Release 2>&1 | tee out/logs/build.log
+          # 잠금 파일(packages.lock.json)과 다른 패키지가 들어오면 실패한다 (버전은 Directory.Packages.props 에 고정)
+          dotnet restore GanttScheduler.slnx --locked-mode 2>&1 | tee out/logs/build.log
+          dotnet build GanttScheduler.slnx -c Release --no-restore 2>&1 | tee -a out/logs/build.log
 
       - name: 테스트 (SQLite)
         id: test
@@ -67,7 +72,11 @@ jobs:
           # SQL Server 컨테이너가 접속을 받을 때까지 대기
           for i in $(seq 1 60); do (echo > /dev/tcp/localhost/1433) 2>/dev/null && break; sleep 2; done
           sleep 10
-          dotnet test GanttScheduler.slnx -c Release --no-build --logger "console;verbosity=normal" 2>&1 | tee out/logs/test-sqlserver.log
+          # DB 를 쓰지 않는 테스트(규칙 계산, 서비스 등록 명령, 업데이트 파일 처리)와 SQLite 전용 테스트는 위 단계에서 이미 돌았다.
+          # 여기서는 DB 를 거치는 테스트만 다시 돌린다. 새 테스트 클래스는 기본으로 포함된다(빼도 되는 것만 여기 적는다)
+          dotnet test GanttScheduler.slnx -c Release --no-build --logger "console;verbosity=normal" \
+            --filter "FullyQualifiedName!~GanttScheduler.Tests.RulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ScheduleRulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ServiceInstallerTests.&FullyQualifiedName!~GanttScheduler.Tests.UpdateTests.&FullyQualifiedName!~GanttScheduler.Tests.OpsTests." \
+            2>&1 | tee out/logs/test-sqlserver.log
 
       - name: 화면 점검 (데스크톱·모바일)
         id: e2e
@@ -80,7 +89,8 @@ jobs:
             nohup dotnet bin/Release/net10.0/GanttScheduler.dll --urls http://localhost:5080 > ../../out/logs/app.log 2>&1 &)
           for i in $(seq 1 30); do curl -sf http://localhost:5080/health > /dev/null && break; sleep 1; done
           curl -sf http://localhost:5080/health > /dev/null || { echo "앱이 시작되지 않았습니다."; cat out/logs/app.log; exit 1; }
-          PW_CHANNEL=chrome OUT_DIR=$PWD/out node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
+          # APP_LOG: 앱 로그의 경고·오류 줄을 화면 점검 보고서(report.md)에 요약해 넣는다
+          PW_CHANNEL=chrome OUT_DIR=$PWD/out APP_LOG=$PWD/out/logs/app.log node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
 
       - name: 결과를 preview 브랜치에 올리기
         if: always()
@@ -111,6 +121,10 @@ jobs:
               echo "## 내보내기 파일"; echo
               for f in exports/*; do echo "- [$(basename "$f")]($f)"; done
               echo
+            fi
+            if ls screens/fail-*.png > /dev/null 2>&1; then
+              echo "## 실패한 단계의 화면"; echo
+              for f in screens/fail-*.png; do echo "### $(basename "$f" .png)"; echo; echo "![]($f)"; echo; done
             fi
             if ls screens/m*.png > /dev/null 2>&1; then
               echo "## 모바일 화면"; echo

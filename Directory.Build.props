@@ -1,0 +1,7 @@
+<Project>
+  <!-- 복원한 패키지(간접 의존 포함)를 packages.lock.json 에 기록한다. CI·배포는 잠금 모드 복원(dotnet restore 의 locked-mode 옵션)으로
+       이 기록과 다르면 실패하게 해, 테스트한 것과 같은 패키지로 배포 파일을 만든다 -->
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

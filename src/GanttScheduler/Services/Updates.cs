@@ -1,5 +1,6 @@
 using System.Net;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using GanttScheduler.Domain;
 
@@ -57,7 +58,9 @@ public class UpdateException : RuleException
 
 // ── 저장되는 상태 (App_Data/updates/state.json) ──────────────────────────
 // 버전이 바뀌어도 읽을 수 있어야 하므로 항목은 추가만 하고 뜻을 바꾸지 않는다
-public record ReleaseInfo(string Version, string File, string? Sha256, long Size, DateTime? Published, string? Page, string? Notes, string? Schema, string? Rid);
+// Signed: 이 빌드의 공개키로 서명을 확인한 매니페스트에서 읽었는지 (서명 확인을 하는 빌드는 이것만 받는다)
+public record ReleaseInfo(string Version, string File, string? Sha256, long Size, DateTime? Published, string? Page, string? Notes, string? Schema, string? Rid,
+    bool Signed = false);
 
 public record StagedUpdate(string Version, string Dir, string Sha256, string? Schema, string? Notes, DateTime At, string Origin, string By);
 
@@ -66,6 +69,16 @@ public record PreviousVersion(string Version, string Schema, string Dir, DateTim
 public record UpdateLog(DateTime At, string Kind, string From, string To, string By, bool Ok, string? Error);
 
 public record PendingSwap(string Kind, string From, string To, string FromSchema, string By, DateTime At);
+
+// 적용한 새 버전이 시작되지 않은 일. 교체 도우미가 기록한다(RolledBack: 이전 버전으로 자동으로 되돌렸는지).
+// 이 버전은 자동으로 다시 받거나 적용하지 않는다 — 관리자가 화면에서 '다시 시도'할 수 있다
+public record StartFailure(string Version, string From, string Error, string? Detail, bool RolledBack, DateTime At);
+
+// 서버가 요청을 받기 시작했다는 표시 (App_Data/updates/started.json). 교체 도우미가 새 버전이 떴는지 이것으로 안다
+public record StartedMark(string Build, string Version, int Pid, DateTime At)
+{
+    public const string FileName = "started.json";
+}
 
 public class UpdateState
 {
@@ -83,25 +96,32 @@ public class UpdateState
     public PendingSwap? Pending { get; set; }
     public string? SkipAuto { get; set; }        // 되돌린 버전 — 자동으로는 다시 받거나 적용하지 않는다 (직접 누르면 가능)
     public List<UpdateLog> History { get; set; } = new();
+    public StartFailure? StartFailure { get; set; }   // 적용했지만 시작되지 않은 버전 (교체 도우미가 기록)
 }
 
 // ── 새 버전을 어디서 찾을지 (Update:Source) ──────────────────────────────
 //   github:<owner>/<repo>   GitHub 릴리스. 사내망에서 api.github.com 은 막혀 있어 github.com 주소를 먼저 쓴다
 //   https://…               그 주소 아래의 GanttScheduler.json 과 패키지 (사내 서버)
 //   폴더 경로               그 폴더의 GanttScheduler.json 과 패키지 (공유 폴더, 인터넷이 없는 서버)
+// 빌드에 공개키(update-key.pub)가 들어 있으면 매니페스트 옆의 GanttScheduler.json.sig 로 서명을 확인하고, 맞지 않으면 받지 않는다
 public class UpdateSource
 {
     public const string ManifestName = "GanttScheduler.json";
+    public const string SignatureName = ManifestName + UpdateKey.SignatureSuffix;
     public const string AssetName = "GanttScheduler-win-x64.zip";
 
     private readonly string _source;
     private readonly HttpClient _http;
 
-    public UpdateSource(string? source, AppBuild build)
+    public UpdateSource(string? source, AppBuild build) : this(source, build, UpdateKey.FromAssembly(), null) { }
+
+    // 시험용: 공개키와 HTTP 처리기를 바꿔 끼운다 (네트워크 없이 GitHub 응답을 흉내 낸다)
+    internal UpdateSource(string? source, AppBuild build, UpdateKey? key, HttpMessageHandler? handler)
     {
         _source = (source ?? "").Trim();
+        Key = key;
         // 시스템 프록시를 쓰고, 사내 프록시가 Windows 로그인 인증을 요구해도 통과하게 한다
-        var handler = new HttpClientHandler
+        handler ??= new HttpClientHandler
         {
             UseProxy = true,
             DefaultProxyCredentials = CredentialCache.DefaultCredentials,
@@ -110,6 +130,12 @@ public class UpdateSource
         _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };   // 시간 제한은 호출마다 토큰으로
         _http.DefaultRequestHeaders.UserAgent.ParseAdd($"GanttScheduler/{build.VersionText}");
     }
+
+    // 서명 확인에 쓰는 공개키. null 이면 이 빌드는 서명을 확인하지 않는다(키를 만들기 전 빌드)
+    public UpdateKey? Key { get; }
+
+    // api.github.com 단계의 시간 제한. 사내망은 이 주소가 막혀 응답 없이 시간만 끄는 경우가 많아, 전체 제한(30초)을 다 쓰지 않게 따로 둔다
+    internal TimeSpan ApiTimeout { get; init; } = TimeSpan.FromSeconds(8);
 
     public bool Configured => _source.Length > 0;
     private bool IsGitHub => _source.StartsWith("github:", StringComparison.OrdinalIgnoreCase);
@@ -127,41 +153,76 @@ public class UpdateSource
     {
         if (!Configured)
             throw new UpdateException("업데이트를 받아 올 위치가 지정되지 않았습니다.", "설정 Update:Source 를 지정하거나, 배포 파일(zip)을 직접 올려 적용하세요.");
-        if (!IsGitHub) return await FromManifestAsync(ct);
+        if (!IsGitHub) return await ManifestAsync(ManifestLocation(null), ct);
 
+        // 매니페스트 → 리다이렉트 → API 순서로 찾는다. 앞 단계가 "없음(404)"으로 끝났으면 그것이 대표 원인이다:
+        // 뒤 단계(사내망에서 막힌 api.github.com)의 시간 초과가 '응답 없음'으로 바뀌어 진짜 원인을 가리지 않게 한다
         Exception? first = null;
-        foreach (var source in new Func<CancellationToken, Task<ReleaseInfo?>>[] { FromManifestAsync, FromRedirectAsync, FromApiAsync })
+        var notFound = false;
+        foreach (var source in new Func<CancellationToken, Task<ReleaseInfo?>>[] { c => ManifestAsync(ManifestLocation(null), c), FromRedirectAsync, FromApiAsync })
         {
             try
             {
                 var r = await source(ct);
                 if (r != null) return r;
+                notFound = true;
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                if (notFound) return null;
+                throw;
+            }
+            catch (UpdateException) { throw; }   // 서명 불일치처럼 다음 방법으로 넘어가면 안 되는 실패
             catch (Exception ex) { first ??= ex; }   // 다음 방법으로
         }
+        if (notFound) return null;
         if (first != null) throw first;
         return null;
     }
 
-    private async Task<ReleaseInfo?> FromManifestAsync(CancellationToken ct)
+    // 매니페스트 위치: version 이 null 이면 최신, 아니면 그 버전의 릴리스
+    private string ManifestLocation(string? version) =>
+        IsGitHub ? (version == null ? $"{ReleasesPage}/latest/download/{ManifestName}" : $"{ReleasesPage}/download/v{version}/{ManifestName}")
+        : IsHttp ? $"{_source.TrimEnd('/')}/{ManifestName}"
+        : Path.Combine(_source, ManifestName);
+
+    // 매니페스트를 읽고, 공개키가 있으면 같은 곳의 .sig 로 서명을 확인한다. 매니페스트가 없으면 null
+    private async Task<ReleaseInfo?> ManifestAsync(string location, CancellationToken ct)
     {
-        string? json;
-        if (IsGitHub) json = await GetTextAsync($"{ReleasesPage}/latest/download/{ManifestName}", ct);
-        else if (IsHttp) json = await GetTextAsync($"{_source.TrimEnd('/')}/{ManifestName}", ct);
-        else
+        if (!IsGitHub && !IsHttp && !Directory.Exists(_source))
+            throw new UpdateException($"업데이트 폴더를 열 수 없습니다: {_source}", "폴더 경로와 서버 계정의 읽기 권한을 확인하세요.");
+        var bytes = await GetBytesAsync(location, ct);
+        if (bytes == null) return null;
+        var signed = false;
+        if (Key != null)
         {
-            var path = Path.Combine(_source, ManifestName);
-            if (!Directory.Exists(_source))
-                throw new UpdateException($"업데이트 폴더를 열 수 없습니다: {_source}", "폴더 경로와 서버 계정의 읽기 권한을 확인하세요.");
-            json = File.Exists(path) ? await File.ReadAllTextAsync(path, ct) : null;
+            var sig = await GetBytesAsync(location + UpdateKey.SignatureSuffix, ct);
+            CheckSignature(Key, bytes, sig);
+            signed = true;
         }
-        return json == null ? null : ParseManifest(json);
+        var info = ParseManifest(bytes);
+        return info == null ? null : info with { Signed = signed };
     }
 
-    public static ReleaseInfo? ParseManifest(string json)
+    // 서명이 없거나 맞지 않으면 받지 않는다 (올린 파일도 같은 규칙)
+    public static void CheckSignature(UpdateKey key, byte[] manifest, byte[]? signature)
     {
-        using var doc = JsonDocument.Parse(json);
+        if (signature == null || signature.Length == 0)
+            throw new UpdateException($"배포 정보에 서명({SignatureName})이 없습니다.",
+                "이 서버는 서명된 배포 파일만 받습니다. 릴리스의 GanttScheduler.json 과 GanttScheduler.json.sig 를 함께 두었는지 확인하세요.");
+        if (!key.Verify(manifest, signature))
+            throw new UpdateException("배포 정보의 서명이 맞지 않습니다. 정식 배포 파일이 아니거나 내용이 바뀌었습니다.",
+                $"공식 릴리스에서 파일을 다시 받아 주세요. 계속되면 서명 키(공개키 지문 {key.Id})가 바뀌지 않았는지 관리자에게 확인하세요.");
+    }
+
+    public static ReleaseInfo? ParseManifest(string json) => ParseManifest(Encoding.UTF8.GetBytes(json));
+
+    public static ReleaseInfo? ParseManifest(byte[] bytes)
+    {
+        // 메모장 등으로 저장한 파일의 BOM 은 건너뛴다 (서명은 원래 바이트로 확인한다)
+        var span = bytes.AsMemory();
+        if (span.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) span = span[3..];
+        using var doc = JsonDocument.Parse(span);
         var m = doc.RootElement;
         if (!AppBuild.TryParseVersion(Str(m, "version"), out var version)) return null;
         var sha = Str(m, "sha256");
@@ -183,20 +244,24 @@ public class UpdateSource
         var final = res.RequestMessage?.RequestUri?.AbsolutePath ?? "";
         var i = final.LastIndexOf("/tag/", StringComparison.Ordinal);
         if (i < 0 || !AppBuild.TryParseVersion(Uri.UnescapeDataString(final[(i + 5)..]), out var version)) return null;
+        if (Key != null) return await SignedOf(version.ToString(3), ct);
         return new ReleaseInfo(version.ToString(3), AssetName, null, 0, null, $"{ReleasesPage}/tag/v{version.ToString(3)}", "", "", "");
     }
 
-    // GitHub API (사외망)
+    // GitHub API (사외망). 막힌 곳에서 오래 기다리지 않도록 짧게 끊는다
     private async Task<ReleaseInfo?> FromApiAsync(CancellationToken ct)
     {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(ApiTimeout);
         using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repo}/releases/latest");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        using var res = await _http.SendAsync(req, ct);
+        using var res = await _http.SendAsync(req, limit.Token);
         if (res.StatusCode == HttpStatusCode.NotFound) return null;
         res.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(limit.Token));
         var r = doc.RootElement;
         if (!AppBuild.TryParseVersion(Str(r, "tag_name"), out var version)) return null;
+        if (Key != null) return await SignedOf(version.ToString(3), ct);
         foreach (var a in r.GetProperty("assets").EnumerateArray())
         {
             if (!Str(a, "name").Equals(AssetName, StringComparison.OrdinalIgnoreCase)) continue;
@@ -209,6 +274,11 @@ public class UpdateSource
         }
         return null;
     }
+
+    // 서명을 확인하는 빌드: 버전만 알아낸 경우에도 그 릴리스의 서명된 매니페스트가 있어야 받는다
+    private async Task<ReleaseInfo?> SignedOf(string version, CancellationToken ct) =>
+        await ManifestAsync(ManifestLocation(version), ct)
+        ?? throw new UpdateException($"v{version} 릴리스에 서명된 배포 정보({ManifestName})가 없습니다.", "정식 배포 워크플로로 만든 릴리스인지 확인하세요.");
 
     // 패키지를 target 으로 받는다 (진행률 0~100)
     public async Task DownloadAsync(ReleaseInfo r, string target, Action<int> progress, CancellationToken ct)
@@ -251,6 +321,16 @@ public class UpdateSource
         if (res.StatusCode == HttpStatusCode.NotFound) return null;
         res.EnsureSuccessStatusCode();
         return await res.Content.ReadAsStringAsync(ct);
+    }
+
+    // 주소면 받아 오고, 폴더 경로면 파일을 읽는다. 없으면(404) null
+    private async Task<byte[]?> GetBytesAsync(string location, CancellationToken ct)
+    {
+        if (!IsGitHub && !IsHttp) return File.Exists(location) ? await File.ReadAllBytesAsync(location, ct) : null;
+        using var res = await _http.GetAsync(location, ct);
+        if (res.StatusCode == HttpStatusCode.NotFound) return null;
+        res.EnsureSuccessStatusCode();
+        return await res.Content.ReadAsByteArrayAsync(ct);
     }
 
     private static async Task CopyAsync(Stream src, string target, long total, Action<int> progress, CancellationToken ct)

@@ -1,15 +1,27 @@
 # 업데이트 자체 시험: 실제 배포 형태(런타임 포함)로 게시한 서버가 스스로 새 버전으로 바뀌고 되돌아오는지 확인한다.
 # Windows 는 실행 중인 파일을 덮어쓸 수 없어 Linux 와 동작이 다르므로 두 곳에서 모두 돌린다.
+# 시작하자마자 죽는 새 버전을 자동으로 되돌리는지, 서명된 배포 정보만 받는지도 여기서 실제로 확인한다(tools/release/selftest.sh).
 name: 업데이트 자체 시험
 
 on:
   push:
     branches: [main]
+    # 업데이트·서비스 실행·시작 과정·배포 패키지에 관계된 파일만. 업무 화면·서비스(ProjectService 등)는 넣지 않는다
     paths:
       - 'src/GanttScheduler/Services/Update*.cs'
-      - 'src/GanttScheduler/Services/*Service*.cs'
+      - 'src/GanttScheduler/Services/ServiceInstaller.cs'
+      - 'src/GanttScheduler/Services/WindowsServiceSupport.cs'
+      - 'src/GanttScheduler/Services/Identity.cs'
       - 'src/GanttScheduler/Program.cs'
+      - 'src/GanttScheduler/Data/Seeder.cs'
+      - 'src/GanttScheduler/Data/DbSetup.cs'
+      - 'src/GanttScheduler/*.csproj'
+      - 'src/GanttScheduler/update-key.pub'
+      - 'src/GanttScheduler/appsettings*.json'
       - 'src/GanttScheduler/Pages/Admin/Update*'
+      - 'src/GanttScheduler/wwwroot/js/update.js'
+      - 'Directory.*.props'
+      - '**/packages.lock.json'
       - 'tools/release/**'
       - '.github/workflows/update-selftest.yml'
   workflow_dispatch:
@@ -39,7 +51,7 @@ jobs:
             rid: linux-x64
             mode: direct
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -48,7 +60,10 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
-      - name: 확인 → 받기 → 적용 → 되돌리기
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      # 복원은 selftest.sh 가 잠금 파일대로(locked-mode) 한다
+      - name: 확인 → 받기 → 적용 → 되돌리기 → 시작 실패 자동 되돌림
         env:
           RID: ${{ matrix.rid }}
           MODE: ${{ matrix.mode }}

@@ -1,0 +1,28 @@
+# 패키지 버전은 Directory.Packages.props 에 고정돼 있다. 올리는 일은 주 1회 Dependabot PR 로 하고,
+# CI 를 통과한 PR 만 합친다 (packages.lock.json 도 같은 PR 에서 갱신된다)
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      # EF Core·호스팅·테스트 호스트는 같은 런타임 버전끼리 함께 올려야 한다
+      dotnet-runtime:
+        patterns:
+          - "Microsoft.EntityFrameworkCore*"
+          - "Microsoft.Extensions.*"
+          - "Microsoft.AspNetCore.*"
+      test:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Seoul

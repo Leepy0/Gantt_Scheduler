@@ -685,6 +685,9 @@ input[type=file] { width: 100%; min-height: var(--tap); padding: 8px; border: 1p
 .form-note:has(> div) > .ic { margin-top: 2px; }
 .upload-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .upload-row input[type=file] { flex: 1; min-width: 0; min-height: var(--tap); padding: 8px 0; }
+/* 업데이트: 적용했지만 시작되지 않은 버전 안내 (자세한 오류·다시 시도) */
+.start-failure .notes { margin-top: 8px; font-weight: 400; max-height: 160px; }
+.start-failure .form-actions { margin-top: 8px; justify-content: flex-start; flex-wrap: wrap; }
 
 /* 서버 버전·연결 알림 (모든 화면 공통) */
 .notice {

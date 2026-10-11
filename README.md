@@ -52,7 +52,7 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 알아둘 것:
 
-- **서비스 계정**: 서비스는 전용 계정 `NT SERVICE\GanttScheduler` 로 돈다(SYSTEM 권한을 쓰지 않는다). 설치 명령이 이 계정에 프로그램 폴더 수정 권한과 자기 서비스를 시작할 권한을 준다. 둘 다 자동 업데이트에 필요하다.
+- **서비스 계정**: 서비스는 전용 계정 `NT SERVICE\GanttScheduler` 로 돈다(SYSTEM 권한을 쓰지 않는다). 설치 명령이 이 계정에 프로그램 폴더 수정 권한과 자기 서비스를 시작·중지할 권한을 준다. 모두 자동 업데이트(파일 교체, 다시 시작, 시작되지 않은 새 버전 되돌리기)에 필요하다. 예전에 설치한 서버는 `install-service.cmd` 를 다시 실행하면 중지 권한이 더해진다.
 - **SQL Server 를 Windows 인증으로** 쓰려면(`Trusted_Connection=True`) 그 계정의 로그인을 만들어야 한다. 같은 서버의 SQL Server 면 아래처럼, 다른 서버면 `도메인\서버이름$`(컴퓨터 계정)으로 만든다.
   ```sql
   CREATE LOGIN [NT SERVICE\GanttScheduler] FROM WINDOWS;
@@ -104,13 +104,15 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 |---|---|---|
 | 자동 | 6시간마다 새 버전을 확인해 받아 두고(SHA-256 검증), 설정한 시간대(기본 02~05시, 한국 시간)에 30분 동안 요청이 없으면 적용 | 서버가 `Update:Source` 를 읽을 수 있어야 한다 |
 | 직접 | "지금 확인" → "받기" → "지금 적용" | 위와 같음 |
-| 파일로 | 릴리스의 zip 을 브라우저로 받아 업데이트 화면에 올린 뒤 "지금 적용" | 없음 (서버가 인터넷에 못 나가도 된다) |
+| 파일로 | 릴리스의 zip 을 브라우저로 받아 업데이트 화면에 올린 뒤 "지금 적용". 서명을 확인하는 서버는 `GanttScheduler.json`·`GanttScheduler.json.sig` 도 함께 골라 세 파일을 올린다 | 없음 (서버가 인터넷에 못 나가도 된다) |
 
 - **적용**하면 서버가 잠깐(보통 1분 이내) 멈췄다가 서비스가 새 버전으로 다시 시작된다. 열려 있던 화면은 다음 확인 때(1분 이내) **새로 고침 안내**를 띄운다. 입력 중인 내용을 지우지 않도록 자동으로 새로 고치지는 않는다. 멈춘 사이에 저장을 누르면 "연결하지 못했습니다"가 뜨고 입력한 내용은 그대로 남는다.
 - **DB 구조가 바뀌는 업데이트**는 자동으로 적용하지 않는다. 화면에 표시되며, DB 를 백업한 뒤 관리자가 직접 누른다.
 - **되돌리기**: 직전 버전 파일을 한 세대 보관한다. DB 구조가 바뀌지 않은 업데이트만 프로그램을 되돌릴 수 있다. 되돌린 버전은 자동으로 다시 적용하지 않는다.
+- **시작 확인과 자동 되돌리기**: 적용한 새 버전이 2분(`Update:VerifySeconds`) 안에 요청을 받기 시작하지 않거나 시작하다 멈추면, DB 구조가 같은 업데이트는 이전 버전으로 자동으로 되돌린다. 업데이트 화면에 이유(시작 오류 앞부분)와 **다시 시도**·**안내 닫기**가 보이고, 그 버전은 자동으로 다시 받거나 적용하지 않는다. DB 구조가 바뀌는 업데이트는 되돌리지 않으므로 DB 백업을 복원한 뒤 이전 버전 zip 으로 설치한다. IIS 로 운영하면 이 확인을 하지 않는다.
+- **서명 확인**: 공개키(`update-key.pub`)가 든 버전부터는 릴리스의 서명이 맞는 배포 파일만 받는다. 화면의 "서명 검증" 줄에 켜짐(공개키 지문)·꺼짐이 보인다.
 - 바뀌는 것은 배포 패키지에 든 파일뿐이다. `App_Data`, 서버에서 고친 `appsettings.Production.json`·`web.config`, 폴더에 직접 넣어 둔 파일은 그대로 둔다.
-- 문제가 생기면 서버의 `App_Data/updates/apply.log` 를 본다.
+- 문제가 생기면 서버의 `App_Data/updates/apply.log` 와 `App_Data/startup-error.log`(서버가 시작하다 죽은 이유)를 본다.
 
 `Update:Source` 에 쓸 수 있는 값:
 
@@ -125,7 +127,10 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 소스는 이 레포(비공개)에, 배포 파일은 공개 레포 [Gantt_Scheduler_Release](https://github.com/Leepy0/Gantt_Scheduler_Release) 에 둔다. 서버는 로그인 없이 읽을 수 있는 공개 레포의 릴리스만 본다.
 
 1. `src/GanttScheduler/GanttScheduler.csproj` 의 `<Version>` 을 올려 커밋한다. 올리지 않으면 서버가 새 버전으로 보지 않는다.
-2. GitHub › Actions › **배포 패키지** › Run workflow › "정식 배포" 체크. 테스트를 통과하면 `vX.Y.Z` 릴리스(zip, `.sha256`, `GanttScheduler.json`)를 두 레포에 만들고, 공개 주소에서 실제로 받아지는지 확인한다.
+2. 그 커밋의 **CI 가 통과**했는지 확인한다(Actions › CI). 정식 배포는 CI 가 성공한 커밋만 내보낸다 — 실행 중이면 끝날 때까지 기다리고, 실패했거나 실행이 없으면 멈춘다.
+3. GitHub › Actions › **배포 패키지** › Run workflow › "정식 배포" 체크. `vX.Y.Z` 릴리스(zip, `.sha256`, `GanttScheduler.json`, 서명 `GanttScheduler.json.sig`)를 두 레포에 만들고, 공개 주소에서 실제로 받아지는지(서명까지) 확인한다.
+
+main 에 push 해도 진행 중인 정식 배포는 취소되지 않는다(테스트 빌드와 실행 그룹이 다르다).
 
 워크플로가 공개 레포에 쓰려면 토큰이 필요하다. **처음 한 번** 등록한다.
 
@@ -138,9 +143,25 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 토큰이 없거나 만료되면 워크플로의 "공개 배포 레포에 올리기" 단계가 실패하고 이유를 알려 준다(서버에는 새 버전이 보이지 않는다). 토큰을 다시 등록한 뒤 Actions 에서 실패한 실행을 열어 **Re-run failed jobs** 를 누르면 같은 버전을 다시 만들어 올린다.
 
+#### 서명 키 (배포 파일 출처 확인)
+
+릴리스를 올리는 토큰이나 GitHub 계정이 털려도 서버가 남의 파일을 받지 않도록, 배포 정보(`GanttScheduler.json`)에 서명한다. **처음 한 번** PC(또는 openssl 이 있는 곳)에서 만든다.
+
+1. `tools/release/keygen.sh` 실행 → 공개키 `src/GanttScheduler/update-key.pub` 가 생기고, 개인키가 화면에 나온다.
+2. 이 레포 › Settings › Secrets and variables › Actions › New repository secret
+   - Name: `RELEASE_SIGNING_KEY`, Secret: 화면의 개인키 전체(`-----BEGIN EC PRIVATE KEY-----` 부터 `END` 줄까지)
+   - 개인키는 저장소·메신저·메일에 두지 않는다. 시크릿에만 둔다.
+3. `update-key.pub` 를 커밋하고 정식 배포한다. 이 버전이 설치된 서버부터는 서명이 맞는 업데이트만 받는다(업데이트 화면 "서명 검증: 켜짐").
+
+- 공개키가 저장소에 있는데 시크릿이 없으면 정식 배포가 태그를 만들기 전에 멈추고 이유를 알린다. 시크릿이 공개키와 짝이 아니어도 멈춘다.
+- 키 바꾸기: `tools/release/keygen.sh --rotate` → 새 공개키가 기존 공개키 뒤에 붙는다. ① 시크릿은 그대로(옛 키) 둔 채 정식 배포 → 서버가 새 공개키가 든 버전을 받는다 ② 시크릿을 새 개인키로 바꾼다 ③ 모든 서버가 올라온 뒤 `update-key.pub` 에서 옛 키를 지운다.
+- 개인키를 잃어버리면 서명된 업데이트를 더 만들 수 없다. 새 키를 만들고, 각 서버에는 새 공개키가 든 버전의 zip 을 직접 설치한다(서비스를 멈추고 파일을 덮어쓴 뒤 시작).
+
 공개되는 것은 배포 파일(실행 파일)과 릴리스의 변경 내용(커밋 메시지)이다. .NET 실행 파일은 도구로 소스에 가깝게 되돌려 볼 수 있으므로, 비밀 값(연결 문자열·토큰)은 코드나 `appsettings.json` 에 넣지 않고 서버의 `appsettings.Production.json` 에만 둔다.
 
-main 에 push 할 때마다 만들어지는 `dev` 릴리스는 이 레포에만 올라가는 시험용이며 자동 업데이트 대상이 아니다.
+main 에 push 해 CI 가 통과할 때마다 만들어지는 `dev` 릴리스는 이 레포에만 올라가는 시험용이며 자동 업데이트 대상이 아니다.
+
+패키지 버전은 `Directory.Packages.props` 에 고정돼 있고 CI·배포는 잠금 파일(`packages.lock.json`)대로만 복원한다. 패키지를 올리는 일은 Dependabot PR(주 1회)로 하고, 직접 올릴 때는 `Directory.Packages.props` 를 고친 뒤 `dotnet restore --force-evaluate` 로 잠금 파일을 다시 만들어 함께 커밋한다.
 
 ## 설정 (`appsettings.json`)
 
@@ -156,6 +177,7 @@ main 에 push 할 때마다 만들어지는 `dev` 릴리스는 이 레포에만 
 | `Update:Source` | `github:Leepy0/Gantt_Scheduler_Release` | 새 버전을 받아 올 곳 (위 "업데이트" 참고). 비우면 파일로 올리는 방식만 쓴다 |
 | `Update:Path` | `App_Data/updates` | 받아 둔 새 버전, 되돌리기용 이전 버전, 상태·기록 |
 | `Update:CheckHours` | `6` | 새 버전 확인 주기(시간) |
+| `Update:VerifySeconds` | `120` | 업데이트 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 이전 버전으로 되돌린다. `0` 이면 확인하지 않는다 |
 | `TrustForwardedHeaders` | `false` | 리버스 프록시 뒤에서 실제 접속 IP(X-Forwarded-For) 사용. 같은 서버의 프록시만 믿는다 |
 | `Access:FirstAdminLocalOnly` | `true` | 관리자가 없을 때 서버 자신(루프백)에서 등록한 사람만 관리자가 된다. `false` 면 처음 등록한 사람 |
 | `Access:ReconfirmDays` | `30` | 이 일수 넘게 쓰지 않은 IP 는 "OOO 님이 맞습니까?"를 다시 묻는다. `0` 이면 묻지 않는다 |

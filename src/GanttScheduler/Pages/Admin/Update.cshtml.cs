@@ -42,17 +42,40 @@ public class UpdateModel : PageModel
 
     public Task<IActionResult> OnPostRollbackAsync() => Run(() => _updates.Rollback(_me.Name));
 
+    public Task<IActionResult> OnPostDismissFailureAsync() => Run(() => _updates.DismissFailure());
+
     public Task<IActionResult> OnPostSettingsAsync([FromBody] SettingsInput input) =>
         Run(() => _updates.SaveSettings(new UpdateSettings(input.AutoCheck, input.AutoApply, input.WindowFrom, input.WindowTo, input.IdleMinutes)));
 
-    public Task<IActionResult> OnPostUploadAsync(IFormFile? file) => Run(async () =>
+    // 배포 파일(zip)과 함께 배포 정보(GanttScheduler.json)·서명(GanttScheduler.json.sig)을 올릴 수 있다.
+    // 한 입력란에서 여러 파일을 골라도, 입력란 이름이 달라도 되게 파일 이름(확장자)으로 가른다
+    public Task<IActionResult> OnPostUploadAsync() => Run(async () =>
     {
-        if (file == null || file.Length == 0) throw new RuleException("배포 파일(zip)을 선택해 주세요.", "file");
-        if (!file.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            throw new UpdateException("zip 파일만 올릴 수 있습니다.", "릴리스의 GanttScheduler-win-x64.zip 을 그대로 올려 주세요.");
-        await using var stream = file.OpenReadStream();
-        await _updates.UploadAsync(stream, _me.Name, HttpContext.RequestAborted);
+        var files = Request.HasFormContentType ? Request.Form.Files : null;
+        if (files == null || files.Count == 0 || files.All(f => f.Length == 0)) throw new RuleException("배포 파일(zip)을 선택해 주세요.", "file");
+        IFormFile? zip = null, manifest = null, signature = null;
+        foreach (var f in files.Where(f => f.Length > 0))
+        {
+            var name = f.FileName;
+            if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) zip ??= f;
+            else if (name.EndsWith(UpdateKey.SignatureSuffix, StringComparison.OrdinalIgnoreCase)) signature ??= f;
+            else if (name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) manifest ??= f;
+            else throw new UpdateException($"올릴 수 없는 파일입니다: {name}", "릴리스의 zip, GanttScheduler.json, GanttScheduler.json.sig 만 올려 주세요.");
+        }
+        if (zip == null) throw new UpdateException("zip 파일이 없습니다.", "릴리스의 GanttScheduler-win-x64.zip 을 그대로 올려 주세요.");
+        await using var stream = zip.OpenReadStream();
+        await _updates.UploadAsync(stream, _me.Name, HttpContext.RequestAborted, await BytesAsync(manifest), await BytesAsync(signature));
     });
+
+    // 배포 정보·서명은 몇 KB 라 메모리로 읽는다 (너무 크면 엉뚱한 파일이다)
+    private static async Task<byte[]?> BytesAsync(IFormFile? file)
+    {
+        if (file == null) return null;
+        if (file.Length > 1024 * 1024) throw new UpdateException($"{file.FileName} 이 너무 큽니다.", "릴리스의 GanttScheduler.json·GanttScheduler.json.sig 를 그대로 올려 주세요.");
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+        return ms.ToArray();
+    }
 
     private Task<IActionResult> Run(Action action) => Run(() => { action(); return Task.CompletedTask; });
 

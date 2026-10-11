@@ -10,7 +10,7 @@ namespace GanttScheduler.Tests;
 
 // 서버 자동 업데이트: 확인·받기·검증, 파일 교체와 되돌리기, 자동 적용 판단.
 // 실제로 서버를 내렸다 올리는 흐름은 tools/release/selftest.sh 가 따로 확인한다
-public class UpdateTests : IDisposable
+public partial class UpdateTests : IDisposable
 {
     private sealed class FakeLifetime : IHostApplicationLifetime
     {
@@ -39,8 +39,9 @@ public class UpdateTests : IDisposable
         try { Directory.Delete(_root, true); } catch (IOException) { /* 정리 실패는 무시 */ }
     }
 
-    private UpdateService Service(AppBuild? build = null) => new(
-        build ?? Release, new UpdatePaths { AppDir = AppDir, DataDir = DataDir }, new UpdateSource(SourceDir, build ?? Release),
+    // 공개키는 빌드에 넣은 것(update-key.pub)과 상관없이 시험마다 정한다 — 기본은 서명 확인을 하지 않는 빌드
+    private UpdateService Service(AppBuild? build = null, UpdateKey? key = null, UpdateSource? source = null) => new(
+        build ?? Release, new UpdatePaths { AppDir = AppDir, DataDir = DataDir }, source ?? new UpdateSource(SourceDir, build ?? Release, key, null),
         _activity, new FakeLifetime(), NullLogger<UpdateService>.Instance, new ConfigurationBuilder().Build());
 
     private static void Put(string dir, string rel, string text)

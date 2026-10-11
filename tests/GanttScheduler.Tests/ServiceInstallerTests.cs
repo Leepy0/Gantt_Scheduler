@@ -41,10 +41,10 @@ public class ServiceInstallerTests
         const string sacl = "S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
 
         var result = ServiceInstaller.AddStartRight(dacl + sacl, Sid);
-        Assert.Equal($"{dacl}(A;;RPLC;;;{Sid}){sacl}", result);
+        Assert.Equal($"{dacl}(A;;RPWPLC;;;{Sid}){sacl}", result);
 
         // 감사 설정이 없는 경우, 앞뒤 공백·줄바꿈이 붙은 sc 출력
-        Assert.Equal($"{dacl}(A;;RPLC;;;{Sid})", ServiceInstaller.AddStartRight("\r\n" + dacl + "\r\n", Sid));
+        Assert.Equal($"{dacl}(A;;RPWPLC;;;{Sid})", ServiceInstaller.AddStartRight("\r\n" + dacl + "\r\n", Sid));
     }
 
     [Fact]
@@ -53,6 +53,15 @@ public class ServiceInstallerTests
         const string sddl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
         var once = ServiceInstaller.AddStartRight(sddl, Sid);
         Assert.Equal(once, ServiceInstaller.AddStartRight(once, Sid));
+    }
+
+    [Fact]
+    public void 예전_설치의_시작_권한은_중지_권한까지_있는_것으로_바꾼다()
+    {
+        // 업데이트 도우미가 시작되지 않은 새 버전을 되돌리려면 서비스를 멈출 수 있어야 한다 (install 을 다시 실행하면 고쳐진다)
+        const string dacl = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)";
+        var old = $"{dacl}(A;;RPLC;;;{Sid})S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)";
+        Assert.Equal($"{dacl}(A;;RPWPLC;;;{Sid})S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)", ServiceInstaller.AddStartRight(old, Sid));
     }
 
     [Fact]
