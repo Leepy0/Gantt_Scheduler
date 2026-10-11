@@ -55,6 +55,8 @@ public class IndexModel : PageModel
         try
         {
             await action();
+            // 법인·내년 공휴일을 등록하면 상단 칩('첫 설정 필요'·'내년 공휴일 없음')이 몇 분 기다리지 않고 바로 사라지게 한다
+            if (kind is "holiday" or "location") HttpContext.RequestServices.GetService<OpsAlerts>()?.Invalidate();
             return new JsonResult(new { ok = true, nodes = await _masters.ListAsync(kind) });
         }
         catch (RuleException ex)

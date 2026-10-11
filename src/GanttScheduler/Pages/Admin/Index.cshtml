@@ -13,6 +13,10 @@
         <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>조회 전용</span>
     }
     <span class="spacer"></span>
+    @if (Model.IsAdmin)
+    {
+        <a class="btn small" asp-page="/Admin/Status" id="status-link"><svg class="ic"><use href="#i-chart" /></svg>서버 상태</a>
+    }
     <a class="btn small" asp-page="/Admin/Update"><svg class="ic"><use href="#i-download" /></svg>업데이트 <span class="num muted">v@(Updates.Build.VersionText)</span></a>
 </div>
 

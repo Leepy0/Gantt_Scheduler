@@ -810,3 +810,50 @@ dialog.sheet:focus { outline: none; }
     /* 넓은 시트(단계 일정 편집·미리보기)도 모바일에서는 화면 폭 전체의 하단 시트로 (넓은 시트 폭 규칙이 모바일 규칙을 덮던 문제) */
     dialog.sheet.wide { width: 100vw; max-width: 100vw; }
 }
+
+/* ── 백업·운영 가시성: 관리자 알림 칩, 오류 번호, 서버 상태, 백업·진단 ─────── */
+.top-update.warn:hover { background: var(--warn); color: #fff; }
+.error-id { color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.error-id code { color: var(--text-2); user-select: all; }
+.status-body { display: flex; flex-direction: column; gap: 16px; }
+.status-body .card { display: flex; flex-direction: column; gap: 12px; }
+.status-body .card-head { margin-bottom: 0; }
+.ops-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.path { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.ops-table td { vertical-align: top; }
+.ops-table .ops-name { font-weight: 600; white-space: nowrap; }
+.ops-table td p { overflow-wrap: anywhere; }
+.ops-table .fix { margin-top: 4px; }
+.setup-list { display: flex; flex-direction: column; }
+.setup-item { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.setup-item + .setup-item { border-top: 1px solid var(--line); }
+.setup-mark { display: inline-flex; color: var(--warn); }
+.setup-item.done .setup-mark { color: var(--ok); }
+.setup-name { font-weight: 600; }
+.log-list { display: flex; flex-direction: column; max-height: 480px; overflow: auto; }
+.log-row { padding: 8px 0; }
+.log-row + .log-row { border-top: 1px solid var(--line); }
+.log-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.log-cat { font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.log-msg { margin-top: 4px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.notes.diag { max-height: 320px; font-size: var(--fs-xs); }
+.backup-table td { vertical-align: top; }
+.backup-name { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+    /* 점검 표는 좁은 화면에서 항목·상태 한 줄, 내용 한 줄로 쌓는다 (세 칸이면 항목 이름이 글자마다 꺾인다) */
+    .ops-table thead { display: none; }
+    .ops-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .ops-table td { padding: 0; border-top: 0; }
+    .ops-table td:nth-child(3) { grid-column: 1 / -1; }
+    .ops-table .ops-name { white-space: normal; }
+    /* 백업 목록도 같은 방식: 일시·결과 한 줄, 종류·이름·크기는 아래로 */
+    .backup-table thead { display: none; }
+    .backup-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .backup-table td { padding: 0; border-top: 0; }
+    .backup-table td:nth-child(1) { grid-column: 1; grid-row: 1; font-weight: 600; }
+    .backup-table td:nth-child(5) { grid-column: 2; grid-row: 1; }
+    .backup-table td:nth-child(2), .backup-table td:nth-child(3), .backup-table td:nth-child(4) { grid-column: 1 / -1; }
+    .backup-table td:nth-child(2) p { display: inline; margin-left: 4px; }
+    .setup-item { flex-wrap: wrap; }
+    .setup-item > .btn { width: 100%; }
+}

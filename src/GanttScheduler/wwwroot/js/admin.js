@@ -327,5 +327,15 @@
         } catch (err) { App.toast(err.message, 'error'); }
     });
 
-    load();
+    // 다른 화면(서버 상태의 첫 설정 점검표 등)에서 /Admin#holiday 처럼 탭을 정해 들어올 수 있다
+    function tabFromHash() {
+        var k = location.hash.slice(1);
+        return KINDS[k] ? document.querySelector('#admin-tabs [data-kind="' + k + '"]') : null;
+    }
+    window.addEventListener('hashchange', function () {
+        var t = tabFromHash();
+        if (t && t.dataset.kind !== kind) t.click();
+    });
+    var startTab = tabFromHash();
+    if (startTab) startTab.click(); else load();
 })();
