@@ -25,12 +25,13 @@ public class NotifyTests : IClassFixture<TestDb>
         public List<MailItem> Sent { get; } = new();
         public bool Fail { get; set; }
         public bool Ready { get; set; } = true;
+        public Func<MailItem, Task>? AfterSend { get; set; }      // 보낸 뒤 할 일(보낸 표시 저장을 실패하게 만드는 시험용)
 
-        public Task SendAsync(MailItem mail, CancellationToken ct)
+        public async Task SendAsync(MailItem mail, CancellationToken ct)
         {
             if (Fail) throw new InvalidOperationException("메일 서버가 연결을 거부했습니다");
             Sent.Add(mail);
-            return Task.CompletedTask;
+            if (AfterSend != null) await AfterSend(mail);
         }
     }
 
@@ -176,6 +177,74 @@ public class NotifyTests : IClassFixture<TestDb>
             _db.Clock.Today = new DateOnly(2026, 10, 15);
             await worker.TickAsync(CancellationToken.None);
             Assert.Contains(channel.Sent, m => m.To == "fail@example.com" && m.Body.Contains("[관심 과제] 메일 실패 과제 — 댓글: 용기 시안 공유 (이자동,"));
+        }
+        finally
+        {
+            (_db.Clock.UtcNow, _db.Clock.Today) = saved;
+        }
+    }
+
+    [Fact]
+    public async Task 보낸_뒤_보낸_표시를_저장하지_못해도_보낸_것으로_세고_다음_사람의_표시는_남는다()
+    {
+        var saved = (_db.Clock.UtcNow, _db.Clock.Today);
+        try
+        {
+            // 두 사람이 같은 과제를 관심 과제로 두고, 앞 사람(Id 가 작다)의 보낸 표시 저장만 실패하게 한다
+            int first, second, project;
+            using (var s = _db.NewScope("표시실패"))
+            {
+                s.Me.User!.Email = "mark-fail@example.com";
+                await s.Db.SaveChangesAsync();
+                first = s.Me.Id;
+            }
+            using (var s = _db.NewScope("표시다음"))
+            {
+                s.Me.User!.Email = "mark-next@example.com";
+                await s.Db.SaveChangesAsync();
+                second = s.Me.Id;
+            }
+            Assert.True(first < second);
+            using (var s = _db.NewScope())
+            {
+                var cat = await s.Db.Categories.FirstAsync(c => c.Name == "용기");
+                var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "멕시코");
+                project = await s.Projects.CreateAsync(new ProjectInput("표시 실패 과제", cat.Id, corp.Id, null, _db.Clock.Today, null, null, null, null));
+            }
+            using (var s = _db.NewScope("표시실패")) await s.Projects.WatchAsync(project, true);
+            using (var s = _db.NewScope("표시다음")) await s.Projects.WatchAsync(project, true);
+            using (var s = _db.NewScope("이자동"))
+                await s.Projects.CommentAsync(new CommentInput(project, null, null, "표시 확인"));
+
+            // 메일이 나간 직후 그 사람의 알림 행이 사라지면(다른 곳에서 지움) 보낸 표시 저장이 실패한다
+            var channel = new FakeChannel
+            {
+                AfterSend = async mail =>
+                {
+                    if (mail.To != "mark-fail@example.com") return;
+                    using var s = _db.NewScope();
+                    s.Db.Notifications.RemoveRange(await s.Db.Notifications.Where(n => n.UserId == first).ToListAsync());
+                    await s.Db.SaveChangesAsync();
+                },
+            };
+            var (worker, _, sp) = Worker(channel);
+            using var provider = sp;
+            _db.Clock.UtcNow = Kst(10, 20, 8, 0);
+            _db.Clock.Today = new DateOnly(2026, 10, 20);
+            var run = await worker.TickAsync(CancellationToken.None);
+
+            Assert.NotNull(run);
+            Assert.Equal(0, run!.Failed);                          // 메일은 나갔다 — 보내지 못한 것으로 세지 않는다
+            Assert.Contains(channel.Sent, m => m.To == "mark-fail@example.com");
+            Assert.Contains(channel.Sent, m => m.To == "mark-next@example.com");
+            Assert.Contains("보낸 표시를 남기지 못했습니다", run.Error);
+            // 앞 사람의 실패한 변경이 뒤 사람의 저장에 섞이지 않는다
+            using (var s = _db.NewScope())
+            {
+                var next = await s.Db.Notifications.Where(n => n.UserId == second && n.ProjectId == project).ToListAsync();
+                Assert.NotEmpty(next);
+                Assert.All(next, n => Assert.NotNull(n.EmailedAt));
+            }
         }
         finally
         {

@@ -3,6 +3,7 @@
     'use strict';
 
     var data = App.data();
+    var LIM = data.limits || {};     // 입력 길이 상한 (서버 Limits)
     var P = data.project;
     var today = data.today;
     // 알릴 사람으로 고를 수 있는 사람 [{id, name}]과 '새 활동' 기준(상세를 연 때 서버가 정한 since — 마지막으로 본 시각)
@@ -738,7 +739,7 @@
         var picker = null;
         App.sheet({
             title: '댓글 고치기',
-            html: field('text', '내용', '<textarea name="text" rows="4" maxlength="1000" required>' + esc(a.text) + '</textarea>') +
+            html: field('text', '내용', '<textarea name="text" rows="4" maxlength="' + LIM.text + '" required>' + esc(a.text) + '</textarea>') +
                 '<div data-mentions data-field="mentions"></div>' +
                 '<p class="hint">처음 남긴 글은 기록으로 남고, 목록에는 \'(수정됨)\'이 붙습니다. 새로 고른 사람에게만 알림이 갑니다.</p>',
             primary: '저장',
@@ -802,9 +803,9 @@
             return '<li data-check-row="' + c.id + '"><label class="check"><input type="checkbox" data-check="' + c.id + '"' + (c.done ? ' checked' : '') + ' />' +
                 '<span>' + esc(c.text) + '</span></label>' +
                 (c.done && c.doneBy ? '<span class="muted check-by">' + esc(c.doneBy) + '</span>' : '') +
-                // 완료한 단계의 완료 조건 문구는 고칠 수 없다(서버도 거절한다)
-                (s.completedDate ? '' : '<button type="button" class="btn icon small ghost" data-edit-check="' + c.id + '" aria-label="항목 문구 고치기" title="문구 고치기">' + icon('edit') + '</button>') +
-                '<button type="button" class="btn icon small ghost" data-del-check="' + c.id + '" aria-label="항목 삭제">' + icon('x') + '</button></li>';
+                // 완료한 단계의 완료 조건은 문구를 고치거나 지울 수 없다(서버도 거절한다)
+                (s.completedDate ? '' : '<button type="button" class="btn icon small ghost" data-edit-check="' + c.id + '" aria-label="항목 문구 고치기" title="문구 고치기">' + icon('edit') + '</button>' +
+                    '<button type="button" class="btn icon small ghost" data-del-check="' + c.id + '" aria-label="항목 삭제">' + icon('x') + '</button>') + '</li>';
         }).join('');
     }
 
@@ -943,7 +944,7 @@
         var sid = isNew ? null : s.id;
         var refreshUi = function () {};      // onOpen 이 채운다 (충돌 뒤 사유 칸 표시 등을 최신 값 기준으로 다시 맞춤)
 
-        var html = field('name', '단계명', '<input name="name" maxlength="50" required value="' + esc(isNew ? '' : s.name) + '" />');
+        var html = field('name', '단계명', '<input name="name" maxlength="' + LIM.stageName + '" required value="' + esc(isNew ? '' : s.name) + '" />');
         if (!isNew && s.forecastOver > 0) {
             html += '<p class="form-warn">' + icon('clock') + '<span>작업 기준 예상 종료 ' + s.forecast + ' · 목표일보다 ' + s.forecastOver + '일 늦습니다.</span></p>';
         }
@@ -957,7 +958,7 @@
         if (isNew) html += '<div data-target-preview></div>';
         if (!isNew) {
             html += '<div data-reason hidden class="form">' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유"></textarea>') +
+                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유"></textarea>') +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
                 cascadeWorksHtml(s) +
                 '</div>';
@@ -966,7 +967,7 @@
             html += crossLinksSectionHtml();
             html += '<div class="sheet-section" data-field="check"><h3>체크리스트 <span class="count" data-check-count></span></h3>' +
                 '<ul class="check-list" data-checks></ul>' +
-                '<div class="add-inline"><input data-new-check maxlength="200" placeholder="완료 조건 추가" aria-label="체크 항목" />' +
+                '<div class="add-inline"><input data-new-check maxlength="' + LIM.checkText + '" placeholder="완료 조건 추가" aria-label="체크 항목" />' +
                 '<button type="button" class="btn small" data-add-check>' + icon('plus') + '추가</button></div></div>';
             html += '<div class="field" data-field="completedDate"><span class="label">완료일</span>' +
                 '<input type="date" name="completedDate" value="' + (s.completedDate || '') + '" />' +
@@ -1155,7 +1156,7 @@
                         var cur = stageById(sid);
                         var item = cur && cur.checks.filter(function (c) { return c.id === id; })[0];
                         if (!row || !item) return;
-                        row.innerHTML = '<input data-edit-text maxlength="200" aria-label="체크 항목 문구" value="' + esc(item.text) + '" />' +
+                        row.innerHTML = '<input data-edit-text maxlength="' + LIM.checkText + '" aria-label="체크 항목 문구" value="' + esc(item.text) + '" />' +
                             '<button type="button" class="btn small" data-edit-save>저장</button>' +
                             '<button type="button" class="btn small ghost" data-edit-cancel>취소</button>';
                         var box = row.querySelector('[data-edit-text]');
@@ -1225,7 +1226,7 @@
             },
             html: '<div class="form-note" data-target-note></div>' +
                 field('targetDate', '바꿀 목표일', '<input type="date" name="targetDate" required value="' + newDate + '" />') +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유" required></textarea>') +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
                 cascadeWorksHtml(s) +
                 '<div data-target-preview></div>',
@@ -1299,7 +1300,7 @@
                 field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + from + '" />') +
                 field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + to + '" />') +
                 '</div>' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
                 '<div data-plan-preview></div>',
             primary: '변경',
             onOpen: function (form) {
@@ -1343,7 +1344,7 @@
             html: '<p class="hint">시작일이 지났거나 늦어진 선행 작업 때문에 예측 일정이 목표보다 늦은 미착수 작업의 목표 일정을 예측대로 옮깁니다. ' +
                 '진행 중·완료 작업과 단계 목표일은 바꾸지 않습니다.</p>' +
                 '<div data-replan-preview></div>' +
-                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>'),
+                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>'),
             primary: '재계획',
             onOpen: function (form) {
                 preview = PlanPreview.attach(form.querySelector('[data-replan-preview]'), {
@@ -1474,17 +1475,17 @@
         }
 
         var html =
-            field('title', '작업명', '<input name="title" maxlength="200" required value="' + esc(isNew ? '' : w.title) + '" />') +
+            field('title', '작업명', '<input name="title" maxlength="' + LIM.workTitle + '" required value="' + esc(isNew ? '' : w.title) + '" />') +
             field('stageId', '단계', '<select name="stageId">' + stageOptions + '</select>') +
             '<div class="field-row">' +
-            field('owner', '담당', '<input name="owner" maxlength="50" list="dl-users" autocomplete="off" value="' + esc(isNew ? data.me.name : w.owner || '') + '" />') +
-            field('coOwner', '부담당', '<input name="coOwner" maxlength="50" list="dl-users" autocomplete="off" value="' + esc(isNew ? '' : w.coOwner || '') + '" />', true) +
+            field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? data.me.name : w.owner || '') + '" />') +
+            field('coOwner', '부담당', '<input name="coOwner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? '' : w.coOwner || '') + '" />', true) +
             '</div>' + status + '<div class="field-row">' +
             field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + planStart + '" />') +
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
             (isNew ? '' : '<div data-reason hidden>' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="500" placeholder="목표 일정을 바꾸는 이유"></textarea>') + '</div>') +
+                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + '</div>') +
             '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span></span>' + preHtml +
             '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
@@ -1499,11 +1500,11 @@
             '<div class="field" data-field="progress"><span class="label">진행률</span><div class="range-row">' +
             '<input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" />' +
             '<output></output></div></div>' +
-            field('note', '메모', '<textarea name="note" rows="2" maxlength="1000">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
+            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
 
         if (!isNew) {
             html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
-                '<textarea data-comment data-draft="comment" rows="2" maxlength="1000" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기)" aria-label="진행 내용"></textarea>' +
+                '<textarea data-comment data-draft="comment" rows="2" maxlength="' + LIM.text + '" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기)" aria-label="진행 내용"></textarea>' +
                 '<div data-work-mentions data-field="mentions"></div>' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button></div></div>';
         }
@@ -1688,7 +1689,7 @@
             options.map(function (o, i) {
                 return '<label class="choice"><input type="radio" name="state" value="' + o[0] + '"' + (i === 0 ? ' checked' : '') + ' /><span>' + o[1] + '</span></label>';
             }).join('') + '</div></div>' +
-            field('reason', '사유', '<textarea name="reason" rows="3" maxlength="500" placeholder="보류·중단은 사유가 필요합니다"></textarea>');
+            field('reason', '사유', '<textarea name="reason" rows="3" maxlength="' + LIM.reason + '" placeholder="보류·중단은 사유가 필요합니다"></textarea>');
 
         var opened = P.state;
         App.sheet({
@@ -1713,7 +1714,7 @@
     function openCloneSheet() {
         App.sheet({
             title: '과제 복제',
-            html: field('title', '새 과제명', '<input name="title" maxlength="200" required value="' + esc(P.title + ' (복제)') + '" />') +
+            html: field('title', '새 과제명', '<input name="title" maxlength="' + LIM.projectTitle + '" required value="' + esc(P.title + ' (복제)') + '" />') +
                 field('startDate', '착수일', '<input type="date" name="startDate" required value="' + today + '" />') +
                 '<label class="check"><input type="checkbox" name="works" checked />작업과 의존 관계도 복사</label>' +
                 '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 간격 그대로 새 착수일에 맞춰 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다.</span>',
@@ -1745,7 +1746,7 @@
             html: '<p class="form-warn">' + icon('alert') + '<span>지금의 목표 일정으로 기준선을 덮어씁니다. 기준선 대비 밀린 일수가 0 으로 돌아가고 이전 기준선은 되돌릴 수 없습니다.</span></p>' +
                 '<div class="form-note" data-baseline-ends>' + icon('pin') + '<span>기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' + esc(P.endTarget || '미정') + '</b>' +
                 (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '') + '</span></div>' +
-                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="500" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
+                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
             // 다른 사람이 과제를 바꿨으면 최신 일정을 보고 다시 확정하게 한다 (api 가 P 를 최신으로 바꿔 둔다)
             onConflict: function (form) {
                 opened = P.version;

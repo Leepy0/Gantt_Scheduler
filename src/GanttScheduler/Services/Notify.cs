@@ -191,10 +191,6 @@ public class DigestService
             try
             {
                 await _channel.SendAsync(mail, ct);
-                foreach (var n in pending) n.EmailedAt = now;
-                await _db.SaveChangesAsync(ct);
-                sent++;
-                notes += pending.Count;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -202,6 +198,22 @@ public class DigestService
                 failed++;
                 error = ex.Message;
                 _log.LogWarning(ex, "메일 요약을 보내지 못했습니다: {User}", u.Name);
+                continue;
+            }
+            // 메일은 이미 나갔으므로 보낸 것으로 센다. 보낸 표시(EmailedAt)를 저장하지 못하면 다음 요약에 같은 알림이 한 번 더 실린다 —
+            // 알림을 잃는 것보다 낫다. 실패한 변경이 다음 사람의 저장에 섞여 같이 실패하지 않게 추적을 비운다
+            sent++;
+            notes += pending.Count;
+            foreach (var n in pending) n.EmailedAt = now;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _db.ChangeTracker.Clear();
+                error = "메일은 보냈지만 보낸 표시를 남기지 못했습니다(다음 요약에 다시 실릴 수 있습니다): " + ex.Message;
+                _log.LogWarning(ex, "메일 요약을 보낸 뒤 보낸 표시를 저장하지 못했습니다: {User}", u.Name);
             }
         }
         return new DigestRun(today, now, users.Count, sent, failed, notes, error);

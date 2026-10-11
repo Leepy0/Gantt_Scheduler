@@ -61,6 +61,12 @@ public class DetailModel : PageModel
             me = new { id = _me.Id, name = _me.Name, isAdmin = _me.IsAdmin },
             seen = new { since, count = view.Activities?.Count(a => a.New) ?? 0 },
             kinds = Reporting.Kinds.Select(k => new { key = k.Key, label = k.Label }),
+            // 입력칸 maxlength — 서버 검사·DB 열 길이와 같은 값(Limits)을 화면에 숫자로 따로 적지 않는다
+            limits = new
+            {
+                stageName = Limits.StageName, checkText = Limits.CheckText, workTitle = Limits.WorkTitle, workNote = Limits.WorkNote,
+                userName = Limits.UserName, reason = Limits.Reason, text = Limits.ActivityText, projectTitle = Limits.ProjectTitle,
+            },
             upload = new { maxBytes = _files.MaxBytes, maxMB = _files.MaxMB, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
         });
         return Page();

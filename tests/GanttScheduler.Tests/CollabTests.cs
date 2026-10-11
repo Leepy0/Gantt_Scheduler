@@ -28,11 +28,12 @@ public class CollabRulesTests
     public void 내가_남긴_활동과_댓글_수정_기록은_새_활동이_아니다()
     {
         var since = Now.AddHours(-1);
-        Assert.True(Rules.IsNewActivity(ActivityType.Comment, authorId: 2, Now, userId: 1, since));
-        Assert.False(Rules.IsNewActivity(ActivityType.Comment, authorId: 1, Now, userId: 1, since));
-        Assert.False(Rules.IsNewActivity(ActivityType.Comment, authorId: 2, since, userId: 1, since));     // 본 시각과 같으면 이미 본 것
-        Assert.False(Rules.IsNewActivity(ActivityType.CommentChanged, authorId: 2, Now, userId: 1, since));
-        Assert.True(Rules.IsNewActivity(ActivityType.WorkPlanChanged, authorId: 2, Now, userId: 1, since));
+        Assert.True(Rules.IsNewActivity(ActivityType.Comment, authorId: 2, Now, userId: 1, since, deleted: false));
+        Assert.False(Rules.IsNewActivity(ActivityType.Comment, authorId: 1, Now, userId: 1, since, deleted: false));
+        Assert.False(Rules.IsNewActivity(ActivityType.Comment, authorId: 2, since, userId: 1, since, deleted: false));     // 본 시각과 같으면 이미 본 것
+        Assert.False(Rules.IsNewActivity(ActivityType.CommentChanged, authorId: 2, Now, userId: 1, since, deleted: false));
+        Assert.True(Rules.IsNewActivity(ActivityType.WorkPlanChanged, authorId: 2, Now, userId: 1, since, deleted: false));
+        Assert.False(Rules.IsNewActivity(ActivityType.Comment, authorId: 2, Now, userId: 1, since, deleted: true));     // 지운 댓글은 볼 내용이 없다
     }
 
     [Fact]
@@ -53,6 +54,10 @@ public class CollabRulesTests
         var plan = new Activity { Type = ActivityType.WorkPlanChanged, Text = "[배선] 목표 일정 변경" };
         Assert.Equal("[배선] 목표 일정 변경 외 2건", ActivityLog.Summary(plan, 3));
         Assert.EndsWith("…", ActivityLog.Summary(new Activity { Type = ActivityType.Edited, Text = new string('가', 400) }, 1));
+        // 댓글을 고친 뒤 다시 쓸 때 함께 묶였던 수는 옛 글에서 읽어 지킨다
+        var edited = new Activity { Type = ActivityType.Comment, Text = "고친 글" };
+        Assert.Equal("댓글: 고친 글", ActivityLog.Resummarize("댓글: 처음 글", edited));
+        Assert.Equal("댓글: 고친 글 외 2건", ActivityLog.Resummarize("댓글: 처음 글 외 2건", edited));
     }
 
     [Fact]
@@ -329,7 +334,7 @@ public class CollabTests : IClassFixture<TestDb>
         Assert.Equal(NotifyKinds.Mention, m.Kind);
         Assert.Equal(commentId, m.ActivityId);
         Assert.Equal($"a{commentId}:u{target}", m.Key);
-        Assert.Equal("댓글: 고친 글", m.Text);
+        Assert.Equal("댓글: 다시 고친 글", m.Text);       // 알림 글도 지금 댓글 글로 바뀐다
         // 고친 기록은 과제 담당·관심자에게 알리지 않는다
         Assert.Single(await NotesAsync("테스터", id));      // 처음 댓글만
 
@@ -419,6 +424,164 @@ public class CollabTests : IClassFixture<TestDb>
             var weekly = await s.Insights.WeeklyAsync(Today, false);
             Assert.DoesNotContain(weekly.Projects.Where(p => p.Id == id).SelectMany(p => p.Comments), x => x.Text == ProjectService.DeletedCommentText);
         }
+    }
+
+    [Fact]
+    public async Task 댓글을_고치면_그_댓글을_가리키는_알림_글도_바뀐다()
+    {
+        var (id, _) = await NewProjectAsync("알림 글 수정");
+        var target = await UserIdAsync("글수정멘션");
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.CommentAsync(new CommentInput(id, null, null, "비밀번호는 abc 입니다", new() { target }));
+        var commentId = await CommentIdAsync(id, "비밀번호는 abc 입니다");
+        Assert.Equal("댓글: 비밀번호는 abc 입니다", Assert.Single(await NotesAsync("글수정멘션", id)).Text);
+        Assert.Equal("댓글: 비밀번호는 abc 입니다", Assert.Single(await NotesAsync("테스터", id)).Text);
+
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.EditCommentAsync(new CommentEditInput(commentId, "비밀번호는 따로 전달합니다", new() { target }));
+
+        // 멘션 알림과 과제 담당 알림 모두 고친 글로 (메일 요약은 이 글을 싣는다)
+        Assert.Equal("댓글: 비밀번호는 따로 전달합니다", Assert.Single(await NotesAsync("글수정멘션", id)).Text);
+        Assert.Equal("댓글: 비밀번호는 따로 전달합니다", Assert.Single(await NotesAsync("테스터", id)).Text);
+        using (var s = _db.NewScope())
+            Assert.DoesNotContain(await s.Db.Notifications.Where(n => n.ProjectId == id).Select(n => n.Text).ToListAsync(), t => t.Contains("abc"));
+    }
+
+    [Fact]
+    public async Task 멘션한_사람이_사용_중지돼도_작성자는_글을_고칠_수_있고_새로_고르면_거절한다()
+    {
+        var (id, _) = await NewProjectAsync("멘션 사용 중지 후 수정");
+        var leaving = await UserIdAsync("곧떠날사람");
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.CommentAsync(new CommentInput(id, null, null, "오타 있는 글", new() { leaving }));
+        var commentId = await CommentIdAsync(id, "오타 있는 글");
+        using (var s = _db.NewScope())
+        {
+            (await s.Db.Users.SingleAsync(u => u.Id == leaving)).IsActive = false;
+            await s.Db.SaveChangesAsync();
+        }
+
+        // 화면은 이미 고른 칩을 그대로 다시 보낸다 — 글만 고치는 것은 막지 않는다
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.EditCommentAsync(new CommentEditInput(commentId, "오타 고친 글", new() { leaving }));
+        using (var s = _db.NewScope())
+        {
+            Assert.Equal("오타 고친 글", (await s.Db.Activities.SingleAsync(a => a.Id == commentId)).Text);
+            Assert.True(await s.Db.ActivityMentions.AnyAsync(m => m.ActivityId == commentId && m.UserId == leaving));
+        }
+
+        // 사용 중지된 사람을 새로 고르는 것은 여전히 거절한다
+        var other = await UserIdAsync("다른떠난사람");
+        using (var s = _db.NewScope())
+        {
+            (await s.Db.Users.SingleAsync(u => u.Id == other)).IsActive = false;
+            await s.Db.SaveChangesAsync();
+        }
+        using (var s = _db.NewScope("김물류"))
+        {
+            var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.EditCommentAsync(new CommentEditInput(commentId, "오타 고친 글", new() { leaving, other })));
+            Assert.Equal("mentions", ex.Field);
+        }
+    }
+
+    [Fact]
+    public async Task 지운_댓글은_목록_상세_새_소식_어디에도_새_활동이_아니다()
+    {
+        var (id, _) = await NewProjectAsync("지운 댓글 새 활동");
+        using (var s = _db.NewScope("지운댓글관심")) await s.Projects.WatchAsync(id, true);
+        using (var s = _db.NewScope("지운댓글관심")) await s.Projects.OpenAsync(id);
+        var saved = _db.Clock.UtcNow;
+        try
+        {
+            _db.Clock.UtcNow = saved.AddMinutes(5);
+            using (var s = _db.NewScope("김물류"))
+                await s.Projects.CommentAsync(new CommentInput(id, null, null, "바로 지울 글"));
+            var commentId = await CommentIdAsync(id, "바로 지울 글");
+            using (var s = _db.NewScope("김물류"))
+                await s.Projects.DeleteCommentAsync(commentId);
+
+            using var v = _db.NewScope("지운댓글관심");
+            Assert.Equal(0, (await v.Projects.NewCountsAsync()).GetValueOrDefault(id));
+            Assert.DoesNotContain(await v.Projects.NewsAsync(), n => n.ProjectId == id);
+            var opened = (await v.Projects.OpenAsync(id))!.Value;
+            Assert.False(opened.View.Activities!.Single(a => a.Id == commentId).New);
+        }
+        finally { _db.Clock.UtcNow = saved; }
+    }
+
+    [Fact]
+    public async Task 이미_본_바쁜_과제의_활동이_많아도_다른_과제의_새_소식은_빠지지_않는다()
+    {
+        var reader = await UserIdAsync("바쁜소식");
+        var other = await UserIdAsync("김물류");
+        var (busy, _) = await NewProjectAsync("소식 바쁜 과제");
+        var (quiet, _) = await NewProjectAsync("소식 조용한 과제");
+        using (var s = _db.NewScope("바쁜소식"))
+        {
+            await s.Projects.WatchAsync(busy, true);
+            await s.Projects.WatchAsync(quiet, true);
+        }
+        var saved = _db.Clock.UtcNow;
+        try
+        {
+            // 조용한 과제에 3일 전 댓글 하나 (아직 열어 보지 않음)
+            _db.Clock.UtcNow = saved.AddDays(-3);
+            using (var s = _db.NewScope("김물류"))
+                await s.Projects.CommentAsync(new CommentInput(quiet, null, null, "조용한 과제 소식"));
+            _db.Clock.UtcNow = saved;
+            // 바쁜 과제에는 그 뒤 남이 남긴 활동이 잔뜩 있고, 방금 열어 보았다
+            using (var s = _db.NewScope())
+            {
+                for (var i = 0; i < 250; i++)
+                    s.Db.Activities.Add(new Activity
+                    {
+                        ProjectId = busy, Type = ActivityType.Comment, Text = $"바쁜 글 {i}", UserId = other, At = saved.AddDays(-1).AddMinutes(i),
+                    });
+                await s.Db.SaveChangesAsync();
+            }
+            _db.Clock.UtcNow = saved.AddMinutes(1);
+            using (var s = _db.NewScope("바쁜소식"))
+            {
+                await s.Projects.OpenAsync(busy);
+                var news = await s.Projects.NewsAsync();
+                Assert.DoesNotContain(news, n => n.ProjectId == busy);
+                Assert.Contains(news, n => n.ProjectId == quiet && n.Text == "조용한 과제 소식");
+                Assert.Equal(news.Count(n => n.ProjectId == quiet), (await s.Projects.NewCountsAsync()).GetValueOrDefault(quiet));    // 목록의 '새 활동'(등록·댓글)과 같다
+            }
+        }
+        finally { _db.Clock.UtcNow = saved; }
+    }
+
+    [Fact]
+    public async Task 보류_과제에_지운_댓글과_댓글_수정_기록만_있으면_주간_보고에_오르지_않는다()
+    {
+        var saved = _db.Clock.UtcNow;
+        int id;
+        try
+        {
+            // 2주 전에 등록하고 보류해 둔 과제 — 이번 주에는 움직임이 없다
+            _db.Clock.UtcNow = saved.AddDays(-14);
+            (id, _) = await NewProjectAsync("주간 보고 지운 댓글");
+            using (var s = _db.NewScope()) await s.Projects.SetStateAsync(id, ProjectState.Hold, "대기");
+        }
+        finally { _db.Clock.UtcNow = saved; }
+
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.CommentAsync(new CommentInput(id, null, null, "잘못 남긴 글"));
+        var commentId = await CommentIdAsync(id, "잘못 남긴 글");
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.EditCommentAsync(new CommentEditInput(commentId, "잘못 남긴 글 고침"));
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.DeleteCommentAsync(commentId);
+
+        using (var s = _db.NewScope())
+            Assert.DoesNotContain((await s.Insights.WeeklyAsync(Today, false)).Projects, p => p.Id == id);
+
+        // 지우지 않은 댓글이 있으면 그 주의 움직임이다
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.CommentAsync(new CommentInput(id, null, null, "보류 중 확인"));
+        using (var s = _db.NewScope())
+            Assert.Contains((await s.Insights.WeeklyAsync(Today, false)).Projects, p => p.Id == id);
     }
 
     [Fact]

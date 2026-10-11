@@ -714,9 +714,10 @@ public static class Rules
         return lastSeen is { } seen && seen > floor ? seen : floor;
     }
 
-    // 다른 사람이 since 뒤에 남긴 활동 (내가 남긴 것은 새 소식이 아니다). 댓글 수정·삭제 기록은 그 댓글로 보이므로 따로 세지 않는다
-    public static bool IsNewActivity(ActivityType type, int authorId, DateTime at, int userId, DateTime since) =>
-        type != ActivityType.CommentChanged && authorId != userId && at > since;
+    // 다른 사람이 since 뒤에 남긴 활동 (내가 남긴 것은 새 소식이 아니다). 댓글 수정·삭제 기록은 그 댓글로 보이므로 따로 세지 않는다.
+    // 지운 댓글도 새 활동이 아니다 — 볼 내용이 없는데 '새'로 부르면 목록·상세·내 할 일이 서로 달라진다(세 곳이 이 기준을 같이 쓴다)
+    public static bool IsNewActivity(ActivityType type, int authorId, DateTime at, int userId, DateTime since, bool deleted) =>
+        type != ActivityType.CommentChanged && !deleted && authorId != userId && at > since;
 
     // 댓글은 작성자만, 남긴 뒤 editHours 시간 안에, 지우지 않은 것만 고치거나 지울 수 있다(0 이면 막는다)
     public static bool CanEditComment(int authorId, DateTime at, DateTime? deletedAt, int userId, DateTime utcNow, int editHours) =>

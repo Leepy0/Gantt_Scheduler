@@ -387,6 +387,7 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking
     public class ChangeTracker
     {
         public void DetectChanges() { }
+        public void Clear() { }
     }
 }
 

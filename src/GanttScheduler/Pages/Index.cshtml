@@ -38,7 +38,7 @@
     <a class="kpi" data-kpi="due" asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Rules.SoonDays" asp-route-mine="@mine">
         <span class="kpi-label">@(Rules.SoonDays)일 내 목표</span>
         <span class="kpi-value">@d.Kpi.DueThisWeek</span>
-        <span class="kpi-sub">단계 기준</span>
+        <span class="kpi-sub">과제 기준</span>
     </a>
     <a class="kpi" data-kpi="done" asp-page="/Projects/Index" asp-route-state="done" asp-route-doneYear="@d.Today.Year" asp-route-mine="@mine">
         <span class="kpi-label">올해 완료</span>
@@ -97,7 +97,7 @@
             </ul>
             @if (d.UpcomingTotal > d.Upcoming.Count)
             {
-                <a class="card-foot-link" data-upcoming-all asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Dashboard.UpcomingDays" asp-route-mine="@mine">전체 @(d.UpcomingTotal)건 보기<svg class="ic"><use href="#i-right" /></svg></a>
+                <a class="card-foot-link" data-upcoming-all asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Dashboard.UpcomingDays" asp-route-mine="@mine">과제 @(d.UpcomingProjects)건 모두 보기<svg class="ic"><use href="#i-right" /></svg></a>
             }
         }
     </section>

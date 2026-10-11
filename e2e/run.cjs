@@ -267,7 +267,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.waitForURL(/state=active&due=7/);
         assert((await page.locator('[data-special-note]').innerText()).includes('단계 목표일 7일 안'), '대시보드 조건 안내가 없음');
         const rows = await page.locator('.ptable-row').count();
-        assert(due === 0 ? rows === 0 : rows >= 1 && rows <= due, `7일 내 목표 ${due}건인데 목록 ${rows}건`);
+        assert(rows === due, `7일 내 목표 ${due}건인데 목록 ${rows}건`);
         await shot(page, 'd02b-projects-due');
         // 상태 탭을 바꾸면 대시보드 조건은 풀린다
         await page.locator('.state-tab', { hasText: '전체' }).click();

@@ -105,6 +105,9 @@ public class IntegrityTests : IClassFixture<TestDb>
         {
             var ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.SaveCheckAsync(new CheckInput(st.Id, check.Id, "다른 문구", st.Version)));
             Assert.Equal("check", ex.Field);
+            // 지우기도 같은 이유로 거절한다 — 완료 조건이 줄면 무엇을 확인하고 완료했는지가 달라진다
+            ex = await Assert.ThrowsAsync<RuleException>(() => s.Projects.DeleteCheckAsync(check.Id, st.Version));
+            Assert.Equal("check", ex.Field);
         }
         Assert.Equal("도면 승인", (await ViewAsync(id)).Stages[0].Checks.Single().Text);
     }

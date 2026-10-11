@@ -8,6 +8,8 @@
     // 종류별·단계별 이름 길이 상한 — 서버 검사·DB 열 길이와 같은 값(서버가 data-limits 로 준다)
     var limits = {};
     try { limits = JSON.parse(body.dataset.limits || '{}'); } catch (e) { limits = {}; }
+    var fieldLimits = {};
+    try { fieldLimits = JSON.parse(body.dataset.fieldLimits || '{}'); } catch (e) { fieldLimits = {}; }
     function maxLen(level) { var l = limits[kind]; return (l && l[level - 1]) || 50; }
 
     var CATEGORY_KINDS = { general: '일반', automation: '물류 자동화 (기기 내역 입력)', container: '용기 (용기 내역 입력)' };
@@ -215,7 +217,7 @@
         var c = conf();
         var html = field('name', '이름', '<input name="name" maxlength="' + maxLen(level) + '" required value="' + esc(n.name) + '"' + (isAdmin ? '' : ' disabled') + ' />');
         if (kind === 'location' && level === 1) {
-            html += field('country', '국가', '<input name="country" maxlength="50" value="' + esc(n.country || '') + '" />') +
+            html += field('country', '국가', '<input name="country" maxlength="' + (fieldLimits.country || '') + '" value="' + esc(n.country || '') + '" />') +
                 field('oceanLeadDays', '해상 운송 소요일', '<input name="oceanLeadDays" type="number" min="0" max="365" inputmode="numeric" value="' + (n.oceanLeadDays || 0) + '" />') +
                 '<span class="hint">입고 단계의 추천일(검수일 + 소요일) 계산에 사용합니다. 국내는 0.</span>';
         }
@@ -241,11 +243,11 @@
                 '<input type="hidden" name="orgUnitId" /></div>' +
                 '<label class="check"><input type="checkbox" name="isAdmin"' + (n.isAdmin ? ' checked' : '') + ' />관리자 (기준 정보 변경·과제 삭제)</label>' +
                 // 메일 요약 받는 주소 — 관리자만 보고 정한다(IP 식별이라 본인 입력은 가로채기 위험)
-                (isAdmin ? field('email', '메일 주소 <span class="opt">선택</span>', '<div class="ip-add"><input name="email" type="text" inputmode="email" maxlength="200" autocomplete="off" placeholder="name@company.com" value="' + esc(n.email || '') + '" />' +
+                (isAdmin ? field('email', '메일 주소 <span class="opt">선택</span>', '<div class="ip-add"><input name="email" type="text" inputmode="email" maxlength="' + (fieldLimits.email || '') + '" autocomplete="off" placeholder="name@company.com" value="' + esc(n.email || '') + '" />' +
                     '<button type="button" class="btn" data-test-mail>' + icon('mail') + '시험 메일</button></div>') +
                     '<span class="hint">하루 한 번 받을 메일 요약(읽지 않은 알림, 내 작업의 지연·임박)의 주소입니다. 시험 메일로 메일 서버 설정을 확인할 수 있습니다.</span>' : '') +
                 '<div class="field" data-field="ip"><span class="label">접속 IP</span><ul class="ip-list" data-ips>' + ipItems(n) + '</ul>' +
-                (isAdmin ? '<div class="ip-add"><input name="newIp" maxlength="45" inputmode="decimal" autocomplete="off" placeholder="IP 주소 (예: 10.1.2.3)" aria-label="연결할 IP 주소" />' +
+                (isAdmin ? '<div class="ip-add"><input name="newIp" maxlength="' + (fieldLimits.ip || '') + '" inputmode="decimal" autocomplete="off" placeholder="IP 주소 (예: 10.1.2.3)" aria-label="연결할 IP 주소" />' +
                     '<button type="button" class="btn" data-add-ip>' + icon('plus') + '연결</button></div>' +
                     '<span class="hint">관리자는 이름 등록 화면에서 새 PC 를 연결할 수 없습니다. PC 를 바꾼 관리자는 여기서 IP 를 추가해 주세요.</span>' : '') +
                 '</div>';

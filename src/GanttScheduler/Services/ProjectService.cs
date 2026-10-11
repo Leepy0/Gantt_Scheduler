@@ -842,6 +842,9 @@ public partial class ProjectService
     {
         var (p, s, c) = await RequireCheckAsync(checkId);
         CheckVersion(version, s.Version, p.Id);
+        // 문구 수정·추가와 같은 이유 — 완료한 단계의 완료 조건을 빼면 무엇을 확인하고 완료했는지가 달라진다
+        if (s.CompletedDate != null)
+            throw new RuleException("완료한 단계의 체크 항목은 지울 수 없습니다. 먼저 완료를 취소해 주세요.", "check");
         s.Version++;
         s.Checks.Remove(c);
         _db.CheckItems.Remove(c);

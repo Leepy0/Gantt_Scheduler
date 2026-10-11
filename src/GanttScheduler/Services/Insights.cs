@@ -147,7 +147,7 @@ public class InsightService
         var all = await _projects.AllAsync(q => q.Where(p => p.CreatedAt < end
             && (p.State == ProjectState.Active
                 || (past && p.State == ProjectState.Done && p.Stages.Any(s => s.CompletedDate > to))
-                || p.Activities.Any(a => a.At >= start && a.At < end))));
+                || p.Activities.Any(a => a.At >= start && a.At < end && a.Type != ActivityType.CommentChanged && a.DeletedAt == null))));
         if (mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
         return Reporting.Weekly(all, activities, await _projects.LocationsAsync(), from, to, _clock.Today);
     }
@@ -387,7 +387,8 @@ public static class Reporting
             byProject.TryGetValue(p.Id, out var acts);
             acts ??= new List<Activity>();
             var active = Rules.ActiveAsOf(p, asOf, today);
-            if (!active && acts.Count == 0) continue;   // 움직임 없는 보류·완료·중단 과제는 뺀다
+            // 움직임 없는 보류·완료·중단 과제는 뺀다. 댓글 수정·삭제 기록과 지운 댓글은 보고에 실을 내용이 없으므로 움직임으로 보지 않는다
+            if (!active && !acts.Any(a => a.Type != ActivityType.CommentChanged && a.DeletedAt == null)) continue;
 
             // 이번 주 실적: 단계 완료일·작업 실적 종료일이 그 주 안. 단계를 끝낸 사람은 그 주의 완료 활동에서 찾는다
             var done = Rules.Ordered(p)

@@ -192,6 +192,15 @@ public sealed class ActivityLog : ISaveHook
         if (text.Length > 300) text = text[..300] + "…";
         return count > 1 ? $"{text} 외 {count - 1}건" : text;
     }
+
+    // 댓글을 고치거나 지운 뒤 그 댓글을 가리키는 알림 글을 다시 쓴다. 알림 글은 만들 때 복사해 둔 값이라 그대로 두면
+    // 고치기 전 글이 알림 목록·메일 요약에 남는다. 함께 묶였던 '외 n건'은 저장 당시 수라 다시 셀 수 없으므로 옛 글에서 읽어 둔다
+    public static string Resummarize(string oldText, Activity lead)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(oldText, @" 외 (\d+)건$");
+        var count = m.Success && int.TryParse(m.Groups[1].Value, out var more) ? more + 1 : 1;
+        return Summary(lead, count);
+    }
 }
 
 // 알림 목록 한 줄. Actor: 활동을 남긴 사람, Project: 과제명(지운 과제면 null)

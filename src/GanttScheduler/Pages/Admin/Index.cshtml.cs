@@ -42,6 +42,9 @@ public class IndexModel : PageModel
         k => Enumerable.Range(1, k switch { "location" => MasterService.LocationDepth, "category" => 3, "equipment" or "org" => 2, _ => 1 })
             .Select(level => MasterService.NameLimit(k, level)).ToArray()));
 
+    // 이름 외 입력칸(국가·메일·IP)의 길이 상한 — 같은 이유로 Limits 에서 준다
+    public string FieldLimitsJson => AppJson.Serialize(new { country = Limits.Country, email = Limits.Email, ip = Limits.Ip });
+
     public Task<IActionResult> OnGetDataAsync(string kind) => Run(kind, () => Task.CompletedTask);
 
     public Task<IActionResult> OnPostSaveAsync([FromBody] MasterSave input) => Run(input.Kind, () => _masters.SaveAsync(input));

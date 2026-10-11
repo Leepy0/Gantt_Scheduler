@@ -62,7 +62,7 @@
             '<div data-reason hidden class="form">' +
             '<p class="form-warn" data-reason-note>' + icon('clock') + '<span></span></p>' +
             '<label class="field" data-field="reason"><span class="label">변경 사유</span>' +
-            '<textarea name="reason" rows="2" maxlength="500" placeholder="목표일을 바꾸는 이유 (바꾼 단계 모두에 남습니다)"></textarea></label></div>' +
+            '<textarea name="reason" rows="2" maxlength="' + ((App.data().limits || {}).reason || '') + '" placeholder="목표일을 바꾸는 이유 (바꾼 단계 모두에 남습니다)"></textarea></label></div>' +
             '<p class="hint" data-summary></p>';
 
         var form = null;

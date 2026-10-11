@@ -94,7 +94,7 @@
         <form class="card comment-form" id="comment-form">
             <label class="field">
                 <span class="label">진행 내용 남기기</span>
-                <textarea id="comment-text" rows="2" maxlength="1000" placeholder="진행 상황이나 이슈를 남겨 주세요 (@@ 로 알릴 사람 고르기)"></textarea>
+                <textarea id="comment-text" rows="2" maxlength="@Limits.ActivityText" placeholder="진행 상황이나 이슈를 남겨 주세요 (@@ 로 알릴 사람 고르기)"></textarea>
             </label>
             @* 알릴 사람(멘션): 목록에서 고른 사람에게만 알린다 (collab.js 의 Collab.mentions) *@
             <div id="comment-mentions" data-field="mentions"></div>

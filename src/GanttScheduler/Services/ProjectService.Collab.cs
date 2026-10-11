@@ -65,7 +65,7 @@ public partial class ProjectService
         var floor = _clock.UtcNow.AddDays(-Rules.NewActivityDays);
         var rows = await (
                 from a in _db.Activities.AsNoTracking()
-                where a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged
+                where a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged && a.DeletedAt == null
                 join v in _db.ProjectVisits.AsNoTracking().Where(v => v.UserId == me) on a.ProjectId equals v.ProjectId into visits
                 from v in visits.DefaultIfEmpty()
                 where v == null || a.At > v.LastSeenAt
@@ -101,7 +101,7 @@ public partial class ProjectService
             return r with
             {
                 Mine = r.UserId == me,
-                New = since != null && Rules.IsNewActivity(type, r.UserId, r.At, me, since.Value),
+                New = since != null && Rules.IsNewActivity(type, r.UserId, r.At, me, since.Value, r.Deleted),
                 CanEdit = type == ActivityType.Comment && Rules.CanEditComment(r.UserId, r.At, r.Deleted ? now : null, me, now, _comments.EditHours),
                 Mentions = mentions.GetValueOrDefault(r.Id),
             };
@@ -180,14 +180,15 @@ public partial class ProjectService
         (await _db.Users.AsNoTracking().Where(u => u.IsActive).Select(u => new { u.Id, u.Name }).ToListAsync())
             .OrderBy(u => u.Name).Select(u => new MentionView(u.Id, u.Name)).ToList();
 
-    // 알릴 사람 확인: 있는 사용자이고 사용 중이어야 한다(담당자 지정과 달리 새 사용자를 만들지 않는다). 중복은 하나로
-    private async Task<List<int>> ValidateMentionsAsync(List<int>? ids)
+    // 알릴 사람 확인: 있는 사용자이고 사용 중이어야 한다(담당자 지정과 달리 새 사용자를 만들지 않는다). 중복은 하나로.
+    // kept: 이미 그 댓글에 있던 멘션 — 그 뒤 사용 중지된 사람이 있어도 글만 고치려는 작성자를 막지 않는다(새로 알리지는 않는다)
+    private async Task<List<int>> ValidateMentionsAsync(List<int>? ids, IReadOnlyCollection<int>? kept = null)
     {
         var list = (ids ?? new()).Distinct().ToList();
         if (list.Count == 0) return list;
         if (list.Count > MentionLimit) throw new RuleException($"알릴 사람은 {MentionLimit}명까지 고를 수 있습니다.", "mentions");
         var active = (await _db.Users.AsNoTracking().Where(u => u.IsActive).Select(u => u.Id).ToListAsync()).ToHashSet();
-        if (list.Any(id => !active.Contains(id)))
+        if (list.Any(id => !active.Contains(id) && kept?.Contains(id) != true))
             throw new RuleException("알릴 사람을 다시 골라 주세요. 없는 사용자이거나 사용 중지된 사용자입니다.", "mentions");
         return list;
     }
@@ -199,8 +200,8 @@ public partial class ProjectService
     {
         var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
         var (p, c) = await RequireOwnCommentAsync(input.Id, "고칠");
-        var mentions = await ValidateMentionsAsync(input.Mentions);
         var current = await _db.ActivityMentions.Where(m => m.ActivityId == c.Id).ToListAsync();
+        var mentions = await ValidateMentionsAsync(input.Mentions, current.Select(m => m.UserId).ToList());
         var added = mentions.Where(id => current.All(m => m.UserId != id)).ToList();
         var removed = current.Where(m => !mentions.Contains(m.UserId)).ToList();
         if (c.Text == text && added.Count == 0 && removed.Count == 0) return p.Id;
@@ -211,6 +212,7 @@ public partial class ProjectService
             c.OldValue ??= c.Text;      // 처음 남긴 글을 한 번만 남긴다 — 여러 번 고쳐도 원문은 그대로
             c.Text = text;
             c.EditedAt = _clock.UtcNow;
+            await RewriteNotificationsAsync(c);
         }
         foreach (var userId in added)
         {
@@ -234,12 +236,18 @@ public partial class ProjectService
         c.OldValue = null;
         c.DeletedAt = now;
         _db.ActivityMentions.RemoveRange(await _db.ActivityMentions.Where(m => m.ActivityId == c.Id).ToListAsync());
-        foreach (var n in await _db.Notifications.Where(n => n.ActivityId == c.Id).ToListAsync())
-            n.Text = "댓글: " + DeletedCommentText;
+        await RewriteNotificationsAsync(c);
         p.Activities.Add(NewActivity(ActivityType.CommentChanged, "댓글 삭제", stageId: c.StageId, workId: c.WorkItemId, newValue: c.Id.ToString()));
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
+    }
+
+    // 그 댓글을 가리키는 알림의 글을 지금 댓글 글로 맞춘다(고칠 때·지울 때 같은 방식) — 메일 요약도 이 글을 싣는다
+    private async Task RewriteNotificationsAsync(Activity c)
+    {
+        foreach (var n in await _db.Notifications.Where(n => n.ActivityId == c.Id).ToListAsync())
+            n.Text = ActivityLog.Resummarize(n.Text, c);
     }
 
     private async Task<(Project, Activity)> RequireOwnCommentAsync(int id, string verb)
@@ -262,20 +270,25 @@ public partial class ProjectService
 
     // 내 과제(담당)·관심 과제·내 작업(담당·부담당)·나를 멘션한 댓글에 다른 사람이 남긴 활동 중, 그 과제를 마지막으로 본 뒤
     // (최근 Rules.NewActivityDays 일 안)의 것. 자동 밀기·연쇄 이동으로 내 작업 일정이 바뀐 것도 그 작업의 활동이라 여기 나온다.
-    // 조건은 EXISTS(Any)로 DB 에서 걸러 두 DB 에서 같게 번역되게 하고, 과제별 방문 시각 비교는 메모리에서 한다
+    // 조건은 EXISTS(Any)로, 방문 시각 비교는 내 방문 기록을 왼쪽 조인해 모두 DB 에서 거른 뒤 자른다 — 메모리에서 거르면
+    // 이미 본 바쁜 과제의 활동이 잘린 몫을 채워 다른 과제의 새 소식이 빠진다. 기준은 Rules.IsNewActivity·NewCountsAsync 와 같다
     public async Task<List<NewsItem>> NewsAsync()
     {
         var me = _me.Id;
-        var now = _clock.UtcNow;
-        var floor = now.AddDays(-Rules.NewActivityDays);
-        var rows = await _db.Activities.AsNoTracking()
-            .Where(a => a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged && a.DeletedAt == null)
-            .Where(a => a.Project!.OwnerId == me
-                        || _db.ProjectWatches.Any(w => w.ProjectId == a.ProjectId && w.UserId == me)
-                        || _db.WorkItems.Any(w => w.Id == a.WorkItemId && (w.OwnerId == me || w.CoOwnerId == me))
-                        || a.Mentions.Any(m => m.UserId == me))
-            .OrderByDescending(a => a.At).ThenByDescending(a => a.Id)
-            .Take(200)
+        var floor = _clock.UtcNow.AddDays(-Rules.NewActivityDays);
+        var rows = await (
+                from a in _db.Activities.AsNoTracking()
+                where a.At > floor && a.UserId != me && a.Type != ActivityType.CommentChanged && a.DeletedAt == null
+                where a.Project!.OwnerId == me
+                      || _db.ProjectWatches.Any(w => w.ProjectId == a.ProjectId && w.UserId == me)
+                      || _db.WorkItems.Any(w => w.Id == a.WorkItemId && (w.OwnerId == me || w.CoOwnerId == me))
+                      || a.Mentions.Any(m => m.UserId == me)
+                join v in _db.ProjectVisits.AsNoTracking().Where(v => v.UserId == me) on a.ProjectId equals v.ProjectId into visits
+                from v in visits.DefaultIfEmpty()
+                where v == null || a.At > v.LastSeenAt
+                orderby a.At descending, a.Id descending
+                select a)
+            .Take(NewsLimit)
             .Select(a => new
             {
                 a.Id, a.ProjectId, Project = a.Project!.Title, a.Type, a.Text, a.Reason, a.UserId, User = a.User!.Name, a.At,
@@ -284,12 +297,7 @@ public partial class ProjectService
                 MyProject = a.Project.OwnerId == me,
             })
             .ToListAsync();
-        if (rows.Count == 0) return new();
-        var seen = (await _db.ProjectVisits.AsNoTracking().Where(v => v.UserId == me).Select(v => new { v.ProjectId, v.LastSeenAt }).ToListAsync())
-            .ToDictionary(v => v.ProjectId, v => v.LastSeenAt);
         return rows
-            .Where(a => Rules.IsNewActivity(a.Type, a.UserId, a.At, me, Rules.NewSince(seen.TryGetValue(a.ProjectId, out var s) ? s : null, now)))
-            .Take(NewsLimit)
             .Select(a =>
             {
                 var why = a.Mentioned ? NotifyKinds.Mention : a.MyWork ? NotifyKinds.Work : a.MyProject ? NotifyKinds.Project : NotifyKinds.Watch;

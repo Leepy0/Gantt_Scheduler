@@ -2,6 +2,7 @@ using GanttScheduler.Domain;
 
 namespace GanttScheduler.Services;
 
+// DueThisWeek: 'n일 내 목표' — 그 기간에 목표일이 있는 미완료 단계를 가진 진행 과제 수. 누르면 가는 목록(과제)과 숫자가 같도록 과제로 센다
 public record Kpi(int Active, int Delayed, int DueThisWeek, int DoneThisYear, int Hold);
 // Id: 유형(CategoryId) 또는 법인(CorporationId) — 막대를 누르면 그 조건의 목록으로 간다. 같은 이름의 유형도 따로 센다
 public record GroupStat(int Id, string Name, int OnTrack, int Delayed, int Done, int Paused, int Total);
@@ -12,11 +13,12 @@ public record DueItem(int ProjectId, string Project, string Stage, DateOnly Date
 }
 
 // Timeline: 간트용 가벼운 행(TimelineView) — 페이지에 JSON 으로 심으므로 쓰는 값만 싣는다.
-// UpcomingTotal: 다가오는 일정(UpcomingDays 안)의 전체 건수 — 화면은 앞의 몇 건만 보이고 '전체 n건'으로 목록에 잇는다
+// UpcomingTotal: 다가오는 일정(UpcomingDays 안)의 전체 단계 수 — 화면은 앞의 몇 건만 보이고 나머지가 있으면 목록으로 잇는다.
+// UpcomingProjects: 그 단계들이 걸린 과제 수 — 이어지는 목록은 과제를 보이므로 링크에는 이 수를 적는다
 public record DashboardView(
     DateOnly Today, Kpi Kpi,
     List<GroupStat> ByCategory, List<GroupStat> ByCorporation,
-    List<ProjectView> Delayed, List<DueItem> Upcoming, List<TimelineView> Timeline, int UpcomingTotal = 0);
+    List<ProjectView> Delayed, List<DueItem> Upcoming, List<TimelineView> Timeline, int UpcomingTotal = 0, int UpcomingProjects = 0);
 
 // DoneYear: 그 해에 끝난 완료 과제(Rules.CompletedOn — 대시보드 '올해 완료'와 같은 판정).
 // DueDays: 미완료 단계 목표일이 오늘부터 그 일수 안에 있는 진행 과제('n일 내 목표'·다가오는 일정과 같은 판정)
@@ -94,7 +96,7 @@ public static class Dashboard
 
         var kpi = new Kpi(
             active.Count, delayed.Count,
-            due.Count(d => d.Soon),
+            due.Where(d => d.Soon).Select(d => d.ProjectId).Distinct().Count(),
             doneThisYear,
             all.Count(p => p.State == ProjectState.Hold));
 
@@ -130,7 +132,8 @@ public static class Dashboard
 
         var upcoming = due.Where(d => d.DDay <= UpcomingDays).ToList();
         return new DashboardView(today, kpi, byCategory, byCorp, delayedViews,
-            upcoming.Take(UpcomingShown).ToList(), views.Select(TimelineView.From).ToList(), upcoming.Count);
+            upcoming.Take(UpcomingShown).ToList(), views.Select(TimelineView.From).ToList(), upcoming.Count,
+            upcoming.Select(d => d.ProjectId).Distinct().Count());
     }
 
     public static List<ProjectView> Filter(List<Project> all, LocationIndex locations, DateOnly today, ProjectFilter f, int userId)

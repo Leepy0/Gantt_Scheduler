@@ -279,16 +279,19 @@ public class DashboardLinkTests : IClassFixture<TestDb>
         Assert.Equal(d.Kpi.DoneThisYear, doneYear.Count);
         Assert.True(List(new ProjectFilter(null, null, null, "done", false)).Count >= doneYear.Count);
 
-        // n일 내 목표: 그 기간에 목표일이 있는 단계를 가진 진행 과제 (KPI 는 단계 수, 목록은 과제)
+        // n일 내 목표: 그 기간에 목표일이 있는 단계를 가진 진행 과제 (KPI 도 목록도 과제 수)
         var due = List(new ProjectFilter(null, null, null, "active", false, DueDays: Rules.SoonDays));
         var dueStages = all.Where(p => p.State == ProjectState.Active)
             .SelectMany(p => p.Stages.Where(x => x.CompletedDate == null && x.TargetDate != null && Rules.IsSoon(Rules.DaysLeft(x.TargetDate.Value, Today))).Select(_ => p.Id)).ToList();
-        Assert.Equal(d.Kpi.DueThisWeek, dueStages.Count);
+        Assert.Equal(d.Kpi.DueThisWeek, dueStages.Distinct().Count());
+        Assert.Equal(d.Kpi.DueThisWeek, due.Count);
         Assert.Equal(dueStages.Distinct().OrderBy(x => x), due.Select(v => v.Id).OrderBy(x => x));
 
         // 다가오는 일정: 앞 몇 건만 보이고 전체 건수를 함께 준다
         Assert.True(d.Upcoming.Count <= Dashboard.UpcomingShown);
         Assert.True(d.UpcomingTotal >= d.Upcoming.Count);
+        // '과제 n건 모두 보기'는 이어지는 목록(due=UpcomingDays)의 과제 수와 같다
+        Assert.Equal(d.UpcomingProjects, List(new ProjectFilter(null, null, null, "active", false, DueDays: Dashboard.UpcomingDays)).Count);
 
         // 유형·법인 막대: Id 로 묶고, 그 Id 조건의 목록(전체 상태) 건수와 같다
         foreach (var g in d.ByCategory)
