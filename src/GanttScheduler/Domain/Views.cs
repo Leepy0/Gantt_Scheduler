@@ -137,6 +137,7 @@ public record ProjectView
     public List<ActivityView>? Activities { get; init; }
     public List<AttachmentView>? Attachments { get; init; }
     public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수
+    public int ActivityTotal { get; init; }             // 활동 전체 건수 (Activities 는 최근 일부만 — ProjectService.ViewAsync)
     public string? CreatedBy { get; init; }
     public DateTime? CreatedAt { get; init; }
     public DateTime? UpdatedAt { get; init; }
@@ -148,6 +149,19 @@ public record ProjectView
     public int LinkViolations { get; init; }            // 위반한 과제 간 단계 연결 수 (대시보드 위험 판정에 쓸 수 있게 노출)
 }
 
+// 대시보드 간트 한 행: 대시보드·간트(gantt.js)가 실제로 쓰는 값만 싣는다. 진행 과제가 수백 건이면 ProjectView 전체(빈 목록·null 포함)는
+// 페이지가 수 MB 가 된다. 값은 Views.Project 가 계산한 것을 그대로 옮긴다(계산 규칙은 한 곳)
+public record TimelineStageView(
+    string Name, string Status, DateOnly? PlanFrom, DateOnly? TargetDate, DateOnly? ActualFrom, DateOnly? ActualTo,
+    DateOnly? CompletedDate, int LateDays, bool DoneLate);
+
+public record TimelineView(int Id, string Title, string Corporation, string? CurrentStage, int DelayDays, int Progress, List<TimelineStageView> Stages)
+{
+    public static TimelineView From(ProjectView p) => new(p.Id, p.Title, p.Corporation, p.CurrentStage, p.DelayDays, p.Progress,
+        p.Stages.Select(s => new TimelineStageView(s.Name, s.Status, s.PlanFrom, s.TargetDate, s.ActualFrom, s.ActualTo,
+            s.CompletedDate, s.LateDays, s.DoneLate)).ToList());
+}
+
 // 위치 트리 조회용 색인
 public class LocationIndex
 {
@@ -155,6 +169,8 @@ public class LocationIndex
     public LocationIndex(IEnumerable<Location> all) => _byId = all.ToDictionary(l => l.Id);
 
     public Location? Get(int id) => _byId.TryGetValue(id, out var l) ? l : null;
+
+    public IEnumerable<Location> All => _byId.Values;
 
     // 루트(법인)부터 해당 노드까지
     public List<Location> Chain(int id)

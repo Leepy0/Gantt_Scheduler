@@ -707,12 +707,19 @@ public class EngineServiceTests : IClassFixture<TestDb>
         using (var s = _db.NewScope())
             Assert.Contains(await s.Db.Activities.Where(a => a.ProjectId == q).Select(a => a.Text).ToListAsync(), t => t.Contains("(단계 삭제)"));
 
-        // 과제 삭제
+        // 과제 삭제: 연결된 단계에 작업과 선행 연결이 있어도 지워진다(과제 삭제는 단계를 읽지 않으므로 지우는 순서를 서비스가 맞춘다)
+        var r0a = await AddWorkAsync(r, rs[0].Id, "셋째 A", Day(10, 12), Day(10, 14));
+        await AddWorkAsync(r, rs[0].Id, "셋째 B", Day(10, 15), Day(10, 16), pre: r0a);
+        await AddWorkAsync(r, rs[1].Id, "셋째 C", Day(10, 19), Day(10, 20), pre: r0a);
         using (var s = _db.NewScope())
             await s.Projects.DeleteAsync(r);
         Assert.Equal(0, await CountAsync());
         using (var s = _db.NewScope())
-            Assert.Contains(await s.Db.Activities.Where(a => a.ProjectId == q).Select(a => a.Text).ToListAsync(), t => t.Contains("(과제 삭제)"));
+        {
+            Assert.False(await s.Db.Projects.AnyAsync(x => x.Id == r));
+            Assert.False(await s.Db.Stages.AnyAsync(x => x.ProjectId == r));
+            Assert.Contains(await s.Db.Activities.Where(a => a.ProjectId == q).Select(a => a.Text).ToListAsync(), t => t.Contains($"· {rs[0].Name} (과제 삭제)"));
+        }
         Assert.All((await ViewAsync(q)).Stages, st => Assert.Empty(st.CrossLinks));
     }
 }

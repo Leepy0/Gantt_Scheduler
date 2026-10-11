@@ -22,11 +22,14 @@ public record WeeklyReport(
     DateOnly From, DateOnly To, DateOnly Today, int Active, int Delayed, int DoneCount, int ChangeCount, List<WeeklyProject> Projects);
 
 // ── 변경 이력 ────────────────────────────────────────────────────────────
-public record HistoryFilter(DateOnly? From, DateOnly? To, string? User, string? Kind, string? Q, int Page);
+// ProjectId: 과제 하나의 이력만 (상세 활동 탭의 '이 과제 전체 이력')
+public record HistoryFilter(DateOnly? From, DateOnly? To, string? User, string? Kind, string? Q, int Page, int? ProjectId = null);
 
 public record HistoryRow(int Id, int ProjectId, string Project, string Type, string Kind, string Text, string? Reason, string User, DateTime At);
 
-public record HistoryPage(DateOnly From, DateOnly To, List<HistoryRow> Rows, int Total, int Page, int Pages, List<string> Users);
+// Notice: 조건을 고쳐 조회했을 때의 안내(기간 상한 등). Project: 과제 조건이 있으면 그 과제명(없는 과제면 null)
+public record HistoryPage(DateOnly From, DateOnly To, List<HistoryRow> Rows, int Total, int Page, int Pages, List<string> Users,
+    string? Notice = null, int? ProjectId = null, string? Project = null);
 
 // ── 내 할 일 ─────────────────────────────────────────────────────────────
 public record MyWork(
@@ -61,9 +64,14 @@ public class InsightService
         _me = me;
     }
 
-    public async Task<List<LeadGroup>> LeadTimesAsync() => Reporting.LeadTimes(await _projects.AllAsync());
+    // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다
+    public async Task<List<LeadGroup>> LeadTimesAsync() =>
+        Reporting.LeadTimes(await _db.Projects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
+            .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync());
 
-    public async Task<MyView> MyAsync() => Reporting.My(await _projects.AllAsync(), _me.Id, _clock.Today);
+    // 내 할 일은 진행 과제만 본다(Reporting.My)
+    public async Task<MyView> MyAsync() =>
+        Reporting.My(await _projects.AllAsync(q => q.Where(p => p.State == ProjectState.Active)), _me.Id, _clock.Today);
 
     // from 이 속한 주(월~일)의 보고
     public async Task<WeeklyReport> WeeklyAsync(DateOnly? day, bool mine)
@@ -73,45 +81,95 @@ public class InsightService
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
         var activities = await _db.Activities.AsNoTracking().Include(a => a.User)
             .Where(a => a.At >= start && a.At < end).ToListAsync();
-        var all = await _projects.AllAsync();
+        // 보고에 오르는 과제: 진행 과제와, 그 주에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly). 나머지 완료·중단 과제는 읽지 않는다
+        var all = await _projects.AllAsync(q => q.Where(p => p.State == ProjectState.Active || p.Activities.Any(a => a.At >= start && a.At < end)));
         if (mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
         return Reporting.Weekly(all, activities, await _projects.LocationsAsync(), from, to, _clock.Today);
     }
 
+    // 여러 과제를 가로지르는 이력의 기간 상한. 넓은 기간을 고르면 사용자가 크기를 정하는 조회가 되므로 막는다
+    public const int HistoryMaxYears = 1;
+
+    // 변경 이력: 기간·과제·사람·종류 조건과 건수·정렬·쪽 나누기는 DB 에서 한다(필요한 열만 투영 — 과제 행 전체를 읽지 않는다).
+    // 글자 검색만 투영한 뒤 메모리에서 한다 — SQLite(대소문자 구분)와 SQL Server(정렬 규칙)의 결과가 다르기 때문이다
     public async Task<HistoryPage> HistoryAsync(HistoryFilter f)
     {
+        string? notice = null;
+        string? projectTitle = null;
+        if (f.ProjectId is int pid)
+        {
+            projectTitle = await _db.Projects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync();
+        }
+
         var to = f.To ?? _clock.Today;
-        var from = f.From ?? to.AddDays(-30);
+        // 과제 하나만 볼 때는 기본 기간을 그 과제의 처음부터로 둔다('이 과제 전체 이력'). 활동 수가 과제 하나로 묶이므로 상한도 두지 않는다
+        var from = f.From ?? (f.ProjectId != null ? await FirstActivityDayAsync(f.ProjectId.Value, to) : to.AddDays(-30));
         if (from > to) (from, to) = (to, from);
+        if (f.ProjectId == null && from < to.AddYears(-HistoryMaxYears))
+        {
+            from = to.AddYears(-HistoryMaxYears);
+            notice = $"여러 과제의 이력은 한 번에 {HistoryMaxYears}년까지 볼 수 있어 시작일을 {from:yyyy-MM-dd} 로 맞췄습니다. 더 오래된 이력은 기간을 나눠 보거나 과제를 골라 보세요.";
+        }
         var start = KoreaClock.StartOfDayUtc(from);
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
 
-        var list = await _db.Activities.AsNoTracking().Include(a => a.User).Include(a => a.Project)
-            .Where(a => a.At >= start && a.At < end).ToListAsync();
+        var range = _db.Activities.AsNoTracking().Where(a => a.At >= start && a.At < end);
+        if (f.ProjectId is int projectId) range = range.Where(a => a.ProjectId == projectId);
 
-        var rows = list
-            .OrderByDescending(a => a.At).ThenByDescending(a => a.Id)
-            .Select(a => new HistoryRow(a.Id, a.ProjectId, a.Project?.Title ?? "", Views.Key(a.Type), Reporting.KindOf(a.Type),
-                a.Text, a.Reason, a.User?.Name ?? "", a.At));
+        // 사용자 고르기 목록: 이 기간(·과제)에 이력을 남긴 사람
+        var users = (await range.Select(a => a.User!.Name).Distinct().ToListAsync()).Where(n => n.Length > 0).OrderBy(n => n).ToList();
 
-        var users = list.Select(a => a.User?.Name ?? "").Where(n => n.Length > 0).Distinct().OrderBy(n => n).ToList();
-
-        if (!string.IsNullOrWhiteSpace(f.User)) rows = rows.Where(r => r.User == f.User);
-        if (!string.IsNullOrWhiteSpace(f.Kind)) rows = rows.Where(r => r.Kind == f.Kind);
-        var q = (f.Q ?? "").Trim();
-        if (q.Length > 0)
+        var q = range;
+        if (!string.IsNullOrWhiteSpace(f.User))
         {
-            rows = rows.Where(r => r.Project.Contains(q, StringComparison.OrdinalIgnoreCase)
-                                   || r.Text.Contains(q, StringComparison.OrdinalIgnoreCase)
-                                   || (r.Reason ?? "").Contains(q, StringComparison.OrdinalIgnoreCase));
+            var name = f.User.Trim();
+            var userId = await _db.Users.AsNoTracking().Where(u => u.Name == name).Select(u => (int?)u.Id).FirstOrDefaultAsync();
+            q = userId == null ? q.Where(a => false) : q.Where(a => a.UserId == userId.Value);
         }
+        if (!string.IsNullOrWhiteSpace(f.Kind)) q = q.Where(Reporting.KindIs(f.Kind));
+        var ordered = q.OrderByDescending(a => a.At).ThenByDescending(a => a.Id);
 
-        var filtered = rows.ToList();
-        var pages = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)HistoryPageSize));
-        var page = Math.Clamp(f.Page, 1, pages);
-        return new HistoryPage(from, to, filtered.Skip((page - 1) * HistoryPageSize).Take(HistoryPageSize).ToList(),
-            filtered.Count, page, pages, users);
+        var text = (f.Q ?? "").Trim();
+        List<HistoryRow> rows;
+        int total, page, pages;
+        if (text.Length == 0)
+        {
+            total = await q.CountAsync();
+            pages = Math.Max(1, (int)Math.Ceiling(total / (double)HistoryPageSize));
+            page = Math.Clamp(f.Page, 1, pages);
+            rows = ToRows(await Rows(ordered.Skip((page - 1) * HistoryPageSize).Take(HistoryPageSize)).ToListAsync());
+        }
+        else
+        {
+            var found = ToRows(await Rows(ordered).ToListAsync())
+                .Where(r => r.Project.Contains(text, StringComparison.OrdinalIgnoreCase)
+                            || r.Text.Contains(text, StringComparison.OrdinalIgnoreCase)
+                            || (r.Reason ?? "").Contains(text, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            total = found.Count;
+            pages = Math.Max(1, (int)Math.Ceiling(total / (double)HistoryPageSize));
+            page = Math.Clamp(f.Page, 1, pages);
+            rows = found.Skip((page - 1) * HistoryPageSize).Take(HistoryPageSize).ToList();
+        }
+        return new HistoryPage(from, to, rows, total, page, pages, users, notice, f.ProjectId, projectTitle);
+
+        // 화면에 보이는 열만 읽는다 (과제는 제목만)
+        static IQueryable<HistoryRowData> Rows(IQueryable<Activity> source) => source.Select(a => new HistoryRowData(
+            a.Id, a.ProjectId, a.Project!.Title, a.Type, a.Text, a.Reason, a.User!.Name, a.At));
+
+        static List<HistoryRow> ToRows(List<HistoryRowData> list) => list.Select(a => new HistoryRow(
+            a.Id, a.ProjectId, a.Project ?? "", Views.Key(a.Type), Reporting.KindOf(a.Type), a.Text, a.Reason, a.User ?? "", a.At)).ToList();
     }
+
+    // 과제의 가장 오래된 활동 날짜(한국 날짜). 활동이 없으면 to
+    private async Task<DateOnly> FirstActivityDayAsync(int projectId, DateOnly to)
+    {
+        var first = await _db.Activities.AsNoTracking().Where(a => a.ProjectId == projectId)
+            .OrderBy(a => a.At).Select(a => (DateTime?)a.At).FirstOrDefaultAsync();
+        return first == null ? to : KoreaClock.KstDate(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc));
+    }
+
+    private sealed record HistoryRowData(int Id, int ProjectId, string? Project, ActivityType Type, string Text, string? Reason, string? User, DateTime At);
 }
 
 // 통계·보고 계산 (순수 함수)
@@ -131,6 +189,19 @@ public static class Reporting
         ActivityType.AttachmentAdded or ActivityType.AttachmentRemoved => "file",
         _ => "structure",
     };
+
+    // 종류(KindOf) 조건을 DB 조건으로: 그 종류로 분류되는 활동 유형 전부(기본 분기 '구성 변경'에 떨어지는 유형 포함)를
+    // KindOf 로 직접 골라 '유형 = A 또는 유형 = B …' 식을 만든다. 목록 매개 변수(IN·OPENJSON)를 쓰지 않아 두 DB 에서 같게 번역된다
+    public static System.Linq.Expressions.Expression<Func<Activity, bool>> KindIs(string kind)
+    {
+        var a = System.Linq.Expressions.Expression.Parameter(typeof(Activity), "a");
+        var type = System.Linq.Expressions.Expression.Property(a, nameof(Activity.Type));
+        System.Linq.Expressions.Expression body = System.Linq.Expressions.Expression.Constant(false);
+        foreach (var t in Enum.GetValues<ActivityType>().Where(t => KindOf(t) == kind))
+            body = System.Linq.Expressions.Expression.OrElse(body,
+                System.Linq.Expressions.Expression.Equal(type, System.Linq.Expressions.Expression.Constant(t)));
+        return System.Linq.Expressions.Expression.Lambda<Func<Activity, bool>>(body, a);
+    }
 
     // 해당 날짜가 속한 주의 월요일~일요일
     public static (DateOnly From, DateOnly To) WeekOf(DateOnly day)

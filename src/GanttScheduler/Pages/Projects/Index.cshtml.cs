@@ -15,12 +15,15 @@ public class IndexModel : PageModel
     private readonly ExcelExporter _excel;
     private readonly IClock _clock;
 
-    public IndexModel(DashboardService dash, AppDb db, ExcelExporter excel, IClock clock)
+    private readonly ProjectService _projects;
+
+    public IndexModel(DashboardService dash, AppDb db, ExcelExporter excel, IClock clock, ProjectService projects)
     {
         _dash = dash;
         _db = db;
         _excel = excel;
         _clock = clock;
+        _projects = projects;
     }
 
     [BindProperty(SupportsGet = true)] public string? Q { get; set; }
@@ -46,7 +49,8 @@ public class IndexModel : PageModel
     {
         Today = _clock.Today;
         Categories = (await _db.Categories.AsNoTracking().ToListAsync()).OrderBy(c => c.SortOrder).ToList();
-        Corporations = (await _db.Locations.AsNoTracking().ToListAsync()).Where(l => l.Level == 1).OrderBy(l => l.SortOrder).ToList();
+        // 위치는 목록 계산(ListAsync)이 읽는 것을 같이 쓴다 (요청 안에서 한 번만 읽기)
+        Corporations = (await _projects.LocationsAsync()).All.Where(l => l.Level == 1).OrderBy(l => l.SortOrder).ThenBy(l => l.Id).ToList();
         Rows = await _dash.ListAsync(Filter());
     }
 

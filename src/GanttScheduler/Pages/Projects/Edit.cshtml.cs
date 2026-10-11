@@ -77,7 +77,8 @@ public class EditModel : PageModel
         }
         else
         {
-            var p = await _projects.LoadAsync(Id.Value);
+            // 기본 정보·내역만 추적 없이 읽는다 (단계·작업·활동은 이 화면에 필요 없다)
+            var p = await _projects.LoadInfoAsync(Id.Value);
             if (p == null) return NotFound();
             Form = new FormModel
             {

@@ -188,6 +188,8 @@ public class AppDb : DbContext
             e.HasOne(x => x.Project).WithMany(p => p.Activities).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.At);
+            // 과제 하나의 활동을 최근 순으로 나눠 읽는다(상세 '더 보기'·변경 이력의 과제 조건). ProjectId 만의 FK 인덱스를 대신한다
+            e.HasIndex(x => new { x.ProjectId, x.At });
         });
 
         // ── 과제 간 단계 의존 ──

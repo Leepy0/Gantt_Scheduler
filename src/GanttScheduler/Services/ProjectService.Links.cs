@@ -109,6 +109,14 @@ public partial class ProjectService
         if (links.Count == 0) return;
         var otherIds = links.SelectMany(l => new[] { l.PredecessorStageId, l.SuccessorStageId }).Where(id => !stageIds.Contains(id)).Distinct().ToList();
         var others = (await _db.Stages.Include(s => s.Project).Where(s => otherIds.Contains(s.Id)).ToListAsync()).ToDictionary(s => s.Id);
+        if (removedProject)
+        {
+            // 과제째 지울 때(DeleteAsync)는 단계를 읽지 않는다. 연결된 이 과제의 단계만 작업과 함께 추적해 읽어 둔다 — 이름을 쓰고,
+            // EF 가 연결 → 작업 → 단계 → 과제 순서로 지우게 하기 위해서다. EF 는 추적하는 행 사이의 FK 로만 순서를 정하므로
+            // 단계를 모르면 과제 행을 먼저 지우고, DB cascade 가 단계를 지우려다 연결의 Restrict 에 걸린다
+            var ownIds = links.SelectMany(l => new[] { l.PredecessorStageId, l.SuccessorStageId }).Where(stageIds.Contains).Distinct().ToList();
+            await _db.Stages.Include(s => s.Works).Where(s => ownIds.Contains(s.Id)).ToListAsync();
+        }
         var mine = p.Stages.ToDictionary(s => s.Id);
         foreach (var l in links)
         {

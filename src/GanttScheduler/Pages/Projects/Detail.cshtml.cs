@@ -58,6 +58,14 @@ public class DetailModel : PageModel
         return view == null ? Missing() : new JsonResult(new { ok = true, project = view, today = _clock.Today });
     }
 
+    // 활동 나눠 받기: 활동 탭의 '더 보기'(beforeId = 화면의 마지막 활동)와 작업 시트의 진행 내용(workId).
+    // 응답 { ok, activities, more } — more 면 마지막 항목의 id 로 다음 쪽을 묻는다
+    public async Task<IActionResult> OnGetActivitiesAsync(int id, int? beforeId, int? workId, int take = ProjectService.ActivityPageSize)
+    {
+        var page = await _projects.ActivitiesAsync(id, beforeId, workId, take);
+        return page == null ? Missing() : new JsonResult(new { ok = true, activities = page.Items, more = page.More });
+    }
+
     // 과제가 마지막으로 바뀐 시각 하나만 돌려준다 — 열린 화면이 1분마다 물어 '다른 사용자가 바꿨습니다' 띠를 띄운다
     public async Task<IActionResult> OnGetStampAsync(int id)
     {
@@ -71,7 +79,8 @@ public class DetailModel : PageModel
 
     public async Task<IActionResult> OnGetExcelAsync(int id)
     {
-        var view = await _projects.ViewAsync(id);
+        // Excel 의 활동 이력 시트는 전체 활동을 싣는다 (화면은 최근 일부만)
+        var view = await _projects.ViewAsync(id, activityLimit: null);
         if (view == null) return NotFound();
         return File(_excel.ProjectSchedule(view, _clock.Today), ExcelExporter.ContentType, $"{SafeFileName(view.Title)}_{_clock.Today:yyyyMMdd}.xlsx");
     }

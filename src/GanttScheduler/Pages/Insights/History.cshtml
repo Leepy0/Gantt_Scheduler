@@ -14,6 +14,7 @@
         if (!string.IsNullOrWhiteSpace(Model.ByUser)) route["user"] = Model.ByUser!;
         if (!string.IsNullOrWhiteSpace(Model.Kind)) route["kind"] = Model.Kind!;
         if (!string.IsNullOrWhiteSpace(Model.Q)) route["q"] = Model.Q!;
+        if (d.ProjectId != null) route["projectId"] = d.ProjectId.Value.ToString();
         return route;
     }
     string KindLabel(string key) => Reporting.Kinds.FirstOrDefault(k => k.Key == key).Label ?? "";
@@ -23,6 +24,23 @@
 <partial name="_InsightTabs" />
 
 <form method="get" class="filters">
+    @if (d.ProjectId != null)
+    {
+        @* 과제 조건은 숨은 입력으로 들고 다닌다. 조건 표시의 '모든 과제'로 풀 수 있다 *@
+        <input type="hidden" name="projectId" value="@d.ProjectId" />
+        <div class="filter-row">
+            <span class="chip accent">과제</span>
+            @if (d.Project != null)
+            {
+                <a asp-page="/Projects/Detail" asp-route-id="@d.ProjectId" id="history-project">@d.Project</a>
+            }
+            else
+            {
+                <span class="muted" id="history-project">삭제된 과제</span>
+            }
+            <a class="btn small ghost" id="history-all" asp-page="/Insights/History"><svg class="ic"><use href="#i-x" /></svg>모든 과제</a>
+        </div>
+    }
     <div class="filter-row">
         <input type="date" name="from" value="@d.From.ToString("yyyy-MM-dd")" aria-label="시작일" class="w-date" />
         <span class="muted">~</span>
@@ -48,6 +66,11 @@
         <button type="submit" class="btn">조회</button>
     </div>
 </form>
+
+@if (d.Notice != null)
+{
+    <p class="form-note" role="status" id="history-notice"><svg class="ic"><use href="#i-alert" /></svg><span>@d.Notice</span></p>
+}
 
 <section class="card flush">
     <header class="card-head pad"><h2>변경 이력</h2><span class="count">@d.Total</span></header>

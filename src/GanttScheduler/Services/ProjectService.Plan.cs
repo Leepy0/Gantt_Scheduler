@@ -413,7 +413,8 @@ public partial class ProjectService
         if (date == null) return null;
         var cal = await CalendarAsync();
         if (cal.IsWorkingDay(date.Value)) return null;
-        _holidayNames ??= (await _db.Holidays.AsNoTracking().ToListAsync()).GroupBy(h => h.Date).ToDictionary(g => g.Key, g => g.First().Name);
+        // 공휴일 표는 요청 안에서 한 번만 읽는다(HolidayRowsAsync — 달력과 같은 행)
+        _holidayNames ??= (await HolidayRowsAsync()).GroupBy(h => h.Date).ToDictionary(g => g.Key, g => g.First().Name);
         return $"{what}이 휴일{(_holidayNames.TryGetValue(date.Value, out var name) ? $"({name})" : "")}입니다.";
     }
 }
