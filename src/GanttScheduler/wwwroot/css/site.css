@@ -899,4 +899,14 @@ a.chip:hover { text-decoration: none; filter: brightness(.96); }
 @media (max-width: 767px) {
     .pre-opts { padding-left: 0; width: 100%; }
     .pre-opts select, .pre-opts input[type=number] { min-height: var(--tap); }
+    /* 옮겨지는 작업 표: 좁은 화면에서는 줄마다 작업명 한 줄, 그 아래 지금 → 바뀐 뒤 · 이동 (작업명이 글자 단위로 꺾이지 않게) */
+    .preview-table thead { display: none; }
+    .preview-table, .preview-table tbody { display: block; }
+    .preview-table tr { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 2px 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .preview-table td { padding: 0; border-top: 0; }
+    .preview-table td:first-child { grid-column: 1 / -1; }
+    .preview-table td.num + td.num::before { content: '→ '; color: var(--text-3); }
+    /* 도구 모음: 재계획이 보이면 단계 일정 편집과 한 줄을 나눠 쓴다 */
+    .toolbar #replan { order: 1; flex: 1 1 calc(50% - 4px); }
+    .toolbar #replan:not([hidden]) ~ #edit-schedule { flex-basis: calc(50% - 4px); }
 }

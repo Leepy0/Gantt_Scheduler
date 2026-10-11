@@ -547,6 +547,21 @@ public class EngineServiceTests : IClassFixture<TestDb>
     }
 
     [Fact]
+    public async Task Excel_일정표의_선행_작업에_유형과_간격을_적는다()
+    {
+        var id = await NewProjectAsync("엔진 Excel 선행");
+        var stage = (await ViewAsync(id)).Stages[0];
+        var a = await AddWorkAsync(id, stage.Id, "A", Day(10, 12), Day(10, 14));
+        await AddWorkAsync(id, stage.Id, "B", Day(10, 15), Day(10, 16), pre: a);
+        await AddWorkAsync(id, stage.Id, "C", Day(10, 14), Day(10, 15), new() { new LinkInput(a, 2, "ss") });
+        var bytes = new ExcelExporter().ProjectSchedule(await ViewAsync(id), _db.Clock.Today);
+        using var book = new ClosedXML.Excel.XLWorkbook(new MemoryStream(bytes));
+        var cells = book.Worksheets.First().CellsUsed().Select(c => c.GetString()).ToList();
+        Assert.Contains("A(같이 시작 +2근무일)", cells);
+        Assert.Contains("A", cells);                                   // 끝나면 시작·간격 0 은 이름만
+    }
+
+    [Fact]
     public async Task 같이_끝_연결은_후행_종료를_선행_종료_뒤로_검사하고_선행이_늦어지면_민다()
     {
         var id = await NewProjectAsync("엔진 같이 끝");
