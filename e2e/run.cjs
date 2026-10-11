@@ -260,6 +260,40 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert((await page.locator('.ptable-row').count()) === 2, '검색 결과가 2건이 아님');
     });
 
+    await step('대시보드 숫자·막대 — 누르면 같은 판정의 목록(7일 내 목표·올해 완료·유형), 조건 안내와 해제', async () => {
+        await page.goto(BASE + '/');
+        const due = +(await page.locator('[data-kpi=due] .kpi-value').innerText());
+        await page.click('[data-kpi=due]');
+        await page.waitForURL(/state=active&due=7/);
+        assert((await page.locator('[data-special-note]').innerText()).includes('단계 목표일 7일 안'), '대시보드 조건 안내가 없음');
+        const rows = await page.locator('.ptable-row').count();
+        assert(due === 0 ? rows === 0 : rows >= 1 && rows <= due, `7일 내 목표 ${due}건인데 목록 ${rows}건`);
+        await shot(page, 'd02b-projects-due');
+        // 상태 탭을 바꾸면 대시보드 조건은 풀린다
+        await page.locator('.state-tab', { hasText: '전체' }).click();
+        await page.waitForURL((u) => /state=all/.test(u.toString()) && !/due=/.test(u.toString()));
+        assert((await page.locator('[data-special-note]').count()) === 0, '상태를 바꿨는데 대시보드 조건이 남음');
+
+        await page.goto(BASE + '/');
+        const done = +(await page.locator('[data-kpi=done] .kpi-value').innerText());
+        await page.click('[data-kpi=done]');
+        await page.waitForURL(/state=done&doneYear=\d{4}/);
+        assert((await page.locator('.ptable-row').count()) === done, '올해 완료 KPI 와 목록 건수가 다름');
+
+        await page.goto(BASE + '/');
+        const bar = page.locator('[data-bar-category]').first();
+        const total = +(await bar.locator('.bar-num').innerText());
+        await bar.click();
+        await page.waitForURL(/state=all&category=\d+/);
+        assert((await page.locator('.ptable-row').count()) === total, '유형 막대 건수와 목록 건수가 다름');
+        await page.goto(BASE + '/');
+        const corp = page.locator('[data-bar-corp]').first();
+        const corpTotal = +(await corp.locator('.bar-num').innerText());
+        await corp.click();
+        await page.waitForURL(/state=all&corp=\d+/);
+        assert((await page.locator('.ptable-row').count()) === corpTotal, '법인 막대 건수와 목록 건수가 다름');
+    });
+
     await step('과제 상세 간트 — 기준선·의존선 표시', async () => {
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
         assert((await page.locator('#gantt .g-row.stage').count()) === 8, '단계 행이 8개가 아님');
@@ -298,6 +332,14 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.fill(SHEET + ' [data-new-check]', '현장 사진 첨부');
         await page.click(SHEET + ' [data-add-check]');
         await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/4');
+        // 문구 고치기: 그 줄이 입력칸이 되고 Enter 로 저장 ('옛 → 새' 이력)
+        await page.locator(SHEET + ' [data-checks] li', { hasText: '현장 사진 첨부' }).locator('[data-edit-check]').click();
+        await page.fill(SHEET + ' [data-edit-text]', '현장 사진 첨부(전·후)');
+        await shot(page, 'd04b-check-edit', false);
+        await page.press(SHEET + ' [data-edit-text]', 'Enter');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-checks]').innerText.includes('현장 사진 첨부(전·후)'));
+        assert(await page.locator(SHEET + ' .sheet-body > .form-error').isHidden(), '체크 문구 수정이 오류');
+        assert((await projectData(page)).activities.some((a) => a.text.includes('체크 항목 수정: 현장 사진 첨부 → 현장 사진 첨부(전·후)')), '체크 문구 수정 이력이 없음');
         await page.locator(SHEET + ' [data-checks] li', { hasText: '현장 사진 첨부' }).locator('[data-del-check]').click();
         await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/3');
         await closeSheet(page);
@@ -536,11 +578,18 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
     });
 
-    await step('기준선 다시 확정', async () => {
+    await step('기준선 다시 확정 — 사유를 받고 직전·새 목표 종료를 이력에 남김', async () => {
         await page.click('#btn-baseline');
-        await page.waitForSelector(SHEET + ' [data-yes]');
-        await page.click(SHEET + ' [data-yes]');
+        await page.waitForSelector(SHEET + ' [data-baseline-ends]');
+        assert((await page.locator(SHEET + ' [data-baseline-ends]').innerText()).includes('기준선 목표 종료'), '직전·새 목표 종료 안내가 없음');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('사유'), '사유 없이 다시 확정됨');
+        await page.fill(SHEET + ' textarea[name=reason]', '계약 범위 변경');
+        await shot(page, 'd08g-rebaseline', false);
+        await submitSheet(page);
         await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('기준선 유지'));
+        const act = (await projectData(page)).activities.find((a) => a.type === 'baselineSet');
+        assert(act && act.text.includes('기준선 다시 확정 (목표 종료') && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
     });
 
     await step('목록 보기·정보·활동 탭', async () => {
@@ -1162,14 +1211,31 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
     await step('분석 — 리드타임·주간 보고·변경 이력', async () => {
         await page.goto(BASE + '/Insights/LeadTime');
         assert((await page.locator('.lead-table tbody tr').count()) >= 8, '리드타임 행이 부족함');
+        const head = await page.locator('.lead-table thead').first().innerText();
+        assert(['평균(근무일)', '0일 표본', '처음 목표 대비', '기준선 대비'].every((x) => head.includes(x)), '리드타임 새 열이 없음: ' + head);
         await shot(page, 'd15-insights-leadtime');
+        await page.click('[data-zero-exclude]');
+        await page.waitForURL(/zero=exclude/);
+        assert((await page.locator('[data-zero-exclude].on').count()) === 1, '0일 표본 제외가 선택되지 않음');
+        await shot(page, 'd15b-leadtime-zero');
 
         await page.locator('.tabs a', { hasText: '주간 보고' }).click();
         await page.waitForSelector('.weekly');
         const weekly = await page.locator('main').innerText();
         assert(weekly.includes('주행 시험 재실시로 일주일 순연'), '이번 주 일정 변경 사유가 없음');
         assert(weekly.includes('재협의 완료'), '이번 주 진행 내용이 없음');
+        // 일정 변경은 결정 단위, 대상 수를 함께 보이고 상태·기준선·과제 완료는 따로 센다
+        assert((await page.locator('[data-kpi=changes] .kpi-sub').innerText()).startsWith('대상'), '일정 변경 대상 수가 없음');
+        assert((await page.locator('[data-kpi=states]').count()) === 1 && (await page.locator('[data-kpi=completed]').count()) === 1, '상태·기준선/과제 완료 KPI 가 없음');
+        // 지연 과제는 변동이 없어도 카드, 밀린 항목(D+n)
+        assert((await page.locator('.weekly .weekly-late li').count()) > 0, '밀린 항목이 없음');
+        assert((await page.locator('[data-weekly-asof]').count()) === 0, '이번 주인데 기준일 안내가 있음');
         await shot(page, 'd16-insights-weekly');
+        // 지난 주: 그 주 마지막 날 기준 안내
+        await page.click('a[aria-label="이전 주"]');
+        await page.waitForSelector('[data-weekly-asof]');
+        assert((await page.locator('[data-weekly-asof]').innerText()).includes('진행률·현재 단계는 지금 기준'), '지난 주 기준일 안내가 없음');
+        await shot(page, 'd16b-weekly-past');
 
         await page.locator('.tabs a', { hasText: '변경 이력' }).click();
         await page.waitForSelector('.history li');
@@ -1512,6 +1578,48 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.waitForSelector('#draft .sched-row');
         await page.waitForFunction(() => document.querySelector('#draft').innerText.includes('기본 12근무일'));
         assert((await page.locator('#draft .sched-row').nth(2).locator('.sched-gap').innerText()).includes('+12근무일'), '바꾼 기본 기간이 초안에 쓰이지 않음');
+    });
+
+    await step('관리 — 공휴일 연도 칩·여러 줄 붙여넣기·저장/삭제 때 일정 영향 안내', async () => {
+        const year = +kstToday().slice(0, 4);
+        await page.goto(BASE + '/Admin#holiday');
+        await page.waitForSelector('.year-chips [data-year]');
+        assert((await page.locator(`.year-chip[data-year="${year}"][aria-pressed=true]`).count()) === 1, '올해 칩이 선택되지 않음');
+        assert((await page.locator(`.year-chip[data-year="${year + 1}"]`).count()) === 1, '내년 칩이 없음');
+        await page.click(`.year-chip[data-year="${year + 1}"]`);
+        const dates = await page.locator('.columns .node-extra').allInnerTexts();
+        assert(dates.length > 0 && dates.every((d) => d.startsWith(String(year + 1))), '연도 칩이 그 해만 보이지 않음: ' + dates.join(','));
+        await shot(page, 'd18c-admin-holiday-years');
+
+        // 여러 줄 붙여넣기: 읽지 못하는 줄은 줄 번호와 함께 알리고 아무것도 넣지 않는다
+        const y = year + 3;
+        await page.click('[data-paste]');
+        await page.fill(SHEET + ' textarea[name=text]', `${y}-01-01\t신정\n${y}.3.1 삼일절\n잘못된 줄`);
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).startsWith('3번째 줄'), '잘못된 줄 안내가 없음');
+        await page.fill(SHEET + ' textarea[name=text]', `${y}-01-01\t신정\n${y}.3.1 삼일절`);
+        await shot(page, 'd18d-admin-holiday-paste', false);
+        await submitSheet(page);
+        await page.waitForSelector('[data-holiday-notice]');
+        assert((await page.locator('[data-holiday-notice]').innerText()).includes('2건을 추가했습니다'), '붙여넣기 결과 안내가 없음');
+        assert((await page.locator(`.year-chip[data-year="${y}"][aria-pressed=true]`).count()) === 1, '붙여 넣은 해로 바뀌지 않음');
+        assert((await page.locator('.columns').innerText()).includes('삼일절'), '붙여 넣은 공휴일이 목록에 없음');
+
+        // 진행 과제 일정 안의 날을 저장하면 영향 안내, 지우면 다시 안내 (일정은 원래대로)
+        const day = kstToday(3);
+        const form = page.locator('form[data-add="1"]');
+        await form.locator('input[name=date]').fill(day);
+        await form.locator('input[name=name]').fill('e2e 임시 공휴일');
+        await form.locator('button[type=submit]').click();
+        await page.waitForFunction(() => (document.querySelector('[data-holiday-notice]') || {}).innerText?.includes('공휴일을 저장했습니다'));
+        const saved = await page.locator('[data-holiday-notice]').innerText();
+        assert(saved.includes('진행 과제'), '일정 영향 안내가 없음: ' + saved);
+        await page.locator('.node', { hasText: 'e2e 임시 공휴일' }).locator('.node-main').click();
+        await page.click(SHEET + ' [data-danger]');
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForSelector(SHEET, { state: 'detached' });
+        await page.waitForFunction(() => (document.querySelector('[data-holiday-notice]') || {}).innerText?.includes('공휴일을 삭제했습니다'));
+        assert(!(await page.locator('.columns').innerText()).includes('e2e 임시 공휴일'), '지운 공휴일이 남음');
     });
 
     await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
@@ -1893,6 +2001,12 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
         await shot(m, 'm11-admin');
+        await m.goto(BASE + '/Admin#holiday');
+        await m.waitForSelector('.year-chips [data-year]');
+        await noOverflow('관리 공휴일');
+        const chip = await m.locator('.year-chip').first().boundingBox();
+        assert(chip && chip.height >= 40, '모바일 연도 칩이 너무 작음: ' + JSON.stringify(chip));
+        await shot(m, 'm11f-admin-holiday');
         await m.goto(BASE + '/Admin/Update');
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
