@@ -1057,4 +1057,18 @@ public static class Rules
     public static bool MissedIn(DateOnly? due, DateOnly? done, DateOnly? stageDone, DateOnly from, DateOnly to, DateOnly asOf, DateOnly today) =>
         due is DateOnly d && d >= from && d <= to && (asOf >= today ? d < today : d <= asOf)
         && !DoneBy(done, asOf, today) && !DoneBy(stageDone, asOf, today);
+
+    // ── 사용자 정리·사용 현황 (S12b) ──
+
+    // 사용 현황의 기준 기간(일): 최근 접속자·갱신 건수·조용한 진행 과제
+    public const int UsageDays = 30;
+
+    // 담당 이관 대상인 '진행 중' 과제: 진행·보류(아직 열린 과제 — 보류는 다시 시작한다). 완료·중단 과제의 담당은 기록으로 남긴다
+    public static bool IsOpenProject(ProjectState state) => state is ProjectState.Active or ProjectState.Hold;
+
+    // 조용한 과제: 마지막 변경(UpdatedAt)이 days 일 넘게 지남 (정체 IsStale 과 같은 셈, 기간만 다르다)
+    public static bool IsQuiet(DateTime updatedAtUtc, DateTime utcNow, int days) => utcNow - updatedAtUtc > TimeSpan.FromDays(days);
+
+    // 비율(%) — 분모가 0 이면 0
+    public static int Percent(int part, int whole) => whole <= 0 ? 0 : (int)Math.Round(part * 100.0 / whole, MidpointRounding.AwayFromZero);
 }

@@ -41,6 +41,7 @@ public class AppDb : DbContext
     public DbSet<TemplateWork> TemplateWorks => Set<TemplateWork>();
     public DbSet<ProjectSnapshot> ProjectSnapshots => Set<ProjectSnapshot>();
     public DbSet<DelayReason> DelayReasons => Set<DelayReason>();
+    public DbSet<MasterChange> MasterChanges => Set<MasterChange>();
 
     // 휴지통에 있지 않은 과제와 그 활동. 지운 과제는 모든 조회에서 이것으로 뺀다 — 전역 필터(HasQueryFilter)는 섀도 빌드의 가짜 EF 에 없어
     // 조회마다 명시적으로 고른다. 휴지통·영구 삭제·이전 작업만 Projects 를 그대로 쓴다
@@ -327,6 +328,19 @@ public class AppDb : DbContext
         });
 
         b.Entity<DelayReason>(e => e.Property(x => x.Name).HasMaxLength(Limits.DelayReasonName).IsRequired());
+
+        // ── 관리 변경 이력 ──
+        b.Entity<MasterChange>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(Limits.MasterKind).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(Limits.ActivityText).IsRequired();
+            e.Property(x => x.OldValue).HasMaxLength(Limits.ActivityOldValue);
+            e.Property(x => x.NewValue).HasMaxLength(Limits.ActivityOldValue);
+            // 사용자는 지우지 않고(병합만 예외 — 병합이 먼저 옮긴다) Restrict
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            // 최근 순 목록·기간 조건
+            e.HasIndex(x => x.At);
+        });
     }
 }
 

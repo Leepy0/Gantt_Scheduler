@@ -12,7 +12,11 @@ public record MasterNode(
     string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null,
     DateOnly? LastSeen = null, List<UserIpView>? Addresses = null,
     int? DefaultWorkDays = null, StageLeadHint? Lead = null, string? Email = null,
-    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null);
+    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null,
+    int? Uses = null, int? OpenProjects = null, int? OpenWorks = null);
+
+// Uses: 그 항목을 쓰는 수(계층·유형·기기·용기·협력사는 과제 수, 조직은 사용자 수, 지연 사유는 기록 수 — 휴지통 과제 제외).
+// OpenProjects·OpenWorks: 사용자가 맡은 진행 과제·미완료 작업 수(UserAdminService.LoadsAsync)
 
 // 사용자에 연결된 접속 IP. LastSeen 은 한국 날짜, Current 는 지금 이 화면을 연 기기
 public record UserIpView(string Ip, DateOnly LastSeen, bool Current);
@@ -40,18 +44,99 @@ public class MasterService
     private readonly AppDb _db;
     private readonly IClock _clock;
     private readonly CurrentUser _me;
+    // 관리 변경 이력 — 변경과 같은 저장으로 남긴다
+    private readonly MasterLog _changes;
 
-    public MasterService(AppDb db, IClock clock, CurrentUser me)
+    public MasterService(AppDb db, IClock clock, CurrentUser me, MasterLog? changes = null)
     {
         _db = db;
         _clock = clock;
         _me = me;
+        _changes = changes ?? new MasterLog(db, clock, me);
     }
 
     // 마지막 변경의 안내 문구(관리 화면이 저장 응답과 함께 보인다) — 공휴일 변경의 일정 영향 등
     public string? Notice { get; private set; }
 
+    // 목록 + 사용 수. 사용 수는 종류마다 GroupBy Count 한 번(계층은 하위 위치의 과제를 상위로 올려 센다)
     public async Task<List<MasterNode>> ListAsync(string kind)
+    {
+        var nodes = await NodesAsync(kind);
+        if (kind == "user")
+        {
+            var loads = await UserAdminService.LoadsAsync(_db);
+            return nodes.Select(n => n with
+            {
+                OpenProjects = loads.GetValueOrDefault(n.Id)?.Projects ?? 0,
+                OpenWorks = loads.GetValueOrDefault(n.Id)?.Works ?? 0,
+            }).ToList();
+        }
+        var uses = await UsesAsync(kind, nodes);
+        if (uses == null) return nodes;
+        return nodes.Select(n => kind == "category" && n.Level != 1 ? n : n with { Uses = uses.GetValueOrDefault(n.Id) }).ToList();
+    }
+
+    private async Task<Dictionary<int, int>?> UsesAsync(string kind, List<MasterNode> nodes)
+    {
+        switch (kind)
+        {
+            case "location":
+            {
+                var direct = await _db.LiveProjects.AsNoTracking().GroupBy(p => p.LocationId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
+                // 과제는 가장 깊은 위치 하나만 가리키므로 위로 올려 더해도 두 번 세지 않는다
+                var parent = nodes.ToDictionary(n => n.Id, n => n.ParentId);
+                var sum = new Dictionary<int, int>();
+                foreach (var d in direct)
+                    for (int? id = d.Key, guard = 0; id is int i && guard < 10; id = parent.GetValueOrDefault(i), guard++)
+                        sum[i] = sum.GetValueOrDefault(i) + d.Count;
+                return sum;
+            }
+            case "category":
+                return (await _db.LiveProjects.AsNoTracking().GroupBy(p => p.CategoryId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
+                    .ToDictionary(x => x.Key, x => x.Count);
+            case "equipment":
+            {
+                // 대분류는 하위 타입을 쓰는 과제까지 센다 — 한 과제가 여러 하위 타입을 쓰면 한 번만
+                var pairs = (await _db.ProjectEquipments.AsNoTracking().Where(e => e.Project!.DeletedAt == null)
+                    .Select(e => new { e.EquipmentTypeId, e.ProjectId }).ToListAsync()).Distinct().ToList();
+                var parent = nodes.ToDictionary(n => n.Id, n => n.ParentId);
+                return pairs.SelectMany(x => parent.GetValueOrDefault(x.EquipmentTypeId) is int up
+                        ? new[] { (Id: x.EquipmentTypeId, x.ProjectId), (Id: up, x.ProjectId) } : new[] { (Id: x.EquipmentTypeId, x.ProjectId) })
+                    .Distinct().GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.Count());
+            }
+            case "container":
+                return (await _db.ProjectContainers.AsNoTracking().Where(e => e.Project!.DeletedAt == null)
+                        .GroupBy(e => e.ContainerTypeId).Select(g => new { g.Key, Count = g.Select(x => x.ProjectId).Distinct().Count() }).ToListAsync())
+                    .ToDictionary(x => x.Key, x => x.Count);
+            case "vendor":
+            {
+                // 협력사는 과제에 이름(문자열)으로 저장한다 — 이름이 같은 과제 수(대소문자 무시)
+                var byName = (await _db.LiveProjects.AsNoTracking().Where(p => p.Vendor != null)
+                        .GroupBy(p => p.Vendor!).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
+                    .GroupBy(x => x.Key.Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Sum(x => x.Count), StringComparer.OrdinalIgnoreCase);
+                return nodes.ToDictionary(n => n.Id, n => byName.GetValueOrDefault(n.Name.Trim()));
+            }
+            case "org":
+            {
+                var direct = await _db.Users.AsNoTracking().Where(u => u.IsActive && u.OrgUnitId != null)
+                    .GroupBy(u => u.OrgUnitId!.Value).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
+                var parent = nodes.ToDictionary(n => n.Id, n => n.ParentId);
+                var sum = new Dictionary<int, int>();
+                foreach (var d in direct)
+                    for (int? id = d.Key, guard = 0; id is int i && guard < 10; id = parent.GetValueOrDefault(i), guard++)
+                        sum[i] = sum.GetValueOrDefault(i) + d.Count;
+                return sum;
+            }
+            case "reason":
+                return (await _db.LiveActivities.AsNoTracking().Where(a => a.ReasonCode != null)
+                        .GroupBy(a => a.ReasonCode!.Value).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
+                    .ToDictionary(x => x.Key, x => x.Count);
+            default:
+                return null;
+        }
+    }
+
+    private async Task<List<MasterNode>> NodesAsync(string kind)
     {
         switch (kind)
         {
@@ -185,15 +270,20 @@ public class MasterService
                 {
                     e = await _db.Locations.FirstOrDefaultAsync(l => l.Id == input.Id.Value) ?? throw NotFound();
                 }
+                Diff("이름", e.Name, name);
                 e.Name = name;
                 if (e.Level == 1)
                 {
-                    e.Country = string.IsNullOrWhiteSpace(input.Country) ? null : input.Country.Trim();
-                    if (e.Country?.Length > Limits.Country) throw new RuleException($"국가는 {Limits.Country}자 이내로 입력해 주세요.", "country");
+                    var country = string.IsNullOrWhiteSpace(input.Country) ? null : input.Country.Trim();
+                    if (country?.Length > Limits.Country) throw new RuleException($"국가는 {Limits.Country}자 이내로 입력해 주세요.", "country");
                     var lead = input.OceanLeadDays ?? 0;
                     if (lead < 0 || lead > 365) throw new RuleException("해상 운송 소요일은 0~365 사이로 입력해 주세요.", "oceanLeadDays");
+                    Diff("국가", e.Country, country);
+                    Diff("해상 운송 소요일", e.Id == 0 ? null : e.OceanLeadDays, lead);
+                    e.Country = country;
                     e.OceanLeadDays = lead;
                 }
+                LogSave("location", e, () => e.Id, LocationLevels[e.Level - 1], name);
                 break;
             }
 
@@ -207,13 +297,16 @@ public class MasterService
                     _db.Categories.Add(e);
                 }
                 else e = await _db.Categories.FirstOrDefaultAsync(c => c.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
                 // 성격(내역 입력 방식)은 그 유형을 쓰는 과제가 있으면 바꿀 수 없다 — 바꾸면 과제의 기기·용기 내역이 화면에서 사라지고
                 // 다음 저장 때 지워진다. 값이 없으면(이름만 고침) 지금 값을 그대로 둔다
                 var kind = input.SubKind == null ? e.Kind : ParseEnum(input.SubKind, e.Kind);
                 if (e.Id != 0 && kind != e.Kind && await _db.Projects.AnyAsync(p => p.CategoryId == e.Id))
                     throw new RuleException("이 유형을 쓰는 과제가 있어 내역 입력 방식을 바꿀 수 없습니다. 새 유형을 만들어 주세요.", "subKind");
+                Diff("내역 입력", e.Id == 0 ? null : Views.Key(e.Kind), Views.Key(kind));
                 e.Kind = kind;
+                LogSave("category", e, () => e.Id, "유형", name);
                 break;
             }
 
@@ -234,7 +327,9 @@ public class MasterService
                     _db.TemplateCheckItems.Add(e);
                 }
                 else e = await _db.TemplateCheckItems.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Diff("내용", e.Text, name);
                 e.Text = name;
+                LogSave("check", e, () => e.Id, "체크 항목", name);
                 break;
             }
 
@@ -251,10 +346,15 @@ public class MasterService
                 }
                 else e = await _db.StageTemplates.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
                 Rules.ValidateDefaultWorkDays(input.DefaultWorkDays);
+                Diff("이름", e.Name, name);
                 e.Name = name;
                 // 성격 값이 없으면(이름만 고침) 지금 값을 둔다 — 예전에는 일반으로 되돌려 검수·입고 단계의 추천일이 사라졌다
-                e.Kind = input.SubKind == null ? e.Kind : ParseEnum(input.SubKind, e.Kind);
+                var stageKind = input.SubKind == null ? e.Kind : ParseEnum(input.SubKind, e.Kind);
+                Diff("단계 성격", e.Id == 0 ? null : Views.Key(e.Kind), Views.Key(stageKind));
+                Diff("기본 기간(근무일)", e.DefaultWorkDays, input.DefaultWorkDays);
+                e.Kind = stageKind;
                 e.DefaultWorkDays = input.DefaultWorkDays;
+                LogSave("stage", e, () => e.Id, "단계 템플릿", name);
                 break;
             }
 
@@ -271,7 +371,9 @@ public class MasterService
                     _db.EquipmentTypes.Add(e);
                 }
                 else e = await _db.EquipmentTypes.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
+                LogSave("equipment", e, () => e.Id, e.ParentId == null ? "기기 대분류" : "기기 하위 타입", name);
                 break;
             }
 
@@ -285,7 +387,9 @@ public class MasterService
                     _db.ContainerTypes.Add(e);
                 }
                 else e = await _db.ContainerTypes.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
+                LogSave("container", e, () => e.Id, "용기", name);
                 break;
             }
 
@@ -299,7 +403,9 @@ public class MasterService
                     _db.Vendors.Add(e);
                 }
                 else e = await _db.Vendors.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
+                LogSave("vendor", e, () => e.Id, "협력사", name);
                 break;
             }
 
@@ -313,7 +419,9 @@ public class MasterService
                     _db.DelayReasons.Add(e);
                 }
                 else e = await _db.DelayReasons.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
+                LogSave("reason", e, () => e.Id, "지연 사유", name);
                 break;
             }
 
@@ -335,8 +443,11 @@ public class MasterService
                 else e = await _db.Holidays.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
                 var changed = new HashSet<DateOnly> { date };
                 if (e.Id != 0 && e.Date != date) changed.Add(e.Date);
+                Diff("날짜", e.Id == 0 ? null : e.Date, date);
+                Diff("이름", e.Name, name);
                 e.Name = name;
                 e.Date = date;
+                LogSave("holiday", e, () => e.Id, "공휴일", $"{date:yyyy-MM-dd} {name}");
                 await _db.SaveChangesAsync();
                 // 날짜가 그대로면(이름만 고침) 일정에는 영향이 없다
                 Notice = changed.Count == 1 && before.Contains(date) ? null
@@ -362,7 +473,9 @@ public class MasterService
                     _db.OrgUnits.Add(e);
                 }
                 else e = await _db.OrgUnits.FirstOrDefaultAsync(o => o.Id == input.Id.Value) ?? throw NotFound();
+                Diff("이름", e.Name, name);
                 e.Name = name;
+                LogSave("org", e, () => e.Id, e.Level == 1 ? "그룹" : "파트", name);
                 break;
             }
 
@@ -376,21 +489,32 @@ public class MasterService
                     e = new AppUser { CreatedAt = _clock.UtcNow };
                     _db.Users.Add(e);
                 }
-                else e = await _db.Users.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                else e = await _db.Users.Include(u => u.OrgUnit).ThenInclude(o => o!.Parent).FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                var oldName = e.Name;
+                Diff("이름", e.Name, name);
                 e.Name = name;
-                if (input.OrgUnitId != null && !await _db.OrgUnits.AnyAsync(o => o.Id == input.OrgUnitId.Value))
-                    throw new RuleException("소속을 다시 선택해 주세요.", "orgUnitId");
+                OrgUnit? org = null;
+                if (input.OrgUnitId != null)
+                    org = await _db.OrgUnits.Include(o => o.Parent).FirstOrDefaultAsync(o => o.Id == input.OrgUnitId.Value)
+                        ?? throw new RuleException("소속을 다시 선택해 주세요.", "orgUnitId");
+                Diff("소속", e.OrgUnitId == null ? null : Views.OrgName(e.OrgUnit), org == null ? null : Views.OrgName(org));
                 e.OrgUnitId = input.OrgUnitId;
                 var admin = input.IsAdmin ?? e.IsAdmin;
                 if (e.Id == _me.Id && e.Id != 0 && !admin) throw new RuleException("자기 자신의 관리자 권한은 해제할 수 없습니다.", "isAdmin");
+                // 관리자 지정·해제는 권한(업데이트 올리기 → 서버 실행)을 바꾸므로 따로 한 줄 남긴다
+                if (admin != e.IsAdmin && (e.Id != 0 || admin))
+                    _changes.Add("user", () => e.Id, (admin ? "관리자 지정: " : "관리자 해제: ") + name, e.Id == 0 ? null : (e.IsAdmin ? "관리자" : "일반"), admin ? "관리자" : "일반");
                 e.IsAdmin = admin;
                 // 메일 요약 받는 주소: 관리자만 정한다(IP 로 식별하므로 본인 입력은 남의 알림을 가로챌 수 있다). null 은 그대로, 빈 값은 지움
                 if (input.Email != null)
                 {
                     var email = input.Email.Trim();
-                    e.Email = email.Length == 0 ? null
+                    var mail = email.Length == 0 ? null
                         : NotifyOptions.NormalizeEmail(email) ?? throw new RuleException("메일 주소를 확인해 주세요. (예: name@company.com)", "email");
+                    Diff("메일", e.Email, mail);
+                    e.Email = mail;
                 }
+                LogSave("user", e, () => e.Id, "사용자", e.Id == 0 || oldName == name ? name : oldName);
                 break;
             }
 
@@ -720,10 +844,19 @@ public class MasterService
             if (e.Id != 0 && Rules.Reaches(edges, e.Id, pred))
                 throw new RuleException("선행으로 두면 작업 템플릿의 순서가 순환합니다.", "predecessorId");
         }
+        Diff("이름", e.Title, title);
+        Diff("시작(근무일)", e.Id == 0 ? null : e.OffsetWorkDays, offset);
+        Diff("기간(근무일)", e.Id == 0 ? null : e.DurationWorkDays, duration);
+        if (e.PredecessorTemplateWorkId != input.PredecessorId)
+        {
+            var names = await _db.TemplateWorks.AsNoTracking().Where(t => t.StageTemplateId == e.StageTemplateId).ToDictionaryAsync(t => t.Id, t => t.Title);
+            Diff("선행", e.PredecessorTemplateWorkId is int a ? names.GetValueOrDefault(a) : null, input.PredecessorId is int b ? names.GetValueOrDefault(b) : null);
+        }
         e.Title = title;
         e.OffsetWorkDays = offset;
         e.DurationWorkDays = duration;
         e.PredecessorTemplateWorkId = input.PredecessorId;
+        LogSave("templateWork", e, () => e.Id, "작업 템플릿", title);
     }
 
     // 단계 템플릿 기본 기간 옆의 참고값 — 완료된 과제의 같은 유형·같은 이름 단계 리드타임(근무일). 완료 과제만 읽는다
@@ -735,6 +868,45 @@ public class MasterService
     }
 
     private static int NextSort(IEnumerable<int> existing) => existing.DefaultIfEmpty(0).Max() + 1;
+
+    // ── 관리 변경 이력 도우미 ──
+    private static readonly string[] LocationLevels = { "법인", "제품군", "라인", "층" };
+    private readonly List<(string Label, string? Old, string? New)> _diff = new();
+
+    // 저장 한 번에서 바뀐 칸을 모은다(값이 같으면 남기지 않는다)
+    private void Diff(string label, object? old, object? @new)
+    {
+        string? Show(object? v) => v switch { null => null, DateOnly d => d.ToString("yyyy-MM-dd"), _ => v.ToString() };
+        var (o, n) = (Show(old), Show(@new));
+        if (o != n) _diff.Add((label, o, n));
+    }
+
+    // 모은 칸으로 한 줄: 새 항목은 '추가', 바뀐 칸이 없으면 남기지 않는다. 새 항목의 Id 는 저장 때 정해지므로 함수로 넘긴다
+    private void LogSave(string kind, object entity, Func<int> id, string what, string name)
+    {
+        var created = _db.Entry(entity).State == EntityState.Added;
+        if (created)
+        {
+            var details = _diff.Where(d => d.Label != "이름" && d.Label != "내용" && d.New != null).Select(d => $"{d.Label} {d.New}").ToList();
+            _changes.Add(kind, () => id(), $"{what} 추가: {name}", null, details.Count == 0 ? name : name + " (" + string.Join(", ", details) + ")");
+        }
+        else if (_diff.Count > 0)
+        {
+            var one = _diff.Count == 1;
+            _changes.Add(kind, id(), $"{what} '{name}' 수정: " + string.Join(", ", _diff.Select(d => d.Label)),
+                one ? _diff[0].Old : string.Join("; ", _diff.Select(d => $"{d.Label}: {d.Old ?? "없음"}")),
+                one ? _diff[0].New : string.Join("; ", _diff.Select(d => $"{d.Label}: {d.New ?? "없음"}")));
+        }
+        _diff.Clear();
+    }
+
+    // 사용 중지·다시 사용·삭제 한 줄
+    private void LogToggle(string kind, int id, string what, string name, bool? wasActive, bool? nowActive)
+    {
+        if (nowActive == null) _changes.Add(kind, id, $"{what} 삭제: {name}", name, null);
+        else if (wasActive != nowActive) _changes.Add(kind, id, $"{what} {(nowActive.Value ? "다시 사용" : "사용 중지")}: {name}",
+            wasActive == true ? "사용" : "사용 중지", nowActive.Value ? "사용" : "사용 중지");
+    }
 
     // 하위 항목을 더하기 전에 상위가 아직 있는지 본다 — 다른 화면에서 지운 상위에 더하면 FK 오류로 500 이 난다
     private static async Task RequireParentAsync<T>(IQueryable<T> parent, string what)
