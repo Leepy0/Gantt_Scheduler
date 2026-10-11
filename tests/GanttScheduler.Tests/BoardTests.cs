@@ -220,6 +220,64 @@ public class ClosedOnServiceTests
     }
 
     [Fact]
+    public async Task 리드타임_연도는_그_해_완료_과제만_보고_연도_목록은_중단을_뺀다()
+    {
+        using var t = new TestDb();
+        var (a, sa) = await NewProjectAsync(t);   // 올해 완료
+        var (b, sb) = await NewProjectAsync(t);   // 지난해 완료
+        var (c, _) = await NewProjectAsync(t);    // 아주 오래전 중단 — 연도 목록에 들어가면 안 된다
+        await CompleteAllAsync(t, a, sa);
+        await CompleteAllAsync(t, b, sb);
+        using (var s = t.NewScope()) await s.Projects.SetStateAsync(c, ProjectState.Dropped, "취소");
+        using (var db = t.Open())
+        {
+            await db.Projects.Where(p => p.Id == b).ExecuteUpdateAsync(u => u.SetProperty(p => p.ClosedOn, new DateOnly(2025, 6, 30)));
+            await db.Projects.Where(p => p.Id == c).ExecuteUpdateAsync(u => u.SetProperty(p => p.ClosedOn, new DateOnly(2022, 3, 1)));
+        }
+
+        // 샘플 데이터에도 완료 과제가 있으므로 기대값은 DB 에서 센다(그 해 완료 과제 수)
+        using var db0 = t.Open();
+        async Task<int> DoneIn(int y) => await db0.Projects.CountAsync(p => p.State == ProjectState.Done
+            && p.ClosedOn >= new DateOnly(y, 1, 1) && p.ClosedOn <= new DateOnly(y, 12, 31));
+        var firstDone = await db0.Projects.Where(p => p.State == ProjectState.Done && p.ClosedOn != null).MinAsync(p => p.ClosedOn);
+        Assert.Equal(new DateOnly(2025, 6, 30), firstDone);   // 가장 이른 완료는 b (중단 c 의 2022 보다 늦다)
+
+        using var sc = t.NewScope();
+        // 그 해 완료 과제만 센다(진행 과제·다른 해 완료·중단은 빠진다)
+        var thisYear = await sc.Insights.LeadTimesAsync(year: 2026);
+        Assert.Equal(await DoneIn(2026), thisYear.Sum(g => g.Projects));
+        Assert.Equal(await DoneIn(2026), thisYear.Sum(g => g.DoneProjects));
+        var lastYear = await sc.Insights.LeadTimesAsync(year: 2025);
+        Assert.Equal(1, lastYear.Sum(g => g.Projects));
+        Assert.Empty(await sc.Insights.LeadTimesAsync(year: 2022));   // 중단 과제의 해 — 표본에 들지 않는다
+        // 연도를 고르지 않으면 진행 과제도 표본에 든다
+        Assert.True((await sc.Insights.LeadTimesAsync()).Sum(g => g.Projects) > await DoneIn(2026) + 1);
+
+        // 가장 이른 완료 연도(2025)부터 올해까지, 최근 해가 먼저 — 중단 과제의 2022 는 보지 않는다
+        Assert.Equal(new List<int> { 2026, 2025 }, await sc.Insights.ClosedYearsAsync());
+
+        // 대시보드: 지난해 완료 과제는 범위(InScope)에서 빠져 '올해 완료'·법인 막대에 세지 않는다
+        var dash = await sc.Dashboard.BuildAsync(new DashboardQuery());
+        using var db2 = t.Open();
+        var doneThisYear = await db2.Projects.CountAsync(p => p.State == ProjectState.Done && p.ClosedOn >= new DateOnly(2026, 1, 1));
+        Assert.Equal(doneThisYear, dash.Kpi.DoneThisYear);
+        Assert.Equal(doneThisYear, dash.ByCorporation.Sum(g => g.Done));
+        var open = await db2.Projects.CountAsync(p => p.State == ProjectState.Active || p.State == ProjectState.Hold);
+        Assert.Equal(open + doneThisYear, dash.ByCorporation.Sum(g => g.Total));
+    }
+
+    [Theory]
+    [InlineData(10000)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void 범위_밖_연도도_예외_없이_날짜_범위가_된다(int year)
+    {
+        var (from, to) = Rules.YearRange(year);
+        Assert.True(from <= to);
+        Assert.False(Rules.IsPickableYear(year));
+    }
+
+    [Fact]
     public async Task 데이터_버전은_과제를_바꾸는_저장에서만_오른다()
     {
         using var t = new TestDb();

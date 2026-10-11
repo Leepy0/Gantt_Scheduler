@@ -7,6 +7,9 @@
 
     var PAGE_MS = 12000;      // 쪽 넘김 간격
     var POLL_MS = 60000;      // 데이터 버전 확인 간격
+    // 데이터가 그대로여도 이만큼 지나면 다시 받는다 — 정체·위험 판정은 서버 시각에 따라 하루 중에도 바뀌기 때문(판정은 서버가 한다)
+    var REFRESH_MS = 30 * 60000;
+    var lastRefresh = Date.now();
     var pageTimer = null;
     var tick = 0;
 
@@ -79,6 +82,7 @@
                 var build = doc.documentElement.getAttribute('data-build');
                 if (build && build !== document.documentElement.getAttribute('data-build')) { location.reload(); return; }
                 cur.replaceWith(document.importNode(next, true));
+                lastRefresh = Date.now();
                 setOffline(false);
                 startPaging();
             });
@@ -93,7 +97,10 @@
                 setOffline(false);
                 // 서버가 새 버전으로 바뀌었으면 스타일·스크립트까지 새로 받는다
                 if (j.build && j.build !== document.documentElement.getAttribute('data-build')) { location.reload(); return; }
-                if (j.stamp !== document.getElementById('board').getAttribute('data-stamp')) return refresh();
+                // 서버가 준 확인 시각을 그대로 적는다(바뀐 것이 없어도 화면이 살아 있음을 보이게)
+                var checked = document.querySelector('#board [data-checked]');
+                if (checked && j.checkedAt) checked.textContent = j.checkedAt;
+                if (j.stamp !== document.getElementById('board').getAttribute('data-stamp') || Date.now() - lastRefresh >= REFRESH_MS) return refresh();
             })
             .catch(function () { setOffline(true); });
     }

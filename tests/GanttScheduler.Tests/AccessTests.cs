@@ -441,8 +441,10 @@ public class AccessTests : IClassFixture<TestDb>
             await s.Projects.SaveWorkAsync(new WorkInput(null, stage.Id, "작업", "곧중지", null, Today, Today.AddDays(2), null, null, 0, null, null));
         using (var s = _db.NewScope())
         {
+            // 맡은 일이 있는 사람은 관리 화면에서 바로 끌 수 없으므로(담당 이관을 거친다) 담당이 남은 채 사용 중지된 옛 데이터처럼 바로 바꾼다
             var u = await s.Db.Users.SingleAsync(x => x.Name == "곧중지");
-            await s.Masters.ToggleAsync(new MasterRef("user", 1, u.Id, 0, Active: false));
+            u.IsActive = false;
+            await s.Db.SaveChangesAsync();
         }
 
         var view = await ViewAsync(id);

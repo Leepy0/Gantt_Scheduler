@@ -3,6 +3,7 @@ using GanttScheduler.Data;
 using GanttScheduler.Domain;
 using GanttScheduler.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -70,9 +71,14 @@ public class UserAdminTests : IClassFixture<TestDb>
     }
 
     // 표·열 이름은 EF 모델에서 온 값이라(입력 아님) 그대로 넣고, 값만 매개변수로 넘긴다
+    // 식별자 따옴표는 공급자 규칙(SQLite "…", SQL Server […])으로 — SQL Server 의 QUOTED_IDENTIFIER 설정에 기대지 않게
 #pragma warning disable EF1003
-    private static async Task<int> CountAsync(AppDb db, string table, string column, int id) =>
-        await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM \"" + table + "\" WHERE \"" + column + "\" = {0}", id).SingleAsync();
+    private static async Task<int> CountAsync(AppDb db, string table, string column, int id)
+    {
+        var sql = db.GetService<Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper>();
+        return await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS " + sql.DelimitIdentifier("Value") + " FROM " + sql.DelimitIdentifier(table)
+            + " WHERE " + sql.DelimitIdentifier(column) + " = {0}", id).SingleAsync();
+    }
 #pragma warning restore EF1003
 
     [Fact]
@@ -235,6 +241,102 @@ public class UserAdminTests : IClassFixture<TestDb>
         // 관리자만
         using (var s = _db.NewScope("이관 일반"))
             await Assert.ThrowsAsync<RuleException>(() => People(s).ReassignAsync(new ReassignInput(toId, fromId, true, true, null)));
+    }
+
+    [Fact]
+    public async Task 사용_중인_사람을_사용_중지된_사용자로_합치지_않는다()
+    {
+        var from = await UserAsync("병합경계 사용중");
+        var into = await UserAsync("병합경계 중지됨");
+        var other = await UserAsync("병합경계 둘다중지");
+        using (var s = _db.NewScope())
+        {
+            foreach (var u in await s.Db.Users.Where(u => u.Id == into || u.Id == other).ToListAsync()) u.IsActive = false;
+            await s.Db.SaveChangesAsync();
+        }
+        using (var s = _db.NewScope(admin: true))
+        {
+            var e = await Assert.ThrowsAsync<RuleException>(() => People(s).MergeAsync(new MergeInput(from, into, null)));
+            Assert.Equal("intoId", e.Field);
+        }
+        using (var s = _db.NewScope())
+        {
+            Assert.True(await s.Db.Users.AnyAsync(u => u.Id == from && u.IsActive));   // 아무것도 바뀌지 않았다
+        }
+        // 둘 다 사용 중지면 기록만 모으는 것이라 합칠 수 있다
+        using (var s = _db.NewScope(admin: true))
+            await People(s).MergeAsync(new MergeInput(other, into, null));
+        using (var s = _db.NewScope())
+            Assert.False(await s.Db.Users.AnyAsync(u => u.Id == other));
+    }
+
+    [Fact]
+    public async Task 범위를_모두_끈_이관은_남은_일을_이력에_사실대로_적는다()
+    {
+        var fromId = await UserAsync("범위끔 퇴사");
+        var toId = await UserAsync("범위끔 후임");
+        var (_, stageId) = await NewProjectAsync("범위끔 과제", "범위끔 퇴사");
+        await AddWorkAsync(stageId, "범위끔 작업", "범위끔 퇴사");
+        using (var s = _db.NewScope(admin: true))
+        {
+            var r = await People(s).ReassignAsync(new ReassignInput(fromId, toId, false, false, null));
+            Assert.Equal(0, r.Rows);
+        }
+        using (var s = _db.NewScope())
+        {
+            var change = await s.Db.MasterChanges.Where(c => c.EntityId == fromId && c.Kind == "user").OrderByDescending(c => c.Id).FirstAsync();
+            Assert.DoesNotContain("없음)", change.Text);
+            Assert.Contains("넘기지 않음 — 과제 1 · 작업 1 남음", change.Text);
+        }
+    }
+
+    [Fact]
+    public async Task 맡은_일이_있으면_사용_중지_단추로_바로_끌_수_없다()
+    {
+        var busy = await UserAsync("중지막힘 담당");
+        await NewProjectAsync("중지막힘 과제", "중지막힘 담당");
+        var idle = await UserAsync("중지막힘 한가");
+        using var s = _db.NewScope(admin: true);
+        var e = await Assert.ThrowsAsync<RuleException>(() => s.Masters.ToggleAsync(new MasterRef("user", 1, busy, 0, false)));
+        Assert.Contains("담당을 넘긴 뒤", e.Message);
+        Assert.True((await s.Db.Users.AsNoTracking().SingleAsync(u => u.Id == busy)).IsActive);
+        // 맡은 것이 없으면 그대로 사용 중지·다시 사용
+        await s.Masters.ToggleAsync(new MasterRef("user", 1, idle, 0, false));
+        Assert.False((await s.Db.Users.AsNoTracking().SingleAsync(u => u.Id == idle)).IsActive);
+        await s.Masters.ToggleAsync(new MasterRef("user", 1, idle, 0, true));
+        Assert.True((await s.Db.Users.AsNoTracking().SingleAsync(u => u.Id == idle)).IsActive);
+    }
+
+    [Fact]
+    public async Task 사용_현황의_조직_진행_과제는_사람별_진행_과제의_합과_같다()
+    {
+        int orgId;
+        using (var s = _db.NewScope(admin: true))
+        {
+            await s.Masters.SaveAsync(MS("org", 1, null, null, "합계 그룹"));
+            orgId = await s.Db.OrgUnits.Where(o => o.Name == "합계 그룹").Select(o => o.Id).SingleAsync();
+        }
+        var a = await UserAsync("합계 갑");
+        var b = await UserAsync("합계 을");
+        await NewProjectAsync("합계 진행 1", "합계 갑");
+        var (hold, _) = await NewProjectAsync("합계 보류", "합계 갑");
+        await NewProjectAsync("합계 진행 2", "합계 을");
+        using (var s = _db.NewScope())
+        {
+            foreach (var u in await s.Db.Users.Where(u => u.Id == a || u.Id == b).ToListAsync()) u.OrgUnitId = orgId;
+            (await s.Db.Projects.SingleAsync(p => p.Id == hold)).State = ProjectState.Hold;
+            await s.Db.SaveChangesAsync();
+        }
+        using (var s = _db.NewScope(admin: true))
+        {
+            var r = await People(s).UsageAsync();
+            var row = r.Orgs.Single(o => o.Name == "합계 그룹");
+            Assert.Equal(2, row.OpenProjects);                                 // 보류는 세지 않는다
+            Assert.Equal(row.OpenProjects, r.People!.Where(p => p.Id == a || p.Id == b).Sum(p => p.OpenProjects));
+            Assert.Equal(1, r.People!.Single(p => p.Id == a).OpenProjects);
+            // 전체 줄도 사람별 합과 같다
+            Assert.Equal(r.Total.OpenProjects, r.People!.Sum(p => p.OpenProjects));
+        }
     }
 
     [Fact]

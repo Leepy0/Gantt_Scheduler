@@ -26,7 +26,8 @@
             <span class="spacer"></span>
             <span class="board-conn" id="board-conn" role="status" hidden><svg class="ic"><use href="#i-alert" /></svg>서버에 연결할 수 없어 마지막 화면을 보이는 중입니다</span>
             @* 지연 판정의 '오늘'이 한국 날짜라 기준 시각도 한국 시간으로 적는다(대시보드와 같다) *@
-            <span class="board-asof num">기준 @d.AsOf (한국 시간)</span>
+            @* '반영'은 화면을 마지막으로 다시 받은 시각, '확인'은 서버에 마지막으로 물어본 시각 — 바뀐 것이 없는 날에도 화면이 멈추지 않았음을 보이려고 나눠 적는다 *@
+            <span class="board-asof num">반영 @d.AsOf · 확인 <span data-checked>@d.AsOf.Substring(6)</span> (한국 시간)</span>
         </header>
 
         <section class="board-kpis" aria-label="요약">

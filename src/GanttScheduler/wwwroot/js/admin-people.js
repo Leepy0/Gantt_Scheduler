@@ -61,8 +61,9 @@
     function openMerge(n, users, change) {
         var html = '<p class="form-note">' + icon('alert') + '<span>이름 오타 등으로 같은 사람이 둘이 된 경우에 씁니다. <b>' + esc(n.name) +
             '</b> 님의 담당·작업·활동·첨부·IP 연결·알림을 모두 고른 사람에게 옮기고 <b>' + esc(n.name) + '</b> 이름은 지웁니다. 되돌릴 수 없습니다.</span></p>' +
-            field('intoId', '합칠 사람 (남길 이름)', '<select name="intoId" required><option value="">골라 주세요</option>' + userOptions(users, n.id, false) + '</select>') +
-            '<span class="hint">관리자 권한은 둘 중 하나라도 관리자면 남깁니다. 메일·소속은 남길 사람에게 없을 때만 가져옵니다.</span>' +
+            field('intoId', '합칠 사람 (남길 이름)', '<select name="intoId" required><option value="">골라 주세요</option>' + userOptions(users, n.id, !!n.active) + '</select>') +
+            '<span class="hint">관리자 권한은 둘 중 하나라도 관리자면 남깁니다. 메일·소속은 남길 사람에게 없을 때만 가져옵니다.' +
+                (n.active ? ' 사용 중지된 사용자는 목록에 없습니다 — 그 사람으로 합치려면 먼저 다시 사용으로 바꿔 주세요.' : '') + '</span>' +
             reasonField();
         App.sheet({
             title: '다른 사용자로 합치기 · ' + n.name,

@@ -23,5 +23,5 @@ public class BoardModel : PageModel
     public async Task OnGetAsync() => Data = await _board.BuildAsync();
 
     // 데이터 버전 + 날짜 + 실행 중인 빌드. 빌드가 바뀌면(업데이트) 화면이 스타일·스크립트까지 새로 받도록 페이지 전체를 다시 읽는다
-    public IActionResult OnGetStamp() => new JsonResult(new { ok = true, stamp = _board.Stamp(), build = BuildId });
+    public IActionResult OnGetStamp() => new JsonResult(new { ok = true, stamp = _board.Stamp(), checkedAt = _board.CheckedAt(), build = BuildId });
 }

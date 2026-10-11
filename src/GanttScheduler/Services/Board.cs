@@ -49,6 +49,9 @@ public class BoardService
 
     public static string Stamp(long version, DateOnly today) => $"{version}-{today:yyyyMMdd}";
 
+    // 마지막으로 확인한 시각(한국 시간 HH:mm) — 데이터가 그대로인 날에도 화면이 살아 있음을 보이려고 Stamp 응답에 싣는다
+    public string CheckedAt() => KoreaClock.ToKst(_clock.UtcNow).ToString("HH:mm");
+
     public async Task<BoardView> BuildAsync()
     {
         var today = _clock.Today;

@@ -1,3 +1,4 @@
+using GanttScheduler.Domain;
 using GanttScheduler.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -22,7 +23,7 @@ public class LeadTimeModel : PageModel
 
     public async Task OnGetAsync()
     {
-        if (Year is < 2000 or > 2099) Year = null;
+        if (Year is int y0 && !Rules.IsPickableYear(y0)) Year = null;
         Groups = await _insights.LeadTimesAsync(ExcludeZero, Year);
         Years = await _insights.ClosedYearsAsync();
         if (Year is int y && !Years.Contains(y)) Years = Years.Append(y).OrderByDescending(x => x).ToList();

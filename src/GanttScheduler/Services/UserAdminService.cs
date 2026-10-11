@@ -73,6 +73,10 @@ public class UserAdminService
         var reason = Reason(input.Reason);
         var from = await _db.Users.FirstOrDefaultAsync(u => u.Id == input.FromId) ?? throw NotFound();
         var into = await _db.Users.FirstOrDefaultAsync(u => u.Id == input.IntoId) ?? throw new RuleException("합칠 사용자를 다시 골라 주세요.", "intoId");
+        // 사용 중인 사람을 사용 중지된 사용자로 합치면 IP 가 사용 중지된 사용자에게 붙어 이름 등록 화면으로 밀려나고,
+        // 옮겨 간 담당은 알림이 끊긴다. 되살릴지는 관리자가 정하게 막는다(둘 다 사용 중지면 기록만 모으는 것이라 허용)
+        if (from.IsActive && !into.IsActive)
+            throw new RuleException($"'{into.Name}' 은(는) 사용이 중지된 사용자입니다. 먼저 다시 사용으로 바꾼 뒤 합쳐 주세요.", "intoId");
         var f = from.Id;
         var t = into.Id;
         var touched = new Dictionary<int, int>();       // 과제 Id → 옮긴 행 수 (과제마다 활동 한 건)
@@ -241,12 +245,16 @@ public class UserAdminService
 
         var wasActive = from.IsActive;
         from.IsActive = false;
+        // 범위를 끄고 넘겨 남은 일(넘기지 않은 진행 과제·작업) — 이력에 '맡은 것 없음'이라고 잘못 적지 않게 따로 센다
+        var load = await LoadAsync(from.Id);
+        var left = new UserLoad(input.Projects ? 0 : load.Projects, input.Works ? 0 : load.Works);
         // 넘긴 것만 적는다 (과제 0 · 작업 3 이 아니라 '작업 3건')
         var summary = string.Join(" · ", new[] { projects.Count > 0 ? $"과제 {projects.Count}건" : null, works.Count > 0 ? $"작업 {works.Count}건" : null }
             .Where(x => x != null));
+        var leftText = left.Projects + left.Works == 0 ? null : $"넘기지 않음 — 과제 {left.Projects} · 작업 {left.Works} 남음";
         var text = to == null || projects.Count + works.Count == 0
-            ? $"사용 중지: {from.Name} (맡은 진행 과제·작업 없음)"
-            : $"담당 이관 후 사용 중지: {from.Name} → {to.Name} ({summary})";
+            ? $"사용 중지: {from.Name} ({leftText ?? "맡은 진행 과제·작업 없음"})"
+            : $"담당 이관 후 사용 중지: {from.Name} → {to.Name} ({summary}{(leftText == null ? "" : $", {leftText}")})";
         if (wasActive || projects.Count + works.Count > 0)
             _changes.Add("user", from.Id, text + (reason == null ? "" : $" — {reason}"), wasActive ? "사용" : "사용 중지", to?.Name);
         await SaveAsync();
@@ -291,8 +299,10 @@ public class UserAdminService
         var updates = (await _db.LiveActivities.AsNoTracking().Where(a => a.At >= since)
                 .GroupBy(a => a.UserId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
             .ToDictionary(x => x.Key, x => x.Count);
+        // 조직 줄과 사람 줄이 같은 과제를 센다(Rules.IsUsageProject — 진행만). 사람 줄의 작업 수는 맡은 미완료 작업(LoadsAsync)
         var projects = (await _db.LiveProjects.AsNoTracking().Select(p => new { p.OwnerId, p.State, p.UpdatedAt }).ToListAsync())
-            .Where(p => p.State == ProjectState.Active).ToList();
+            .Where(p => Rules.IsUsageProject(p.State)).ToList();
+        var ownedCount = projects.GroupBy(p => p.OwnerId).ToDictionary(g => g.Key, g => g.Count());
         var loads = await LoadsAsync(_db);
 
         var orgOf = users.ToDictionary(u => u.Id, u => Views.OrgName(u.OrgUnit) ?? NoOrg);
@@ -325,7 +335,7 @@ public class UserAdminService
         {
             people = users
                 .Select(u => new PersonUsage(u.Id, u.Name, Views.OrgName(u.OrgUnit), lastSeen.TryGetValue(u.Id, out var at) ? KoreaClock.KstDate(at) : null,
-                    updates.GetValueOrDefault(u.Id), loads.GetValueOrDefault(u.Id)?.Projects ?? 0, loads.GetValueOrDefault(u.Id)?.Works ?? 0, u.IsActive))
+                    updates.GetValueOrDefault(u.Id), ownedCount.GetValueOrDefault(u.Id), loads.GetValueOrDefault(u.Id)?.Works ?? 0, u.IsActive))
                 .OrderByDescending(p => p.Active).ThenByDescending(p => p.LastSeen ?? DateOnly.MinValue).ThenBy(p => p.Name, StringComparer.Ordinal)
                 .ToList();
         }

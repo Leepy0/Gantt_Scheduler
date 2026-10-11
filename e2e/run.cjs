@@ -2565,6 +2565,9 @@ function fillTemplate(template, sheets) {
         await b.evaluate(() => window.BoardPoll());
         await b.waitForTimeout(300);
         assert((await b.getAttribute('#board', 'data-stamp')) === before, '바뀐 것이 없는데 확인값이 달라짐');
+        // 바뀐 것이 없어도 '확인' 시각은 서버 응답으로 고친다(화면이 멈추지 않았음을 보이게) — 지운 뒤 다시 채워지는지 본다
+        await b.evaluate(() => { document.querySelector('#board [data-checked]').textContent = ''; window.BoardPoll(); });
+        await b.waitForFunction(() => /^\d{2}:\d{2}$/.test(document.querySelector('#board [data-checked]').textContent));
         await openProject(page, '한국 에어컨 1라인 리프터 교체');
         const id = +new URL(page.url()).searchParams.get('id');
         await page.evaluate(async (pid) => {

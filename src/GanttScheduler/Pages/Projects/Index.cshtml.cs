@@ -129,8 +129,16 @@ public class IndexModel : PageModel
         return r;
     }
 
+    // 주소로 들어온 연도가 고를 수 있는 범위 밖이면 버린다(0 = 전체 연도는 그대로) — 연도 고르기 목록이 수천 줄로 늘거나
+    // 날짜 계산이 깨지지 않게. 대시보드에서 온 doneYear 는 '그 해 완료'라는 뜻을 지켜 빈 목록이 되도록 YearRange 에 맡긴다
+    private void NormalizeYear()
+    {
+        if (Year is int y && y != 0 && !Rules.IsPickableYear(y)) Year = null;
+    }
+
     public async Task OnGetAsync()
     {
+        NormalizeYear();
         Today = _clock.Today;
         Categories = (await _db.Categories.AsNoTracking().ToListAsync()).OrderBy(c => c.SortOrder).ToList();
         // 위치는 목록 계산(ListAsync)이 읽는 것을 같이 쓴다 (요청 안에서 한 번만 읽기)
@@ -145,13 +153,15 @@ public class IndexModel : PageModel
             var first = await _db.LiveProjects.AsNoTracking().Where(p => p.ClosedOn != null).OrderBy(p => p.ClosedOn)
                 .Select(p => p.ClosedOn).FirstOrDefaultAsync();
             var thisYear = Today.Year;
-            var from = Math.Min(first?.Year ?? thisYear, ClosedYear ?? thisYear);
-            for (var y = Math.Max(thisYear, ClosedYear ?? thisYear); y >= from; y--) Years.Add(y);
+            var picked = ClosedYear is int c && Rules.IsPickableYear(c) ? c : thisYear;
+            var from = Math.Min(first?.Year ?? thisYear, picked);
+            for (var y = Math.Max(thisYear, picked); y >= from; y--) Years.Add(y);
         }
     }
 
     public async Task<IActionResult> OnGetExcelAsync()
     {
+        NormalizeYear();
         var rows = await _dash.ListAsync(Filter());
         // 제목의 조건은 화면에서 고른 것 전부 (유형·법인 포함) — 내려받은 파일만 보고도 어떤 목록인지 알 수 있게
         var category = Category == null ? null : (await _db.Categories.AsNoTracking().Where(c => c.Id == Category.Value).Select(c => c.Name).FirstOrDefaultAsync());

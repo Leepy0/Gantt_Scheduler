@@ -632,6 +632,14 @@ public class MasterService
                 var e = await _db.Users.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var wanted = Wanted();
                 if (e.Id == _me.Id && !wanted) throw new RuleException("자기 자신은 사용 중지할 수 없습니다.");
+                // 맡은 일이 남은 채 사용 중지하면 담당이 사용 중지된 사람으로 남고 알림도 끊긴다 — 화면이 받아 둔 목록이 오래됐거나
+                // 직접 보낸 요청이어도 서버에서 막고, 담당 이관(UserAdminService.ReassignAsync)으로만 사용 중지하게 한다
+                if (e.IsActive && !wanted)
+                {
+                    var load = (await UserAdminService.LoadsAsync(_db)).GetValueOrDefault(e.Id);
+                    if (load != null && load.Projects + load.Works > 0)
+                        throw new RuleException($"맡은 진행 과제·작업이 있습니다(과제 {load.Projects} · 작업 {load.Works}). 담당을 넘긴 뒤 사용 중지해 주세요.");
+                }
                 LogToggle("user", e.Id, "사용자", e.Name, e.IsActive, wanted);
                 e.IsActive = wanted;
                 break;

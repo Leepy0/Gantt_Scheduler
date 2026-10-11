@@ -24,6 +24,7 @@ public class HelpModel : PageModel
         ("quick", "내 할 일에서 바로 갱신"),
         ("conflict", "동시 수정 충돌"),
         ("user", "사용자 식별(IP)과 사용자 바꾸기"),
+        ("people", "사용자 정리 · 변경 이력 · 사용 현황"),
         ("trash", "휴지통"),
         ("board", "TV 상황판"),
     };

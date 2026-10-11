@@ -117,6 +117,23 @@ public partial class HttpTests
         Assert.DoesNotContain("id=\"list-year\"", await client.GetStringAsync("/Projects?state=active"));
     }
 
+    [Theory]
+    [InlineData("/Projects?state=done&year=10000")]
+    [InlineData("/Projects?state=all&doneYear=0")]
+    [InlineData("/Projects?doneYear=-1")]
+    [InlineData("/Projects?state=dropped&year=-5")]
+    [InlineData("/Projects?handler=Excel&state=done&year=10000&doneYear=10000")]
+    public async Task 범위_밖_연도_주소도_오류_없이_열린다(string url)
+    {
+        var client = await RegisteredClientAsync();
+        var res = await client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        if (url.Contains("handler=Excel")) return;
+        var html = WebUtility.HtmlDecode(await res.Content.ReadAsStringAsync());
+        // 잘못 친 연도로 연도 고르기 목록이 수천 줄로 늘지 않는다
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(html, "년 종료</option>").Count < 200);
+    }
+
     [Fact]
     public async Task 과제가_없고_법인도_없으면_첫_설정을_안내한다()
     {
