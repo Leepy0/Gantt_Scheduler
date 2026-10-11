@@ -394,7 +394,11 @@
         });
 
         if (opts.danger) {
-            dlg.querySelector('[data-danger]').addEventListener('click', function () { opts.danger.onClick(sheet); });
+            // 위험 동작(삭제·사용 중지)은 응답이 올 때까지 다시 눌리지 않게 잠근다 — 두 번 눌러 두 번 처리되지 않게
+            var dangerBtn = dlg.querySelector('[data-danger]');
+            dangerBtn.addEventListener('click', function () {
+                App.busy(dangerBtn, function () { return opts.danger.onClick(sheet); });
+            });
         }
 
         form.addEventListener('submit', async function (e) {

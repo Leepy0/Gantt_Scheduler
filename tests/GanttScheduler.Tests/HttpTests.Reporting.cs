@@ -74,4 +74,86 @@ public partial class HttpTests
         Assert.Contains("유형: 물류 자동화", sub);
         Assert.Contains("법인: 베트남", sub);
     }
+
+    private static HttpRequestMessage AdminJson(string token, string handler, object body)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, "/Admin?handler=" + handler) { Content = JsonContent.Create(body) };
+        req.Headers.Add("X-CSRF-TOKEN", token);
+        req.Headers.Add("Accept", "application/json");
+        return req;
+    }
+
+    [Fact]
+    public async Task 관리_화면은_이름_길이_상한을_싣고_사용_중지는_원하는_상태로_공휴일_붙여넣기는_안내를_돌려준다()
+    {
+        var client = await RegisteredClientAsync();
+        // 통합테스터는 관리자가 아니다 — 이 시험 동안만 관리자로 두고 끝나면 되돌린다(같은 묶음의 다른 시험이 기대한다)
+        using (_factory.Db.NewScope("통합테스터", admin: true)) { }
+        try
+        {
+            await AdminChecksAsync(client);
+        }
+        finally
+        {
+            using (_factory.Db.NewScope("통합테스터", admin: false)) { }
+        }
+    }
+
+    private static async Task AdminChecksAsync(HttpClient client)
+    {
+        var html = await client.GetStringAsync("/Admin");
+        var token = TokenOf(html);
+        var limits = JsonDocument.Parse(System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Match(html, "data-limits=\"([^\"]+)\"").Groups[1].Value)).RootElement;
+        Assert.Equal(new[] { 50, 50, 200 }, limits.GetProperty("category").EnumerateArray().Select(x => x.GetInt32()).ToArray());
+        Assert.Equal(100, limits.GetProperty("vendor")[0].GetInt32());
+        Assert.Equal(4, limits.GetProperty("location").GetArrayLength());
+
+        // 길이 초과는 400 과 안내 (SQL Server 에서만 나던 500 이 아니다)
+        var tooLong = await client.SendAsync(AdminJson(token, "Save", new { kind = "container", level = 1, name = new string('가', 51) }));
+        Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
+        Assert.Equal("name", (await tooLong.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("field").GetString());
+
+        // 사용 중지: 원하는 상태를 실어 보내고, 같은 요청을 두 번 보내도 중지 그대로
+        var add = await client.SendAsync(AdminJson(token, "Save", new { kind = "container", level = 1, name = "HTTP 상자" }));
+        var box = (await add.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("name").GetString() == "HTTP 상자");
+        var id = box.GetProperty("id").GetInt32();
+        for (var i = 0; i < 2; i++)
+        {
+            var off = await client.SendAsync(AdminJson(token, "Toggle", new { kind = "container", level = 1, id, dir = 0, active = false }));
+            Assert.Equal(HttpStatusCode.OK, off.StatusCode);
+            var node = (await off.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("id").GetInt32() == id);
+            Assert.False(node.GetProperty("active").GetBoolean());
+        }
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(AdminJson(token, "Toggle", new { kind = "container", level = 1, id, dir = 0 }))).StatusCode);
+
+        // 공휴일 여러 줄 붙여넣기: 응답에 결과·일정 영향 안내
+        var paste = await client.SendAsync(AdminJson(token, "PasteHolidays", new { text = "2029-01-01\t신정\n2029-03-01 삼일절" }));
+        Assert.Equal(HttpStatusCode.OK, paste.StatusCode);
+        var body = await paste.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.StartsWith("공휴일 2건을 추가했습니다.", body.GetProperty("notice").GetString());
+        Assert.Contains(body.GetProperty("nodes").EnumerateArray(), n => n.GetProperty("date").GetString() == "2029-03-01");
+        var bad = await client.SendAsync(AdminJson(token, "PasteHolidays", new { text = "삼일절 2029-03-01" }));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Equal("text", (await bad.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("field").GetString());
+    }
+
+    [Fact]
+    public async Task 주간_보고와_리드타임_화면은_새_구획과_열을_그린다()
+    {
+        var client = await RegisteredClientAsync();
+        var weekly = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/Insights/Weekly"));
+        Assert.Contains("data-kpi=\"changes\"", weekly);
+        Assert.Contains("상태·기준선", weekly);
+        Assert.Contains("과제 완료", weekly);
+        // 지난 주 보고는 기준일을 밝힌다
+        var last = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/Insights/Weekly?day=2026-01-05"));
+        Assert.Contains("data-weekly-asof", last);
+        Assert.Contains("진행률·현재 단계는 지금 기준", last);
+
+        var lead = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/Insights/LeadTime?zero=exclude"));
+        Assert.Contains("평균(근무일)", lead);
+        Assert.Contains("처음 목표 대비", lead);
+        Assert.Contains("기준선 대비", lead);
+        Assert.Contains("0일 표본", lead);
+    }
 }

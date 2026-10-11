@@ -731,6 +731,29 @@ public static class Rules
         return max;
     }
 
+    // ── 공휴일 변경 영향 ────────────────────────────────────────────────
+    // 공휴일을 더하거나 빼면 근무일 기간·지연 일수가 바뀌고, 선행 종료 다음 날을 공휴일로 넣으면 후행이 곧바로 선행 관계를 어긴다.
+    // 관리 화면이 저장 응답으로 알리도록 과제 하나의 영향을 센다(자동으로 밀지는 않는다 — 규칙 11).
+    // Touched: 바뀐 날이 미완료 단계 목표일이거나 열린 작업의 목표 기간 안에 있다. NewViolations: before 달력에서는 지키던 선행 관계를
+    // after 달력에서 어기게 되는 밀기 대상 작업 수(작업마다 한 번)
+    public static (bool Touched, int NewViolations) HolidayImpact(Project p, IReadOnlyCollection<DateOnly> changed, WorkCalendar before, WorkCalendar after)
+    {
+        var touched = p.Stages.Any(s => s.CompletedDate == null
+            && ((s.TargetDate is { } t && changed.Contains(t))
+                || s.Works.Any(w => IsOpen(w, s) && changed.Any(d => d >= w.PlanStart && d <= w.PlanEnd))));
+        var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) byId[w.Id] = (w, s);
+        var violated = new HashSet<int>();
+        foreach (var l in p.Links)
+        {
+            if (!byId.TryGetValue(l.PredecessorId, out var pred) || !byId.TryGetValue(l.SuccessorId, out var succ)) continue;
+            if (!IsMovable(succ.Work, succ.Stage)) continue;
+            if (Violates(l, pred.Work, succ.Work, after) && !Violates(l, pred.Work, succ.Work, before)) violated.Add(succ.Work.Id);
+        }
+        return (touched, violated.Count);
+    }
+
     // ── 일정 변경 횟수 ──────────────────────────────────────────────────
     // 일정 변경은 '결정' 단위로 센다. 연쇄 이동·선행 연동은 한 번의 결정으로 여러 행(같은 BatchId)을 남기므로
     // 행 수로 세면 부풀려진다 — 묶음 없는 행은 하나씩, 묶음은 하나로 센다 (주간 보고·상세·Excel·PDF 공용)

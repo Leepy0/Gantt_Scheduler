@@ -37,6 +37,11 @@ public class IndexModel : PageModel
 
     public async Task OnGetAsync() => NoAdmin = !await _users.HasAdminAsync();
 
+    // 종류별·단계별 이름 길이 상한 (입력칸 maxlength) — 서버 검사·DB 열 길이와 같은 값(MasterService.NameLimit → Limits)
+    public string LimitsJson => AppJson.Serialize(MasterService.Kinds.ToDictionary(k => k,
+        k => Enumerable.Range(1, k switch { "location" => MasterService.LocationDepth, "category" => 3, "equipment" or "org" => 2, _ => 1 })
+            .Select(level => MasterService.NameLimit(k, level)).ToArray()));
+
     public Task<IActionResult> OnGetDataAsync(string kind) => Run(kind, () => Task.CompletedTask);
 
     public Task<IActionResult> OnPostSaveAsync([FromBody] MasterSave input) => Run(input.Kind, () => _masters.SaveAsync(input));
@@ -46,6 +51,10 @@ public class IndexModel : PageModel
     public Task<IActionResult> OnPostMoveAsync([FromBody] MasterRef input) => Run(input.Kind, () => _masters.MoveAsync(input));
 
     public Task<IActionResult> OnPostAddIpAsync([FromBody] MasterIp input) => Run("user", () => _masters.AddAddressAsync(input));
+
+    // 공휴일 여러 줄 붙여넣기 (한 줄에 '날짜 이름')
+    public record HolidayPaste(string? Text);
+    public Task<IActionResult> OnPostPasteHolidaysAsync([FromBody] HolidayPaste input) => Run("holiday", () => _masters.PasteHolidaysAsync(input.Text));
 
     public Task<IActionResult> OnPostRemoveIpAsync([FromBody] MasterIp input) => Run("user", () => _masters.RemoveAddressAsync(input));
 
@@ -57,7 +66,8 @@ public class IndexModel : PageModel
             await action();
             // 법인·내년 공휴일을 등록하면 상단 칩('첫 설정 필요'·'내년 공휴일 없음')이 몇 분 기다리지 않고 바로 사라지게 한다
             if (kind is "holiday" or "location") HttpContext.RequestServices.GetService<OpsAlerts>()?.Invalidate();
-            return new JsonResult(new { ok = true, nodes = await _masters.ListAsync(kind) });
+            // notice: 변경에 따른 안내(공휴일이 걸린 진행 과제·선행 위반 등) — 화면이 알림으로 보인다
+            return new JsonResult(new { ok = true, nodes = await _masters.ListAsync(kind), notice = _masters.Notice });
         }
         catch (RuleException ex)
         {

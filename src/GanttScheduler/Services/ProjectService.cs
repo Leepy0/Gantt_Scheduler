@@ -228,7 +228,7 @@ public partial class ProjectService
 
     public async Task<int> CreateAsync(ProjectInput input)
     {
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery()
                            .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
@@ -246,8 +246,8 @@ public partial class ProjectService
             OwnerId = owner.Id,
             State = ProjectState.Active,
             StartDate = input.StartDate ?? _clock.Today,
-            Vendor = Text(input.Vendor, 100, "협력사", "vendor"),
-            Description = Text(input.Description, 2000, "설명", "description"),
+            Vendor = Text(input.Vendor, Limits.VendorName, "협력사", "vendor"),
+            Description = Text(input.Description, Limits.Description, "설명", "description"),
             CreatedAt = now,
             CreatedById = _me.Id,
             UpdatedAt = now,
@@ -287,10 +287,12 @@ public partial class ProjectService
 
     public async Task UpdateAsync(int id, ProjectInput input)
     {
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
         var p = await RequireAsync(id, withItems: true);
         CheckVersion(input.Version, p.Version, p.Id);
+        // 수정 화면에서 비운 담당자·착수일은 '그대로 두기'가 아니라 입력 누락이다 — 예전에는 아무 말 없이 무시해 저장된 줄 알았다
+        if (input.StartDate == null) throw new RuleException("착수일을 입력해 주세요.", "startDate");
         if (input.StartDate != null && p.StartDate != input.StartDate.Value)
         {
             // 착수일이 일정 범위의 기준이므로, 옮긴 착수일 기준으로 기존 일정이 범위 밖이 되면 막는다(연도 오타를 여기서 잡는다)
@@ -301,6 +303,7 @@ public partial class ProjectService
                 throw new RuleException($"착수일을 {Fmt(input.StartDate)}(으)로 바꾸면 기존 일정 {Fmt(outside)} 이(가) 허용 범위({Fmt(min)} ~ {Fmt(max)})를 벗어납니다.", "startDate");
             }
         }
+        if (string.IsNullOrWhiteSpace(input.Owner)) throw new RuleException("담당자를 입력해 주세요.", "owner");
         var owner = await _users.ResolveAsync(input.Owner, keepId: p.OwnerId);
 
         var changed = new List<string>();
@@ -308,17 +311,25 @@ public partial class ProjectService
         if (p.LocationId != loc.Id) { changed.Add("위치"); p.CorporationId = corp.Id; p.LocationId = loc.Id; }
         if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.Owner = owner; if (owner.Id != 0) p.OwnerId = owner.Id; }
         if (input.StartDate != null && p.StartDate != input.StartDate.Value) { changed.Add($"착수일 → {Fmt(input.StartDate)}"); p.StartDate = input.StartDate.Value; }
-        var vendor = Text(input.Vendor, 100, "협력사", "vendor");
+        var vendor = Text(input.Vendor, Limits.VendorName, "협력사", "vendor");
         if (p.Vendor != vendor) { changed.Add("협력사"); p.Vendor = vendor; }
-        var desc = Text(input.Description, 2000, "설명", "description");
+        var desc = Text(input.Description, Limits.Description, "설명", "description");
         if (p.Description != desc) { changed.Add("설명"); p.Description = desc; }
 
+        // 지금 유형의 성격 쪽 내역만 바꾼다. 화면은 그 쪽 내역만 보이고 보내므로, 반대쪽(예전 성격의 내역)이나 일반 유형의 내역을
+        // 지우면 아무도 모르게 사라진다 — 그대로 둔다
         var before = ItemsSignature(p);
         var kind = p.Category?.Kind ?? CategoryKind.General;
-        _db.ProjectEquipments.RemoveRange(p.Equipments);
-        _db.ProjectContainers.RemoveRange(p.Containers);
-        p.Equipments.Clear();
-        p.Containers.Clear();
+        if (kind == CategoryKind.Automation)
+        {
+            _db.ProjectEquipments.RemoveRange(p.Equipments);
+            p.Equipments.Clear();
+        }
+        else if (kind == CategoryKind.Container)
+        {
+            _db.ProjectContainers.RemoveRange(p.Containers);
+            p.Containers.Clear();
+        }
         await ApplyItemsAsync(p, kind, input);
         if (before != ItemsSignature(p)) changed.Add(kind == CategoryKind.Container ? "용기 내역" : "기기 내역");
 
@@ -343,7 +354,7 @@ public partial class ProjectService
                 if (item.TypeId == 0 && item.Quantity == 0) continue;   // 빈 행은 건너뜀
                 if (!valid.Contains(item.TypeId)) throw new RuleException("기기 종류를 선택해 주세요.", "equipments");
                 if (item.Quantity < 1) throw new RuleException("기기 수량은 1 이상으로 입력해 주세요.", "equipments");
-                p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, 200, "비고", "equipments") });
+                p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, Limits.ItemNote, "비고", "equipments") });
             }
         }
         else if (kind == CategoryKind.Container)
@@ -354,7 +365,7 @@ public partial class ProjectService
                 if (item.TypeId == 0 && item.Quantity == 0) continue;
                 if (!valid.Contains(item.TypeId)) throw new RuleException("용기 종류를 선택해 주세요.", "containers");
                 if (item.Quantity < 1) throw new RuleException("용기 수량은 1 이상으로 입력해 주세요.", "containers");
-                p.Containers.Add(new ProjectContainer { ContainerTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, 200, "비고", "containers") });
+                p.Containers.Add(new ProjectContainer { ContainerTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, Limits.ItemNote, "비고", "containers") });
             }
         }
     }
@@ -375,7 +386,7 @@ public partial class ProjectService
             throw new RuleException("완료 상태는 모든 단계를 완료하면 자동으로 바뀝니다.");
         if (p.State == state) return;
 
-        reason = Text(reason, 500, "사유", "reason");
+        reason = Text(reason, Limits.Reason, "사유", "reason");
         if ((state == ProjectState.Hold || state == ProjectState.Dropped) && reason == null)
             throw new RuleException("보류·중단은 사유를 입력해 주세요.", "reason");
 
@@ -414,7 +425,7 @@ public partial class ProjectService
         var p = await RequireAsync(id);
         CheckVersion(version, p.Version, p.Id);
         var again = p.BaselineAt != null;
-        reason = Text(reason, 500, "사유", "reason");
+        reason = Text(reason, Limits.Reason, "사유", "reason");
         if (again)
         {
             if (!Rules.CanRebaseline(p, _me.User?.Id, _me.IsAdmin))
@@ -447,7 +458,7 @@ public partial class ProjectService
     public async Task<int> CloneAsync(CloneInput input)
     {
         var src = await RequireAsync(input.ProjectId, withItems: true);
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var start = input.StartDate ?? _clock.Today;
         Rules.ValidateStartDate(start, _clock.Today);
         var cal = await CalendarAsync();
@@ -515,8 +526,8 @@ public partial class ProjectService
 
     public async Task SaveStageAsync(StageInput input)
     {
-        var name = Text(input.Name, 50, "단계명", "name", required: true)!;
-        var reason = Text(input.Reason, 500, "사유", "reason");
+        var name = Text(input.Name, Limits.StageName, "단계명", "name", required: true)!;
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
         var p = await RequireAsync(input.ProjectId);
 
         if (input.Id == null)
@@ -832,9 +843,9 @@ public partial class ProjectService
 
     public async Task<int> SaveWorkAsync(WorkInput input)
     {
-        var title = Text(input.Title, 200, "작업명", "title", required: true)!;
-        var note = Text(input.Note, 1000, "메모", "note");
-        var reason = Text(input.Reason, 500, "사유", "reason");
+        var title = Text(input.Title, Limits.WorkTitle, "작업명", "title", required: true)!;
+        var note = Text(input.Note, Limits.WorkNote, "메모", "note");
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
         if (input.PlanStart == null || input.PlanEnd == null)
             throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart");
         if (input.PlanStart.Value > input.PlanEnd.Value)
@@ -1127,12 +1138,27 @@ public partial class ProjectService
     // 댓글은 과제 행만 읽어(있는지 확인·변경 시각) 활동을 더한다 — 단계·작업 그래프는 필요 없다
     public async Task CommentAsync(CommentInput input)
     {
-        var text = Text(input.Text, 1000, "내용", "text", required: true)!;
+        var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
         var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
+        await RequireOwnedAsync(p.Id, input.StageId, input.WorkId);
         p.Activities.Add(NewActivity(ActivityType.Comment, text, stageId: input.StageId, workId: input.WorkId));
         Touch(p);
         await _db.SaveChangesAsync();
+    }
+
+    // 댓글이 가리키는 단계·작업이 그 과제 것인지 (다른 과제의 단계·작업 Id 로 남기면 그 과제의 활동 탭·작업 진행 내용에 섞인다).
+    // 둘 다 주면 작업이 그 단계에 있어야 한다
+    private async Task RequireOwnedAsync(int projectId, int? stageId, int? workId)
+    {
+        if (stageId != null && !await _db.Stages.AnyAsync(s => s.Id == stageId.Value && s.ProjectId == projectId))
+            throw new RuleException("단계를 찾을 수 없습니다. 화면을 새로고침해 주세요.", "stageId");
+        if (workId != null)
+        {
+            var work = await _db.WorkItems.Where(w => w.Id == workId.Value).Select(w => new { w.StageId, w.Stage!.ProjectId }).FirstOrDefaultAsync();
+            if (work == null || work.ProjectId != projectId || (stageId != null && work.StageId != stageId.Value))
+                throw new RuleException("작업을 찾을 수 없습니다. 화면을 새로고침해 주세요.", "workId");
+        }
     }
 
     // ── 공통 ─────────────────────────────────────────────────────────────

@@ -271,7 +271,7 @@ public partial class ProjectService
     // 화면이 본 미리보기(Rows)와 지금 계산이 다르면(그사이 누가 일정을 바꿈) 409 로 다시 보게 한다
     public async Task ReplanAsync(ReplanInput input)
     {
-        var reason = Text(input.Reason, 500, "사유", "reason") ?? throw new RuleException("재계획 사유를 입력해 주세요.", "reason");
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason") ?? throw new RuleException("재계획 사유를 입력해 주세요.", "reason");
         var p = await RequireAsync(input.ProjectId);
         CheckVersion(input.Version, p.Version, p.Id);
         var cal = await CalendarAsync();

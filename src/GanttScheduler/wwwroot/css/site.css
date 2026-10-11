@@ -939,3 +939,18 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .card-foot-link { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; min-height: var(--tap); margin-top: 8px; font-weight: 600; }
 /* 과제 목록: 대시보드 숫자에서 온 조건(완료 연도·목표일 n일 안) */
 .filter-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+/* 관리 > 공휴일: 연도 칩·여러 줄 붙여넣기 */
+.year-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.year-chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
+.year-chip {
+    display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong);
+    border-radius: 16px; background: var(--surface); color: var(--text-2); font-weight: 600; font-size: var(--fs-xs); cursor: pointer;
+}
+.year-chip .ic { width: 12px; height: 12px; }
+.year-chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent-weak); color: var(--accent); }
+.year-chip.warn { border-color: var(--warn-mid); color: var(--warn); }
+.year-chip .num { color: inherit; opacity: .8; }
+.admin-body > .form-warn, .admin-body > .form-note { margin-bottom: 12px; }
+@media (max-width: 767px) {
+    .year-chip { min-height: var(--tap); }
+}
