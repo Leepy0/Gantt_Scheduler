@@ -268,25 +268,25 @@ public static class Seeder
             return l;
         }
 
-        var kr = Corp("한국", "대한민국", 0, 1);
-        var vn = Corp("동남아", "동남아", 12, 2);
-        var mx = Corp("미주", "미주", 35, 3);
-        var pl = Corp("유럽", "유럽", 45, 4);
+        var hq = Corp("한국", "대한민국", 0, 1);
+        var regionA = Corp("동남아", "동남아", 12, 2);
+        var regionB = Corp("미주", "미주", 35, 3);
+        var regionC = Corp("유럽", "유럽", 45, 4);
 
-        var krRef = Child(kr, "A제품", 1);
-        var krAc = Child(kr, "B제품", 2);
-        var krRef3 = Child(krRef, "3라인", 1);
-        var krRef3F1 = Child(krRef3, "1F", 1);
-        Child(krRef3, "2F", 2);
-        var krRef5 = Child(krRef, "5라인", 2);
-        var krAc1 = Child(krAc, "1라인", 1);
-        var vnWash = Child(vn, "C제품", 1);
-        var vnRef = Child(vn, "A제품", 2);
-        var vnWash2 = Child(vnWash, "2라인", 1);
-        var vnRef1 = Child(vnRef, "1라인", 1);
-        var mxAc = Child(mx, "B제품", 1);
-        var mxRef = Child(mx, "A제품", 2);
-        var plWash = Child(pl, "C제품", 1);
+        var hqA = Child(hq, "A제품", 1);
+        var hqB = Child(hq, "B제품", 2);
+        var hqA3 = Child(hqA, "3라인", 1);
+        var hqA3F1 = Child(hqA3, "1F", 1);
+        Child(hqA3, "2F", 2);
+        var hqA5 = Child(hqA, "5라인", 2);
+        var hqB1 = Child(hqB, "1라인", 1);
+        var regionAC = Child(regionA, "C제품", 1);
+        var regionAA = Child(regionA, "A제품", 2);
+        var regionAC2 = Child(regionAC, "2라인", 1);
+        var regionAA1 = Child(regionAA, "1라인", 1);
+        var regionBB = Child(regionB, "B제품", 1);
+        var regionBA = Child(regionB, "A제품", 2);
+        var regionCC = Child(regionC, "C제품", 1);
 
         foreach (var name in new[] { "A로보틱스", "B오토메이션", "C용기" })
             db.Vendors.Add(new Vendor { Name = name });
@@ -390,7 +390,7 @@ public static class Seeder
             => p.Activities.Add(new Activity { Type = type, Text = text, Reason = reason, UserId = user.Id, At = now.AddDays(dayOffset) });
 
         // 1) 정상 진행 — 검수 단계, 세부 작업 있음
-        var p1 = Make("본사 A제품 3라인 AGV 도입", "물류 자동화", kr, krRef3F1, kim, -120, ProjectState.Active,
+        var p1 = Make("본사 A제품 3라인 AGV 도입", "물류 자동화", hq, hqA3F1, kim, -120, ProjectState.Active,
             (-100, -102), (-80, -78), (-60, -60), (-10, -8), (5, null), (12, null), (30, null), (50, null));
         p1.Vendor = "A로보틱스";
         p1.Description = "A제품 3라인 1층 자재 공급을 AGV 12대로 전환";
@@ -407,7 +407,7 @@ public static class Seeder
         Note(p1, ActivityType.Comment, "주행 시험 1차 결과 양호. 곡선 구간 속도만 재확인 예정", lee, -1);
 
         // 2) 지연 — 제작 단계가 목표일을 넘김, 세부 작업도 지연
-        var p2 = Make("동남아 C제품 2라인 AMR 확대", "물류 자동화", vn, vnWash2, lee, -90, ProjectState.Active,
+        var p2 = Make("동남아 C제품 2라인 AMR 확대", "물류 자동화", regionA, regionAC2, lee, -90, ProjectState.Active,
             (-75, -76), (-60, -58), (-45, -40), (-6, null), (10, null), (25, null), (40, null), (60, null));
         p2.Vendor = "B오토메이션";
         p2.Equipments.Add(new ProjectEquipment { EquipmentTypeId = Eq("AMR", "Belt").Id, Quantity = 8 });
@@ -422,14 +422,14 @@ public static class Seeder
         Note(p2, ActivityType.Comment, "제어기 보드 입고 완료, 조립 재개", park, -12);
 
         // 3) 목표일 임박 — 용기
-        var p3 = Make("미주 B제품 용기 표준화", "용기", mx, mxAc, kim, -45, ProjectState.Active,
+        var p3 = Make("미주 B제품 용기 표준화", "용기", regionB, regionBB, kim, -45, ProjectState.Active,
             (-30, -31), (-12, -12), (3, null), (30, null), (65, null), (80, null));
         p3.Vendor = "C용기";
         p3.Containers.Add(new ProjectContainer { ContainerTypeId = Ct("파렛트").Id, Quantity = 400 });
         p3.Containers.Add(new ProjectContainer { ContainerTypeId = Ct("플라스틱 박스").Id, Quantity = 1200 });
 
         // 4) Simulation — 모델링 진행 중
-        var p4 = Make("본사 2공장 물류 동선 Simulation", "Simulation", kr, krRef5, choi, -30, ProjectState.Active,
+        var p4 = Make("본사 2공장 물류 동선 Simulation", "Simulation", hq, hqA5, choi, -30, ProjectState.Active,
             (-14, -15), (7, null), (20, null), (28, null));
         var layout = Work(p4, "모델링", "레이아웃 반영", choi, -14, -8, -14, -9);
         var logic = Work(p4, "모델링", "AGV 로직 구현", choi, -8, 4, -8, null, 55);
@@ -439,25 +439,25 @@ public static class Seeder
         Link(p4, logic, scenario);
 
         // 5) 지연 — 첫 단계부터 밀림
-        Make("유럽 C제품 창고 입출고 개선", "물류", pl, plWash, kim, -20, ProjectState.Active,
+        Make("유럽 C제품 창고 입출고 개선", "물류", regionC, regionCC, kim, -20, ProjectState.Active,
             (-3, null), (10, null), (30, null));
 
         // 6) 보류
-        var p6 = Make("한국 B제품 1라인 리프터 교체", "물류 자동화", kr, krAc1, park, -60, ProjectState.Hold,
+        var p6 = Make("한국 B제품 1라인 리프터 교체", "물류 자동화", hq, hqB1, park, -60, ProjectState.Hold,
             (-45, -44), (-20, null), (null, null), (null, null), (null, null), (null, null), (null, null), (null, null));
         p6.Equipments.Add(new ProjectEquipment { EquipmentTypeId = equip.First(e => e.Name == "리프터").Id, Quantity = 2 });
         Note(p6, ActivityType.StateChanged, "상태 변경: 진행 → 보류", park, -18, "투자 우선순위 조정으로 내년 재검토");
 
         // 7) 완료 — 통계용
-        Make("동남아 A제품 1라인 AGV 2차 증설", "물류 자동화", vn, vnRef1, lee, -230, ProjectState.Done,
+        Make("동남아 A제품 1라인 AGV 2차 증설", "물류 자동화", regionA, regionAA1, lee, -230, ProjectState.Done,
             (-215, -214), (-195, -196), (-180, -178), (-120, -117), (-105, -104), (-90, -88), (-60, -61), (-30, -28));
 
         // 8) 완료 — 일반 물류
-        Make("본사 A제품 용기 회수 프로세스 개선", "물류", kr, krRef, kim, -100, ProjectState.Done,
+        Make("본사 A제품 용기 회수 프로세스 개선", "물류", hq, hqA, kim, -100, ProjectState.Done,
             (-80, -82), (-60, -57), (-35, -36));
 
         // 9) 막 등록 — 목표일 대부분 미정
-        Make("미주 A제품 AGV 도입 검토", "물류 자동화", mx, mxRef, kim, -2, ProjectState.Active,
+        Make("미주 A제품 AGV 도입 검토", "물류 자동화", regionB, regionBA, kim, -2, ProjectState.Active,
             (14, null));
 
         await db.SaveChangesAsync();
