@@ -10,9 +10,10 @@ public record ProjectInput(
     string? Title, int CategoryId, int LocationId, string? Owner, DateOnly? StartDate,
     string? Vendor, string? Description, List<ItemInput>? Equipments, List<ItemInput>? Containers, int? Version = null);
 
+// CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다
 public record StageInput(
     int ProjectId, int? Id, string? Name, DateOnly? TargetDate, DateOnly? CompletedDate, string? Reason, bool Cascade,
-    int? Version = null);
+    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false);
 
 public record WorkInput(
     int? Id, int StageId, string? Title, string? Owner, string? CoOwner,
@@ -114,6 +115,7 @@ public class ProjectService
                            .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
+        if (input.StartDate != null) Rules.ValidateStartDate(input.StartDate.Value, _clock.Today);
         var owner = await _users.ResolveAsync(input.Owner) ?? _me.User!;
         var now = _clock.UtcNow;
 
@@ -132,6 +134,8 @@ public class ProjectService
             CreatedById = _me.Id,
             UpdatedAt = now,
         };
+        // 아직 저장 전인 새 담당자(Id 0)는 내비게이션으로 연결해 과제와 함께 저장한다
+        if (owner.Id == 0) p.Owner = owner;
 
         // 단계 템플릿(체크리스트 포함)을 그 시점 그대로 복사 — 이후 템플릿이 바뀌어도 기존 과제는 영향 없음
         foreach (var t in category.StageTemplates.OrderBy(t => t.SortOrder))
@@ -154,14 +158,24 @@ public class ProjectService
     {
         var title = Text(input.Title, 200, "과제명", "title", required: true)!;
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
-        var owner = await _users.ResolveAsync(input.Owner);
         var p = await RequireAsync(id);
         CheckVersion(input.Version, p.Version, p.Id);
+        if (input.StartDate != null && p.StartDate != input.StartDate.Value)
+        {
+            // 착수일이 일정 범위의 기준이므로, 옮긴 착수일 기준으로 기존 일정이 범위 밖이 되면 막는다(연도 오타를 여기서 잡는다)
+            Rules.ValidateStartDate(input.StartDate.Value, _clock.Today);
+            if (Rules.FirstOutOfRange(p, input.StartDate.Value) is { } outside)
+            {
+                var (min, max) = Rules.DateRange(input.StartDate.Value);
+                throw new RuleException($"착수일을 {Fmt(input.StartDate)}(으)로 바꾸면 기존 일정 {Fmt(outside)} 이(가) 허용 범위({Fmt(min)} ~ {Fmt(max)})를 벗어납니다.", "startDate");
+            }
+        }
+        var owner = await _users.ResolveAsync(input.Owner, keepId: p.OwnerId);
 
         var changed = new List<string>();
         if (p.Title != title) { changed.Add("과제명"); p.Title = title; }
         if (p.LocationId != loc.Id) { changed.Add("위치"); p.CorporationId = corp.Id; p.LocationId = loc.Id; }
-        if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.OwnerId = owner.Id; }
+        if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.Owner = owner; if (owner.Id != 0) p.OwnerId = owner.Id; }
         if (input.StartDate != null && p.StartDate != input.StartDate.Value) { changed.Add($"착수일 → {Fmt(input.StartDate)}"); p.StartDate = input.StartDate.Value; }
         var vendor = Text(input.Vendor, 100, "협력사", "vendor");
         if (p.Vendor != vendor) { changed.Add("협력사"); p.Vendor = vendor; }
@@ -275,15 +289,18 @@ public class ProjectService
         await _db.SaveChangesAsync();
     }
 
-    // 과제 복제: 단계·체크리스트·작업·의존 관계·내역을 복사하고, 날짜는 새 착수일에 맞춰 통째로 옮긴다.
+    // 과제 복제: 단계·체크리스트·작업·의존 관계·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 거리 그대로 새 착수일에 맞춰 옮긴다.
+    // 달력 일수로 옮기면 요일이 바뀌어 주말에 놓이거나 근무일 기간이 줄고 의존 위반이 생긴다.
     // 실적·진행률·활동·첨부·기준선은 복사하지 않는다
     public async Task<int> CloneAsync(CloneInput input)
     {
         var src = await RequireAsync(input.ProjectId);
         var title = Text(input.Title, 200, "과제명", "title", required: true)!;
         var start = input.StartDate ?? _clock.Today;
-        var delta = start.DayNumber - src.StartDate.DayNumber;
+        Rules.ValidateStartDate(start, _clock.Today);
+        var cal = await CalendarAsync();
         var now = _clock.UtcNow;
+        DateOnly Shift(DateOnly d) => cal.Shift(d, cal.NextWorkingDay(src.StartDate), cal.NextWorkingDay(start));
 
         var p = new Project
         {
@@ -296,17 +313,19 @@ public class ProjectService
         var map = new Dictionary<int, WorkItem>();
         foreach (var s in Rules.Ordered(src))
         {
-            var stage = new Stage { Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = s.TargetDate?.AddDays(delta) };
+            var stage = new Stage { Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = s.TargetDate == null ? null : Shift(s.TargetDate.Value) };
             foreach (var c in s.Checks.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
                 stage.Checks.Add(new CheckItem { Text = c.Text, SortOrder = c.SortOrder });
             if (input.IncludeWorks)
             {
                 foreach (var w in s.Works.OrderBy(w => w.Id))
                 {
+                    // 시작은 휴일이면 다음 근무일 자리로 보고 옮긴 뒤 근무일 기간을 그대로 놓는다
+                    var (planStart, planEnd) = Rules.Place(Shift(cal.NextWorkingDay(w.PlanStart)), Rules.WorkDays(w, cal), cal);
                     var copy = new WorkItem
                     {
                         Title = w.Title, OwnerId = w.OwnerId, CoOwnerId = w.CoOwnerId, Note = w.Note,
-                        PlanStart = w.PlanStart.AddDays(delta), PlanEnd = w.PlanEnd.AddDays(delta), CreatedAt = now,
+                        PlanStart = planStart, PlanEnd = planEnd, CreatedAt = now,
                     };
                     map[w.Id] = copy;
                     stage.Works.Add(copy);
@@ -324,7 +343,17 @@ public class ProjectService
         foreach (var c in src.Containers)
             p.Containers.Add(new ProjectContainer { ContainerTypeId = c.ContainerTypeId, Quantity = c.Quantity, Note = c.Note });
 
-        p.Activities.Add(NewActivity(ActivityType.Cloned, $"과제 등록 (복제 원본: {src.Title})"));
+        // 원본에 남아 있던 의존 위반(공휴일 추가 등으로 생긴)은 복제본에 넘기지 않는다
+        var fixes = Rules.Reschedule(p, cal);
+        foreach (var m in fixes)
+        {
+            m.Work.PlanStart = m.NewStart;
+            m.Work.PlanEnd = m.NewEnd;
+        }
+        if (Rules.FirstOutOfRange(p, start) is { } outside)
+            throw new RuleException($"원본 일정을 옮기면 {Fmt(outside)} 이(가) 허용 범위를 벗어납니다. 착수일을 다시 확인해 주세요.", "startDate");
+
+        p.Activities.Add(NewActivity(ActivityType.Cloned, $"과제 등록 (복제 원본: {src.Title})" + (fixes.Count > 0 ? $" — 의존 관계에 맞춰 작업 {fixes.Count}건 일정 조정" : "")));
         _db.Projects.Add(p);
         await _db.SaveChangesAsync();
         return p.Id;
@@ -340,6 +369,8 @@ public class ProjectService
 
         if (input.Id == null)
         {
+            Rules.ValidateDate(input.TargetDate, p.StartDate, "목표일", "targetDate");
+            Rules.ValidateDate(input.CompletedDate, p.StartDate, "완료일", "completedDate");
             var order = p.Stages.Count == 0 ? 1 : p.Stages.Max(s => s.SortOrder) + 1;
             p.Stages.Add(new Stage { Name = name, SortOrder = order, TargetDate = input.TargetDate, CompletedDate = input.CompletedDate });
             p.Activities.Add(NewActivity(ActivityType.StageAdded, $"단계 추가: {name}"));
@@ -349,6 +380,17 @@ public class ProjectService
             var s = p.Stages.FirstOrDefault(x => x.Id == input.Id.Value)
                 ?? throw new RuleException("단계를 찾을 수 없습니다. 화면을 새로고침해 주세요.");
             CheckVersion(input.Version, s.Version, p.Id);
+            // 바뀐 날짜만 범위를 본다 — 범위가 생기기 전에 들어간 값이 남아 있어도 다른 수정은 막지 않는다
+            if (s.TargetDate != input.TargetDate) Rules.ValidateDate(input.TargetDate, p.StartDate, "목표일", "targetDate");
+            if (s.CompletedDate != input.CompletedDate) Rules.ValidateDate(input.CompletedDate, p.StartDate, "완료일", "completedDate");
+            var completing = s.CompletedDate == null && input.CompletedDate != null;
+            if (completing)
+            {
+                // 체크리스트를 모두 끝내야 완료할 수 있다
+                var open = s.Checks.Count(c => !c.IsDone);
+                if (open > 0)
+                    throw new RuleException($"체크리스트 {open}개 항목이 남아 있어 완료할 수 없습니다.", "completedDate");
+            }
             var changed = false;
 
             if (s.Name != name)
@@ -377,21 +419,38 @@ public class ProjectService
                         s.Id, oldValue: Fmt(old), newValue: Fmt(input.TargetDate), batch: batch));
                     s.TargetDate = input.TargetDate;
 
+                    var cal = await CalendarAsync();
+                    var delta = input.TargetDate == null ? 0 : cal.Distance(old, input.TargetDate.Value);
+
                     // 연쇄 이동: 이후 미완료 단계의 목표일을 같은 근무일 수만큼 옮긴다 (주말·공휴일은 건너뜀)
-                    if (input.Cascade && input.TargetDate != null)
+                    if (input.Cascade && delta != 0)
                     {
-                        var cal = await CalendarAsync();
-                        var delta = cal.Distance(old, input.TargetDate.Value);
                         foreach (var later in p.Stages.Where(x => x.SortOrder > s.SortOrder && x.CompletedDate == null && x.TargetDate != null))
                         {
                             var from = later.TargetDate!.Value;
                             var to = cal.AddWorkingDays(from, delta);
                             if (to == from) continue;
+                            Rules.ValidateDate(to, p.StartDate, $"연쇄 이동할 '{later.Name}' 목표일", "targetDate");
                             later.TargetDate = to;
                             later.Version++;
                             p.Activities.Add(NewActivity(ActivityType.TargetChanged, $"[{later.Name}] 목표일 {Fmt(from)} → {Fmt(to)} (연쇄 이동)", reason,
                                 later.Id, oldValue: Fmt(from), newValue: Fmt(to), batch: batch));
                         }
+                    }
+
+                    // 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다(선택). 당기면 앞 단계 선행과 어긋날 수 있어,
+                    // 옮긴 작업에서 시작해 의존 관계를 다시 맞춘다. 작업마다 처음 → 마지막 일정으로 활동 1건
+                    if (input.CascadeWorks && delta != 0)
+                    {
+                        var plan = new PlanBatch();
+                        foreach (var w in Rules.CascadeWorks(p, s).ToList())
+                        {
+                            var (ns, ne) = Rules.ShiftWork(w, delta, cal);
+                            plan.Move(w, ns, ne, "연쇄 이동", reason);
+                        }
+                        foreach (var m in Rules.Reschedule(p, cal, plan.Works.ToList()))
+                            plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", reason);
+                        CommitPlan(p, plan, batch, "targetDate");
                     }
                 }
             }
@@ -399,19 +458,34 @@ public class ProjectService
             if (s.CompletedDate != input.CompletedDate)
             {
                 changed = true;
-                if (s.CompletedDate == null)
+                Guid? reopened = null;
+                if (completing)
                 {
-                    // 체크리스트를 모두 끝내야 완료할 수 있다
-                    var open = s.Checks.Count(c => !c.IsDone);
-                    if (open > 0)
-                        throw new RuleException($"체크리스트 {open}개 항목이 남아 있어 완료할 수 없습니다.", "completedDate");
-                    p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(input.CompletedDate)})", stageId: s.Id, newValue: Fmt(input.CompletedDate)));
+                    var batch = Guid.NewGuid();
+                    p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(input.CompletedDate)})", stageId: s.Id,
+                        newValue: Fmt(input.CompletedDate), batch: batch));
+                    if (input.CloseWorks) CloseOpenWorks(p, s, input.CompletedDate!.Value, batch);
                 }
                 else if (input.CompletedDate == null)
-                    p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate)));
+                {
+                    reopened = Guid.NewGuid();
+                    p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate),
+                        batch: reopened));
+                }
                 else
                     p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(input.CompletedDate)}", stageId: s.Id));
                 s.CompletedDate = input.CompletedDate;
+
+                // 완료돼 있는 동안 이 단계의 미착수 작업은 밀기 대상이 아니었다(규칙 3). 다시 열면 그 사이 늦어진 선행에 맞춰
+                // 밀어 둔다 — 그대로 두면 위반이 드러난 채 남고, 그 작업의 일정을 고칠 때마다 사람이 직접 풀어야 한다
+                if (reopened != null)
+                {
+                    var cal = await CalendarAsync();
+                    var plan = new PlanBatch();
+                    foreach (var m in Rules.Reschedule(p, cal, s.Works.ToList()))
+                        plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", "단계 완료 취소로 선행 일정에 맞춤");
+                    CommitPlan(p, plan, reopened.Value, "completedDate");
+                }
             }
 
             if (changed) s.Version++;
@@ -420,6 +494,26 @@ public class ProjectService
         SyncState(p);
         Touch(p);
         await _db.SaveChangesAsync();
+    }
+
+    // 단계를 완료하면서 실적 종료가 없는 작업을 완료일로 닫는다. 실적 시작이 없으면 목표 시작일(완료일보다 늦으면 완료일)로 둔다
+    private void CloseOpenWorks(Project p, Stage s, DateOnly done, Guid batch)
+    {
+        foreach (var w in s.Works.Where(w => w.ActualEnd == null).OrderBy(w => w.PlanStart).ThenBy(w => w.Id).ToList())
+        {
+            var changes = new List<string>();
+            var start = w.ActualStart ?? (w.PlanStart < done ? w.PlanStart : done);
+            if (w.ActualStart == null) changes.Add($"실적 시작 {Fmt(start)}");
+            var end = start > done ? start : done;    // 완료일보다 늦게 시작한 작업은 시작일에 닫는다(종료가 시작보다 앞설 수 없다)
+            changes.Add($"실적 종료 {Fmt(end)}");
+            if (w.Progress != 100) changes.Add($"진행률 {w.Progress}% → 100%");
+            w.ActualStart = start;
+            w.ActualEnd = end;
+            w.Progress = 100;
+            w.Version++;
+            p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
+                stageId: s.Id, workId: w.Id, batch: batch));
+        }
     }
 
     // dir: -1 위로, +1 아래로
@@ -540,15 +634,16 @@ public class ProjectService
             throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
         Rules.ValidateProgress(input.Progress);
 
-        // 사용자 확인(필요 시 생성)은 엔티티를 건드리기 전에 끝낸다
-        var owner = await _users.ResolveAsync(input.Owner);
-        var coOwner = await _users.ResolveAsync(input.CoOwner);
-        if (owner != null && coOwner != null && owner.Id == coOwner.Id) coOwner = null;
-
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
         var stage = p.Stages.First(s => s.Id == input.StageId);
         var all = Rules.AllWorks(p).ToDictionary(w => w.Id);
+
+        // 담당자 확인. 새 이름은 저장하지 않고 Add 만 해 두므로 아래 검증에 실패하면 남지 않는다(마지막 SaveChanges 에서 함께 저장)
+        var current = input.Id != null ? all.GetValueOrDefault(input.Id.Value) : null;
+        var owner = await _users.ResolveAsync(input.Owner, "owner", current?.OwnerId);
+        var coOwner = await _users.ResolveAsync(input.CoOwner, "coOwner", current?.CoOwnerId);
+        if (ReferenceEquals(owner, coOwner)) coOwner = null;
 
         var progress = input.Progress;
         var actualStart = input.ActualStart;
@@ -558,13 +653,15 @@ public class ProjectService
         WorkItem w;
         var batch = Guid.NewGuid();
         var planChanged = false;
+        string? linkChange = null;
 
         if (input.Id == null)
         {
-            var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, actualStart != null, cal);
+            ValidateWorkDates(p, null, input.PlanStart.Value, input.PlanEnd.Value, actualStart, input.ActualEnd);
+            var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, Rules.IsMovable(actualStart, stage), planChanged: true, cal);
             w = new WorkItem
             {
-                Title = title, OwnerId = owner?.Id, CoOwnerId = coOwner?.Id, Progress = progress,
+                Title = title, Owner = owner, CoOwner = coOwner, Progress = progress,
                 PlanStart = input.PlanStart.Value, PlanEnd = input.PlanEnd.Value,
                 ActualStart = actualStart, ActualEnd = input.ActualEnd, Note = note, CreatedAt = _clock.UtcNow,
             };
@@ -583,7 +680,11 @@ public class ProjectService
             if (planChanged && reason == null)
                 throw new RuleException("목표 일정을 바꿀 때는 변경 사유를 입력해 주세요.", "reason");
             // 검사를 모두 통과한 뒤에만 값을 바꾼다
-            var wanted = ValidatePredecessors(p, w, all, input.Predecessors, input.PlanStart.Value, actualStart != null, cal);
+            ValidateWorkDates(p, w, input.PlanStart.Value, input.PlanEnd.Value, actualStart, input.ActualEnd);
+            // 실적 시작을 지우거나 열린 단계로 옮겨 이번 저장으로 밀기 대상이 되는 작업은 일정을 새로 잡는 것과 같으므로 선행을 검사한다
+            var movable = Rules.IsMovable(actualStart, stage);
+            var becameMovable = movable && !Rules.IsMovable(w, p.Stages.First(s => s.Id == w.StageId));
+            var wanted = ValidatePredecessors(p, w, all, input.Predecessors, input.PlanStart.Value, movable, planChanged || becameMovable, cal);
 
             if (planChanged)
             {
@@ -602,13 +703,14 @@ public class ProjectService
                 changed.Add($"단계 → {stage.Name}");
                 w.StageId = stage.Id;
             }
-            if (w.OwnerId != owner?.Id) { changed.Add($"담당 → {owner?.Name ?? "없음"}"); w.OwnerId = owner?.Id; w.Owner = owner; }
-            if (w.CoOwnerId != coOwner?.Id) { changed.Add($"부담당 → {coOwner?.Name ?? "없음"}"); w.CoOwnerId = coOwner?.Id; w.CoOwner = coOwner; }
+            // 새 담당자(Id 0)는 FK 를 건드리지 않고 내비게이션으로만 연결한다 — 저장할 때 EF 가 새 Id 로 맞춘다
+            if (w.OwnerId != owner?.Id) { changed.Add($"담당 → {owner?.Name ?? "없음"}"); if (owner?.Id != 0) w.OwnerId = owner?.Id; w.Owner = owner; }
+            if (w.CoOwnerId != coOwner?.Id) { changed.Add($"부담당 → {coOwner?.Name ?? "없음"}"); if (coOwner?.Id != 0) w.CoOwnerId = coOwner?.Id; w.CoOwner = coOwner; }
             if (w.Progress != progress) { changed.Add($"진행률 {w.Progress}% → {progress}%"); w.Progress = progress; }
             if (w.ActualStart != actualStart) { changed.Add($"실적 시작 {Fmt(actualStart)}"); w.ActualStart = actualStart; }
             if (w.ActualEnd != input.ActualEnd) { changed.Add(input.ActualEnd == null ? "실적 종료 취소" : $"실적 종료 {Fmt(input.ActualEnd)}"); w.ActualEnd = input.ActualEnd; }
             if (w.Note != note) { changed.Add("메모"); w.Note = note; }
-            var linkChange = ApplyLinks(p, w, all, wanted);
+            linkChange = ApplyLinks(p, w, all, wanted);
             if (linkChange != null) changed.Add(linkChange);
 
             if (changed.Count > 0)
@@ -616,21 +718,42 @@ public class ProjectService
             w.Version++;
         }
 
-        // 이 작업이 뒤로 밀렸으면 아직 시작하지 않은 후행 작업도 따라 민다
-        PushSuccessors(p, w, all, cal, planChanged ? reason : null, batch, new HashSet<WorkItem>());
+        // 이 작업의 일정이나 선행이 바뀌었으면 아직 시작하지 않은 후행 작업을 선행 일정에 맞춰 민다.
+        // 다른 것만 고친 저장에서는 관계없는 작업을 옮기지 않는다
+        if (planChanged || linkChange != null)
+        {
+            var plan = new PlanBatch();
+            foreach (var m in Rules.Reschedule(p, cal, new[] { w }))
+                plan.Move(m.Work, m.NewStart, m.NewEnd, "선행 작업 연동", planChanged ? reason! : $"선행 작업 '{m.Cause.Title}' 일정에 맞춤");
+            CommitPlan(p, plan, batch, "planEnd");
+        }
 
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
     }
 
+    // 작업 날짜 범위 검사. 기존 작업은 바뀐 날짜만 본다 — 범위가 생기기 전에 들어간 값이 남아 있어도 다른 수정은 막지 않는다
+    private static void ValidateWorkDates(Project p, WorkItem? w, DateOnly planStart, DateOnly planEnd, DateOnly? actualStart, DateOnly? actualEnd)
+    {
+        if (w == null || w.PlanStart != planStart) Rules.ValidateDate(planStart, p.StartDate, "목표 시작일", "planStart");
+        if (w == null || w.PlanEnd != planEnd) Rules.ValidateDate(planEnd, p.StartDate, "목표 종료일", "planEnd");
+        if (w == null || w.ActualStart != actualStart) Rules.ValidateDate(actualStart, p.StartDate, "실적 시작일", "actualStart");
+        if (w == null || w.ActualEnd != actualEnd) Rules.ValidateDate(actualEnd, p.StartDate, "실적 종료일", "actualEnd");
+    }
+
     // 선행 작업 지정이 유효한지 검사하고, 적용할 선행 작업 id 목록을 돌려준다 (predecessors 가 null 이면 지금 그대로).
-    // w 가 null 이면 새 작업
+    // w 가 null 이면 새 작업. 존재·순환은 늘 검사한다. "선행이 끝난 뒤 시작" 검사는 새 작업이거나 목표 일정·선행 집합이
+    // 바뀔 때만 한다 — 공휴일 추가 등으로 이미 생긴 위반이 제목·담당·메모·진행률만 고치는 저장까지 막지 않게(위반은 화면에 표시된다).
+    // movable: 저장 뒤의 값으로 본 밀기 대상 여부(Rules.IsMovable). 이미 시작했거나 완료된 단계의 작업은 밀지도, 위반으로 표시하지도
+    // 않으므로 날짜도 검사하지 않는다 — 표시와 검사가 같은 기준이어야 '표시는 없는데 저장이 막히는' 일이 없다
     private static List<int> ValidatePredecessors(Project p, WorkItem? w, Dictionary<int, WorkItem> all, List<int>? predecessors,
-                                                  DateOnly planStart, bool started, WorkCalendar cal)
+                                                  DateOnly planStart, bool movable, bool planChanged, WorkCalendar cal)
     {
         var current = w == null ? new List<WorkLink>() : p.Links.Where(l => l.SuccessorId == w.Id).ToList();
         var wanted = predecessors == null ? current.Select(l => l.PredecessorId).ToList() : predecessors.Distinct().ToList();
+        var predsChanged = !current.Select(l => l.PredecessorId).ToHashSet().SetEquals(wanted);
+        var checkDates = movable && (w == null || planChanged || predsChanged);
 
         // 순환 검사는 이 작업으로 들어오는 기존 관계를 빼고, 지정한 것을 하나씩 더해 가며 한다
         var edges = p.Links.Where(l => w == null || l.SuccessorId != w.Id).Select(l => (l.PredecessorId, l.SuccessorId)).ToList();
@@ -642,10 +765,11 @@ public class ProjectService
                 throw new RuleException($"'{pred.Title}' 을(를) 선행으로 두면 의존 관계가 순환합니다.", "predecessors");
             if (w != null) edges.Add((id, w.Id));
 
-            // 아직 시작하지 않은 작업은 선행 작업이 끝난 다음 근무일 이후로만 잡을 수 있다
-            var lag = current.FirstOrDefault(l => l.PredecessorId == id)?.LagDays ?? 0;
-            var earliest = cal.EarliestStartAfter(pred.PlanEnd, lag);
-            if (!started && planStart < earliest)
+            // 밀기 대상 작업(미착수·단계 미완료)은 선행 작업이 끝난 다음 근무일 이후로만 잡을 수 있다
+            if (!checkDates) continue;
+            var link = current.FirstOrDefault(l => l.PredecessorId == id) ?? new WorkLink { PredecessorId = id };
+            var earliest = Rules.EarliestStart(link, pred, cal);
+            if (planStart < earliest)
                 throw new RuleException($"선행 작업 '{pred.Title}' 이(가) {Fmt(pred.PlanEnd)} 에 끝나므로 {Fmt(earliest)} 이후에 시작해야 합니다.", "planStart");
         }
         return wanted;
@@ -670,29 +794,40 @@ public class ProjectService
         return names.Count == 0 ? "선행 작업 없음" : "선행 작업 → " + string.Join(", ", names);
     }
 
-    // 후행 작업 밀기: 선행 종료 다음 근무일보다 이르게 잡힌, 아직 시작하지 않은 작업을 기간(근무일)을 유지한 채 뒤로 옮긴다
-    private void PushSuccessors(Project p, WorkItem from, Dictionary<int, WorkItem> all, WorkCalendar cal, string? reason, Guid batch, HashSet<WorkItem> visited)
+    // 한 묶음(BatchId) 안에서 움직인 작업 일정. 같은 작업이 여러 번 움직여도(연쇄 이동 뒤 선행 맞춤 등)
+    // 활동은 처음 → 마지막 일정으로 작업당 1건만 남도록 처음 값과 이유를 기억한다
+    private sealed class PlanBatch
     {
-        if (!visited.Add(from)) return;
-        if (from.Id == 0) return;   // 새 작업에는 아직 후행이 없다
-        foreach (var l in p.Links.Where(l => l.PredecessorId == from.Id).ToList())
+        private readonly List<(WorkItem Work, DateOnly Start, DateOnly End, string Note, string Reason)> _first = new();
+
+        public IEnumerable<WorkItem> Works => _first.Select(x => x.Work);
+        public IReadOnlyList<(WorkItem Work, DateOnly Start, DateOnly End, string Note, string Reason)> Entries => _first;
+
+        public void Move(WorkItem w, DateOnly start, DateOnly end, string note, string reason)
         {
-            if (!all.TryGetValue(l.SuccessorId, out var next) || next.ActualStart != null) continue;
+            if (!_first.Any(x => ReferenceEquals(x.Work, w))) _first.Add((w, w.PlanStart, w.PlanEnd, note, reason));
+            w.PlanStart = start;
+            w.PlanEnd = end;
+        }
+    }
 
-            var earliest = cal.EarliestStartAfter(from.PlanEnd, l.LagDays);
-            if (next.PlanStart >= earliest) continue;
-
-            var days = Math.Max(1, cal.WorkingDays(next.PlanStart, next.PlanEnd));
-            var oldStart = next.PlanStart;
-            var oldEnd = next.PlanEnd;
-            next.PlanStart = earliest;
-            next.PlanEnd = cal.AddWorkingDays(earliest, days - 1);
-            next.Version++;
+    // 움직인 작업마다 Version 을 올리고 WorkPlanChanged 활동을 1건씩 남긴다 (결국 제자리면 남기지 않는다).
+    // 함께 옮겨진 일정도 날짜 범위를 지켜야 한다 — 어기면 저장 전에 거절해 아무것도 바꾸지 않는다(field 는 화면에서 표시할 입력)
+    private void CommitPlan(Project p, PlanBatch plan, Guid batch, string field)
+    {
+        foreach (var (w, oldStart, oldEnd, _, _) in plan.Entries)
+        {
+            if (w.PlanStart == oldStart && w.PlanEnd == oldEnd) continue;
+            Rules.ValidateDate(w.PlanStart, p.StartDate, $"함께 옮겨지는 작업 '{w.Title}' 의 목표 시작일", field);
+            Rules.ValidateDate(w.PlanEnd, p.StartDate, $"함께 옮겨지는 작업 '{w.Title}' 의 목표 종료일", field);
+        }
+        foreach (var (w, oldStart, oldEnd, note, reason) in plan.Entries)
+        {
+            if (w.PlanStart == oldStart && w.PlanEnd == oldEnd) continue;
+            w.Version++;
             p.Activities.Add(NewActivity(ActivityType.WorkPlanChanged,
-                $"[{next.Title}] 목표 일정 {Fmt(oldStart)}~{Fmt(oldEnd)} → {Fmt(next.PlanStart)}~{Fmt(next.PlanEnd)} (선행 작업 연동)",
-                reason ?? $"선행 작업 '{from.Title}' 일정에 맞춤", next.StageId, next.Id,
-                $"{Fmt(oldStart)}~{Fmt(oldEnd)}", $"{Fmt(next.PlanStart)}~{Fmt(next.PlanEnd)}", batch));
-            PushSuccessors(p, next, all, cal, reason, batch, visited);
+                $"[{w.Title}] 목표 일정 {Fmt(oldStart)}~{Fmt(oldEnd)} → {Fmt(w.PlanStart)}~{Fmt(w.PlanEnd)} ({note})",
+                reason, w.StageId, w.Id, $"{Fmt(oldStart)}~{Fmt(oldEnd)}", $"{Fmt(w.PlanStart)}~{Fmt(w.PlanEnd)}", batch));
         }
     }
 

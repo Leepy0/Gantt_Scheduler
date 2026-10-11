@@ -41,6 +41,7 @@ namespace Microsoft.EntityFrameworkCore
         public Task MigrateAsync() => Task.CompletedTask;
         public Task<bool> EnsureCreatedAsync() => Task.FromResult(true);
         public Task<bool> EnsureDeletedAsync() => Task.FromResult(true);
+        public Task<bool> CanConnectAsync(CancellationToken ct = default) => Task.FromResult(true);
     }
 
     public static class FakeDatabaseExtensions
@@ -48,6 +49,9 @@ namespace Microsoft.EntityFrameworkCore
         public static bool IsSqlServer(this DatabaseFacade db) => false;
         public static bool IsSqlite(this DatabaseFacade db) => true;
         public static string GenerateCreateScript(this DatabaseFacade db) => "fake";
+        public static IEnumerable<string> GetMigrations(this DatabaseFacade db) => Array.Empty<string>();
+        public static Task<IEnumerable<string>> GetPendingMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        public static Task<IEnumerable<string>> GetAppliedMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
     }
 
     public class DbContext : IDisposable, IAsyncDisposable
@@ -301,6 +305,7 @@ namespace Microsoft.EntityFrameworkCore
                 }
 
                 // FK 채우기: 컬렉션 소속(자식 FK 가 비어 있을 때만)과 참조 내비게이션에서
+                var freshSet = new HashSet<object>(fresh, ReferenceEqualityComparer.Instance);
                 foreach (var e in stored)
                 {
                     var meta = MetaOf(e.GetType());
@@ -314,7 +319,8 @@ namespace Microsoft.EntityFrameworkCore
                     foreach (var (nav, fk) in meta.Refs)
                     {
                         var target = nav.GetValue(e);
-                        if (target != null && (fk.GetValue(e) is not int v || v == 0)) fk.SetValue(e, IdOf(target));
+                        // 이번에 새로 추가된 엔티티(예: 아직 Id 가 없던 새 담당자)를 가리키면 FK 가 있어도 그 Id 로 맞춘다 — 진짜 EF 의 내비게이션 고정과 같게
+                        if (target != null && (fk.GetValue(e) is not int v || v == 0 || freshSet.Contains(target))) fk.SetValue(e, IdOf(target));
                     }
                 }
 

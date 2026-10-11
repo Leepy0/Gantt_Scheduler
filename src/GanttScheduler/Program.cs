@@ -9,6 +9,8 @@ using Microsoft.EntityFrameworkCore;
 if (args.Length > 0 && args[0] == UpdateApplier.Flag) return UpdateApplier.Run(args);
 // Windows 서비스 등록·제거 명령: GanttScheduler.exe install / uninstall (Services/ServiceInstaller.cs)
 if (ServiceInstaller.IsCommand(args)) return ServiceInstaller.Run(args);
+// 관리자 복구 명령: GanttScheduler.exe admin <이름> [--ip <주소>] (Services/AdminCommand.cs)
+if (AdminCommand.IsCommand(args)) return await AdminCommand.RunAsync(args);
 
 // 서비스로 시작되면 SCM 이 "--service <이름>" 을 넘긴다
 var serviceName = ServiceInstaller.ServiceNameFrom(args);
@@ -36,26 +38,12 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 if (serviceName != null) WindowsServiceSupport.Use(builder, serviceName);
 var config = builder.Configuration;
 
-// DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택)
-var useSqlServer = string.Equals(config["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
-builder.Services.AddDbContext<AppDb>(options =>
-{
-    if (useSqlServer)
-    {
-        options.UseSqlServer(config.GetConnectionString("SqlServer"),
-            sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema));
-    }
-    else
-    {
-        // 상대 경로는 앱 폴더 기준으로 풀고, 폴더가 없으면 만든다
-        var path = AppPaths.Sqlite(config, builder.Environment.ContentRootPath);
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        options.UseSqlite($"Data Source={path}");
-    }
-});
+// DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택, Data/DbSetup.cs)
+builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
+// 접속 제어(허용 대역·첫 관리자·IP 재확인). 테스트가 바꾼 설정도 보이도록 서비스가 처음 쓰일 때 읽는다
+builder.Services.AddSingleton(sp => AccessOptions.From(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ProjectService>();
@@ -93,7 +81,12 @@ builder.Services.AddRazorPages()
 
 var app = builder.Build();
 
+// 설정의 허용 대역을 잘못 쓰면 '모두 허용'으로 지나가지 않고 시작할 때 멈춘다
+app.Services.GetRequiredService<AccessOptions>();
 var updates = app.Services.GetRequiredService<UpdateService>();
+
+// 모든 응답에 보안 헤더 (nosniff, 같은 출처에서만 틀 안에 표시, 다른 사이트로 주소를 넘기지 않음)
+app.UseSecurityHeaders();
 
 // 리버스 프록시(Codespaces, nginx 등) 뒤에서 실제 접속 IP 를 쓰려면 켠다
 if (config.GetValue<bool>("TrustForwardedHeaders"))

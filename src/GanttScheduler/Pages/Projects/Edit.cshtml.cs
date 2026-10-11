@@ -132,9 +132,19 @@ public class EditModel : PageModel
             .OrderBy(e => e.SortOrder).ThenBy(e => e.Id)
             .Select(e => new { id = e.Id, name = e.Name, active = e.IsActive });
 
+        // 지금 담당자 이름(저장된 값). 화면은 이 이름을 '새 담당자' 안내에서 뺀다 — 입력칸 값으로 정하면 오류로 다시 그린 화면에서
+        // 새로 입력한(오타일 수 있는) 이름까지 기존 담당으로 보고 안내를 숨긴다
+        string? currentOwner = null;
+        if (!IsNew)
+        {
+            var ownerId = await _db.Projects.AsNoTracking().Where(x => x.Id == Id).Select(x => x.OwnerId).FirstOrDefaultAsync();
+            currentOwner = await _db.Users.AsNoTracking().Where(u => u.Id == ownerId).Select(u => u.Name).FirstOrDefaultAsync();
+        }
+
         MetaJson = AppJson.Serialize(new
         {
             isNew = IsNew,
+            currentOwner,
             categories = Categories.Select(c => new { id = c.Id, name = c.Name, kind = Views.Key(c.Kind) }),
             locations,
             equipment,

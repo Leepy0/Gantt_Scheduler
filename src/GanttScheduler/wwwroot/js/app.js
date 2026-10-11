@@ -237,6 +237,30 @@
 
     App.isMobile = function () { return window.matchMedia('(max-width: 767px)').matches; };
 
+    // 담당자 이름 입력: 자동완성 목록에 없는 이름이면 새 담당자로 등록된다고 알린다.
+    // 막지는 않는다(IP 없는 담당자도 설계상 허용) — 오타로 사람이 하나 더 생기는 것만 눈에 띄게 한다.
+    // keep: 지금 담당인 이름(사용 중지돼 목록에 없어도 새 사람이 아니다)
+    var hintSeq = 0;
+    App.nameHint = function (input, names, keep) {
+        if (!input) return;
+        var known = {};
+        (names || []).forEach(function (n) { known[n] = true; });
+        if (keep) known[keep] = true;
+        var hint = document.createElement('span');
+        hint.className = 'hint';
+        hint.id = 'name-hint-' + (++hintSeq);
+        hint.setAttribute('data-name-hint', '');
+        hint.textContent = '목록에 없는 이름 — 새 담당자로 등록됩니다';
+        input.insertAdjacentElement('afterend', hint);
+        input.setAttribute('aria-describedby', hint.id);
+        function sync() {
+            var v = input.value.trim();
+            hint.hidden = !v || known[v] === true;
+        }
+        input.addEventListener('input', sync);
+        sync();
+    };
+
     // ── 서버 버전 감시 ───────────────────────────────────────────────
     // 서버는 한 번 바뀌면 끝이지만 브라우저에는 옛 화면이 남는다. 열려 있는 화면이 주기적으로 서버 버전을 물어
     // 바뀌었으면 새로 고침을 권한다. 입력 중일 수 있으므로 자동으로 새로 고치지는 않는다

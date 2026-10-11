@@ -35,10 +35,12 @@
                     <svg class="ic"><use href="#i-download" /></svg><span>@badge.Value.Text</span>
                 </a>
             }
-            <div class="me" title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip">
+            @* 내 이름을 누르면 이 기기의 사용자를 바꾼다 (IP 가 다른 사람에게 넘어왔거나 공용 PC 인 경우) *@
+            <a class="me" asp-page="/Welcome" asp-route-switch="1" asp-route-returnUrl="@(Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString)"
+               title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip · 눌러서 사용자 바꾸기" aria-label="@Me.Name — 사용자 바꾸기">
                 <svg class="ic"><use href="#i-user" /></svg>
                 <span>@Me.Name</span>
-            </div>
+            </a>
         </header>
     }
     <main class="page">

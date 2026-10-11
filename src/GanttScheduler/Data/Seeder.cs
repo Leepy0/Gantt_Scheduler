@@ -37,7 +37,7 @@ public static class DbInitializer
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
     }
 
-    private static string SchemaHash(string script) =>
+    public static string SchemaHash(string script) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));
 }
 
@@ -303,17 +303,15 @@ public static class Seeder
             }
         }
 
-        // 의존 관계: 아직 시작하지 않은 후행 작업이 선행 종료보다 이르면 기간을 유지한 채 뒤로 민다
+        // 의존 관계: 서비스와 같은 규칙(Rules.Reschedule)으로 아직 시작하지 않은 후행 작업을 기간을 유지한 채 뒤로 민다
         void Link(Project p, WorkItem from, WorkItem to)
         {
-            var earliest = cal.EarliestStartAfter(from.PlanEnd, 0);
-            if (to.ActualStart == null && to.PlanStart < earliest)
-            {
-                var days = Math.Max(1, cal.WorkingDays(to.PlanStart, to.PlanEnd));
-                to.PlanStart = earliest;
-                to.PlanEnd = cal.AddWorkingDays(earliest, days - 1);
-            }
             p.Links.Add(new WorkLink { Predecessor = from, Successor = to });
+            foreach (var m in Rules.Reschedule(p, cal, new[] { to }))
+            {
+                m.Work.PlanStart = m.NewStart;
+                m.Work.PlanEnd = m.NewEnd;
+            }
         }
 
         void Note(Project p, ActivityType type, string text, AppUser user, int dayOffset, string? reason = null)

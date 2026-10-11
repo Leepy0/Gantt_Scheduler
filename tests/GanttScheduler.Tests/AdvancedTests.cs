@@ -220,12 +220,17 @@ public class AdvancedTests : IClassFixture<TestDb>
         Assert.Equal("테스트 복제본", copy.Title);
         Assert.Equal("테스터", copy.Owner);
         Assert.Equal(src.Stages.Select(s => s.Name), copy.Stages.Select(s => s.Name));
-        Assert.Equal(Day(11, 20), copy.Stages[0].TargetDate);          // 10-20 + 31일
+        // 근무일 거리로 옮긴다: 원본 착수 10-01(목) → 목표 10-20 은 근무일 11일 뒤(10-05·10-09 공휴일).
+        // 새 착수 11-01 은 일요일이라 11-02(월)부터 세어 11일 뒤 = 11-17(화)
+        Assert.Equal(Day(11, 17), copy.Stages[0].TargetDate);
         Assert.Null(copy.BaselineAt);
 
         var copyA = copy.Stages[0].Works.Single(w => w.Title == "A");
         var copyB = copy.Stages[0].Works.Single(w => w.Title == "B");
-        Assert.Equal((Day(11, 12), Day(11, 14)), (copyA.PlanStart, copyA.PlanEnd));
+        Assert.Equal((Day(11, 9), Day(11, 11)), (copyA.PlanStart, copyA.PlanEnd));       // 근무일 5일 뒤 시작, 3근무일 유지
+        Assert.Equal((Day(11, 12), Day(11, 13)), (copyB.PlanStart, copyB.PlanEnd));      // A 다음 근무일, 2근무일 유지
+        Assert.Equal(src.Stages[0].Works.Select(w => w.PlanWorkDays), copy.Stages[0].Works.Select(w => w.PlanWorkDays));
+        Assert.DoesNotContain(copy.Stages.SelectMany(s => s.Works), w => w.DepViolation);
         Assert.Equal("홍길동", copyA.Owner);
         Assert.Equal(0, copyA.Progress);
         Assert.Null(copyA.ActualStart);
