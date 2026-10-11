@@ -4,5 +4,8 @@
 <div class="tabs scroll" role="tablist">
     <a asp-page="/Insights/LeadTime" role="tab" class="@(tab == "lead" ? "on" : "")">리드타임</a>
     <a asp-page="/Insights/Weekly" role="tab" class="@(tab == "weekly" ? "on" : "")">주간 보고</a>
+    <a asp-page="/Insights/Trend" role="tab" class="@(tab == "trend" ? "on" : "")">추세</a>
+    <a asp-page="/Insights/Changes" role="tab" class="@(tab == "changes" ? "on" : "")">변경 분석</a>
+    <a asp-page="/Insights/Load" role="tab" class="@(tab == "load" ? "on" : "")">부하</a>
     <a asp-page="/Insights/History" role="tab" class="@(tab == "history" ? "on" : "")">변경 이력</a>
 </div>

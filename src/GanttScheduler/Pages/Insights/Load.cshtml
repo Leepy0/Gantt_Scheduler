@@ -1,0 +1,80 @@
+@page
+@model LoadModel
+@using GanttScheduler.Pages.Insights
+@{
+    ViewData["Title"] = "부하";
+    ViewData["Nav"] = "insights";
+    ViewData["Tab"] = "load";
+    var d = Model.Data;
+    var form = new AnalyticsFilterForm("/Insights/Load", new AnalyticsFilter(OrgUnitId: d.OrgUnitId), new(), new(), d.Orgs,
+        new() { ["weeks"] = d.WeekCount.ToString() }, ShowCategory: false, ShowCorporation: false);
+    string Pct(double r) => Math.Round(r * 100).ToString("0") + "%";
+}
+
+<div class="page-head"><h1>분석</h1></div>
+<partial name="_InsightTabs" />
+
+<div class="toolbar">
+    <div class="seg small" role="group" aria-label="기간">
+        @foreach (var w in AnalyticsService.LoadWeekOptions)
+        {
+            <a asp-page="/Insights/Load" asp-route-weeks="@w" asp-route-org="@d.OrgUnitId" class="@(d.WeekCount == w ? "on" : "")">@(w)주</a>
+        }
+    </div>
+    <span class="muted num">@d.Weeks[0].ToString("yyyy-MM-dd") ~ @d.Weeks[^1].AddDays(6).ToString("yyyy-MM-dd")</span>
+</div>
+<partial name="_AnalyticsFilter" model="form" />
+
+<div class="form-note" data-load-note><svg class="ic"><use href="#i-user" /></svg>
+    <div>칸은 그 주에 걸린 미완료 작업의 근무일 합(담당 1.0, 부담당 0.5) ÷ 그 주 근무일입니다. 늦어진 작업은 오늘 기준 예상 일정으로 잡습니다.
+        100%를 넘는 칸만 노랑으로 표시합니다. 접속한 적이 없는(IP 없는) 담당자도 이름으로 등록돼 있으면 포함합니다. 칸을 누르면 그 사람의 할 일을 읽기 전용으로 봅니다.</div></div>
+
+@if (d.Sections.Count == 0)
+{
+    <section class="card"><p class="empty">이 기간에 배정된 미완료 작업이 없습니다.</p></section>
+}
+else
+{
+    <section class="card flush">
+        <div class="table-scroll">
+            <table class="simple-table load-table" data-load>
+                <thead>
+                    <tr>
+                        <th>조직 · 사람</th>
+                        @for (var i = 0; i < d.Weeks.Count; i++)
+                        {
+                            <th class="r num" title="근무일 @(d.Available[i])일">@d.Weeks[i].ToString("MM-dd")<span class="load-avail">@(d.Available[i])일</span></th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in d.Sections)
+                    {
+                        <tr class="load-section lv@(s.Level)"><th colspan="@(d.Weeks.Count + 1)" scope="colgroup">@s.Name</th></tr>
+                        @foreach (var p in s.People)
+                        {
+                            <tr class="in-lv@(s.Level)" data-load-person="@p.Name">
+                                <th scope="row" class="load-name">@p.Name@if (!p.HasIp) {<span class="chip" title="접속한 적이 없는 담당자">IP 없음</span>}</th>
+                                @foreach (var c in p.Cells)
+                                {
+                                    <td class="r load-cell @(c.Over ? "over" : "")">
+                                        @if (c.Assigned > 0)
+                                        {
+                                            <a asp-page="/My/Index" asp-route-user="@p.UserId" title="@p.Name @c.Week.ToString("MM-dd") 주: 배정 @(c.Assigned)일 / 근무일 @(c.Available)일">
+                                                @if (c.Over) {<svg class="ic"><use href="#i-alert" /></svg>}<b>@Pct(c.Ratio)</b><span class="load-days">@(c.Assigned)일</span>
+                                            </a>
+                                        }
+                                        else
+                                        {
+                                            <span class="muted">-</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}

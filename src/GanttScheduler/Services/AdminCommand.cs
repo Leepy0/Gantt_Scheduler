@@ -102,6 +102,16 @@ public static class AdminCommand
                 addr.LastSeenAt = clock.UtcNow;
             }
         }
+        // 서버 콘솔의 복구도 관리 변경 이력에 남긴다(행위자: 서버) — 관리자 권한이 어디서 생겼는지 화면에서 찾을 수 있게
+        var log = new MasterLog(db, clock);
+        var parts = new List<string>();
+        if (created) parts.Add("새 사용자");
+        if (!wasAdmin) parts.Add("관리자 지정");
+        if (reactivated) parts.Add("다시 사용");
+        if (ipAdded) parts.Add($"IP 연결 {ip}" + (movedFrom != null && movedFrom != userName ? $"({movedFrom} 님에게서 옮김)" : ""));
+        if (parts.Count > 0)
+            log.Add(ipAdded && wasAdmin && !created && !reactivated ? "ip" : "user", () => user.Id,
+                $"admin 명령(서버 콘솔): {userName} — {string.Join(", ", parts)}", wasAdmin ? "관리자" : created ? null : "일반", "관리자");
         await db.SaveChangesAsync();
         return new Result(created, reactivated, wasAdmin, movedFrom, ipAdded);
     }

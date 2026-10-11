@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace Microsoft.EntityFrameworkCore
 {
+    public enum EntityState { Detached, Unchanged, Deleted, Modified, Added }
+
     public enum DeleteBehavior { Cascade, Restrict, NoAction, SetNull }
 
     public class DbUpdateException : Exception
@@ -54,6 +56,16 @@ namespace Microsoft.EntityFrameworkCore
         public static IEnumerable<string> GetMigrations(this DatabaseFacade db) => Array.Empty<string>();
         public static Task<IEnumerable<string>> GetPendingMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
         public static Task<IEnumerable<string>> GetAppliedMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        public static void SetCommandTimeout(this DatabaseFacade db, TimeSpan? timeout) { }
+
+        // 백업(BackupService)이 쓰는 SQL. 메모리 DB 라 실제 사본은 없고, VACUUM INTO 는 그 자리에 표시 파일만 만든다 —
+        // 화면 점검이 백업 목록·크기 표시까지 따라갈 수 있게 하기 위해서다
+        public static Task<int> ExecuteSqlRawAsync(this DatabaseFacade db, string sql, IEnumerable<object> parameters, CancellationToken ct = default)
+        {
+            if (sql.TrimStart().StartsWith("VACUUM INTO", StringComparison.OrdinalIgnoreCase) && parameters.FirstOrDefault() is string path)
+                File.WriteAllText(path, "fake sqlite backup (shadow build)");
+            return Task.FromResult(0);
+        }
     }
 
     public class DbContext : IDisposable, IAsyncDisposable
@@ -77,6 +89,15 @@ namespace Microsoft.EntityFrameworkCore
 
         public DatabaseFacade Database { get; }
 
+        // 진짜 EF 는 DetectChanges 로 컬렉션에 더한 엔티티의 FK 를 채운다. 가짜는 저장할 때 채우므로 아무 일도 하지 않는다
+        public ChangeTracking.ChangeTracker ChangeTracker => _tracker ??= new(this);
+        private ChangeTracking.ChangeTracker? _tracker;
+
+        // 가짜는 수정을 추적하지 않는다 — 추가·삭제만 항목으로 보인다(상황판 데이터 버전이 쓴다)
+        internal IEnumerable<ChangeTracking.EntityEntry> PendingEntries() =>
+            _added.Select(e => new ChangeTracking.EntityEntry(e, EntityState.Added))
+                .Concat(_removed.Select(e => new ChangeTracking.EntityEntry(e, EntityState.Deleted)));
+
         public DbSet<T> Set<T>() where T : class => new(this);
 
         internal void TrackAdd(object e) => _added.Add(e);
@@ -85,7 +106,7 @@ namespace Microsoft.EntityFrameworkCore
         protected virtual void OnModelCreating(ModelBuilder modelBuilder) { }
         protected virtual void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) { }
 
-        public Task<int> SaveChangesAsync(CancellationToken ct = default) => Task.FromResult(SaveChanges());
+        public virtual Task<int> SaveChangesAsync(CancellationToken ct = default) => Task.FromResult(SaveChanges());
 
         public int SaveChanges()
         {
@@ -366,6 +387,26 @@ namespace Microsoft.EntityFrameworkCore
                 if (coll.GetValue(e) is IEnumerable children)
                     foreach (var c in children.Cast<object>().ToList()) RemoveCascade(c, gone);
         }
+    }
+}
+
+namespace Microsoft.EntityFrameworkCore.ChangeTracking
+{
+    public class ChangeTracker
+    {
+        private readonly DbContext? _db;
+        public ChangeTracker() { }
+        public ChangeTracker(DbContext db) => _db = db;
+        public void DetectChanges() { }
+        public void Clear() { }
+        public IEnumerable<EntityEntry> Entries() => _db?.PendingEntries().ToList() ?? new List<EntityEntry>();
+    }
+
+    public class EntityEntry
+    {
+        public EntityEntry(object entity, EntityState state) { Entity = entity; State = state; }
+        public object Entity { get; }
+        public EntityState State { get; }
     }
 }
 

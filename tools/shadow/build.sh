@@ -12,7 +12,7 @@ mkdir -p "$OUT"
 find "$OUT" -mindepth 1 -maxdepth 1 ! -name bin ! -name obj -exec rm -rf {} +
 cp -r "$ROOT/src/GanttScheduler/." "$OUT/"
 # packages.lock.json 은 실제 패키지 기준이라 패키지가 없는 섀도 프로젝트와 맞지 않는다 (Directory.*.props 는 복사하지 않으므로 영향 없음)
-rm -rf "$OUT/Data/Migrations" "$OUT/Data/DesignTimeFactory.cs" "$OUT/Services/ExcelExporter.cs" "$OUT/Services/PdfExporter.cs" "$OUT/Services/WindowsServiceSupport.cs" "$OUT/App_Data" "$OUT/packages.lock.json"
+rm -rf "$OUT/Data/Migrations" "$OUT/Data/DesignTimeFactory.cs" "$OUT/Services/ExcelExporter.cs" "$OUT/Services/PdfExporter.cs" "$OUT/Services/ProjectImporter.cs" "$OUT/Services/WindowsServiceSupport.cs" "$OUT/App_Data" "$OUT/packages.lock.json"
 cp "$ROOT/tools/shadow/FakeEf.cs" "$ROOT/tools/shadow/FakeExcel.cs" "$ROOT/tools/shadow/FakeService.cs" "$OUT/"
 cp "$ROOT/tools/shadow/Shadow.csproj" "$OUT/GanttScheduler.csproj"
 

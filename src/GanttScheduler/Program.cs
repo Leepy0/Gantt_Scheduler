@@ -1,8 +1,10 @@
+using System.IO.Compression;
 using System.Text.Json.Serialization;
 using GanttScheduler.Data;
 using GanttScheduler.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 
 // 업데이트 교체 도우미로 불린 경우: 웹 서버를 띄우지 않고 파일만 바꾸고 끝낸다 (Services/UpdateApplier.cs)
@@ -36,10 +38,17 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 if (serviceName != null) WindowsServiceSupport.Use(builder, serviceName);
 var config = builder.Configuration;
 
+// 파일 로그(App_Data/logs, 일자별)와 최근 경고·오류 200건 (Services/FileLog.cs). 컨테이너가 만들어 서버가 내려갈 때 남은 줄을 쓰고 닫는다
+builder.Services.AddSingleton(_ => FileLog.From(config, builder.Environment.ContentRootPath));
+builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLog>());
+
 // DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택, Data/DbSetup.cs)
 builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
+// TV 상황판(/Board): 과제 그래프가 저장될 때마다 오르는 데이터 버전(AppDb.SaveChangesAsync 가 올린다)과 상황판 요약
+builder.Services.AddSingleton<DataVersion>();
+builder.Services.AddScoped<BoardService>();
 // 접속 제어(허용 대역·첫 관리자·IP 재확인). 테스트가 바꾼 설정도 보이도록 서비스가 처음 쓰일 때 읽는다
 builder.Services.AddSingleton(sp => AccessOptions.From(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped<CurrentUser>();
@@ -49,8 +58,17 @@ builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<MasterService>();
 builder.Services.AddScoped<AttachmentService>();
 builder.Services.AddScoped<InsightService>();
+// 협업·알림: 활동 기록(알림 계산 포함)은 요청 하나에 하나 — 과제·첨부 서비스가 같은 것을 쓴다 (Services/Notifications.cs, Notify.cs)
+builder.Services.AddScoped<ActivityLog>();
+builder.Services.AddScoped<NotificationService>();
+builder.Services.AddSingleton(_ => CommentOptions.From(config));
+builder.Services.AddSingleton(_ => NotifyOptions.From(config));
+builder.Services.AddSingleton<INotifyChannel>(sp => new SmtpChannel(sp.GetRequiredService<NotifyOptions>()));
+builder.Services.AddSingleton(_ => new NotifyState(AppPaths.Notify(config, builder.Environment.ContentRootPath)));
+builder.Services.AddScoped<DigestService>();
 builder.Services.AddSingleton<ExcelExporter>();
 builder.Services.AddSingleton<PdfExporter>();
+builder.Services.AddSingleton<ProjectImporter>();
 
 // 자동 업데이트
 var build = AppBuild.FromAssembly();
@@ -68,6 +86,27 @@ builder.Services.AddSingleton<UpdateService>();
 builder.Services.AddHostedService<StartupWork>();
 builder.Services.AddHostedService<UpdateWorker>();
 
+// 백업·운영 점검 (Services/BackupService.cs, OpsChecks.cs). 야간 자동 백업은 Backup:Nightly 일 때만 돈다
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<OpsAlerts>();
+builder.Services.AddScoped<OpsChecks>();
+builder.Services.AddHostedService<BackupWorker>();
+// 하루 한 번 메일 요약 (Notify:Enabled 일 때만)
+builder.Services.AddHostedService<NotifyWorker>();
+// 휴지통: 지운 과제의 복원·영구 삭제, 보관 기간(Trash:KeepDays)이 지난 과제의 하루 한 번 자동 정리
+builder.Services.AddSingleton(_ => TrashOptions.From(config));
+builder.Services.AddScoped<TrashService>();
+builder.Services.AddHostedService<TrashWorker>();
+// 분석: 하루 한 번 과제의 진척 스냅샷(추세·전주 대비·신규 지연)을 남긴다 (Snapshot:Enabled, Snapshot:Hour)
+builder.Services.AddSingleton(_ => SnapshotOptions.From(config));
+builder.Services.AddScoped<SnapshotService>();
+builder.Services.AddScoped<AnalyticsService>();
+builder.Services.AddHostedService<SnapshotWorker>();
+// 사용자·기준 정보 관리: 관리 변경 이력(MasterLog — 변경과 같은 저장), 사용자 병합·이관·사용 현황, IP 연결 보존 정리(Access:AddressKeepDays)
+builder.Services.AddScoped<MasterLog>();
+builder.Services.AddScoped<UserAdminService>();
+builder.Services.AddHostedService<AddressRetentionWorker>();
+
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);
 Directory.CreateDirectory(keyDir);
@@ -78,7 +117,24 @@ if (serviceName != null && OperatingSystem.IsWindows()) dataProtection.ProtectKe
 
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddRazorPages()
-    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // 한글을 \uXXXX 로 바꾸지 않는다(페이지에 심는 JSON 과 같은 인코더 — AppJson.Encoder)
+        o.JsonSerializerOptions.Encoder = AppJson.Encoder;
+    });
+
+// 응답 압축: Kestrel 단독(Windows 서비스)이라 앞단에서 압축해 줄 곳이 없다. 상세 JSON·대시보드 페이지·스크립트가
+// 해외 법인 WAN 에서 그대로 오가지 않게 한다. 운영은 HTTP 라 EnableForHttps 는 기본값(꺼짐)으로 둔다 —
+// HTTPS 로 바꾸면 비밀 값이 든 응답(text/html)의 BREACH 위험을 먼저 검토한다(DESIGN 6장)
+builder.Services.AddResponseCompression(o =>
+{
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 
 var app = builder.Build();
 
@@ -88,6 +144,8 @@ var updates = app.Services.GetRequiredService<UpdateService>();
 
 // 모든 응답에 보안 헤더 (nosniff, 같은 출처에서만 틀 안에 표시, 다른 사이트로 주소를 넘기지 않음)
 app.UseSecurityHeaders();
+// 느린 요청 경고(Logs:SlowRequestMs)와 5xx 응답의 오류 번호 머리글 (Services/RequestDiagnostics.cs)
+app.UseMiddleware<RequestTimingMiddleware>();
 
 // 리버스 프록시(Codespaces, nginx 등) 뒤에서 실제 접속 IP 를 쓰려면 켠다
 if (config.GetValue<bool>("TrustForwardedHeaders"))
@@ -113,7 +171,11 @@ app.Use(async (ctx, next) =>
         pages.Enabled = false;
     await next();
 });
+// 화면이 JSON 으로 묻는 요청의 예기치 않은 예외는 오류 번호가 든 JSON 으로 돌려준다 (예외 처리기 뒤에 있어야 먼저 잡는다)
+app.UseMiddleware<JsonErrorMiddleware>();
 
+// 정적 파일(js·css)까지 압축하도록 UseStaticFiles 앞에 둔다
+app.UseResponseCompression();
 app.UseStaticFiles();
 app.UseRouting();
 
@@ -129,6 +191,18 @@ app.Use(async (ctx, next) =>
 app.UseMiddleware<UserGateMiddleware>();
 app.MapRazorPages();
 app.MapGet("/health", () => Results.Text("ok"));
+// 감시 도구용: DB 왕복과 디스크 여유를 보고, 서버를 쓸 수 없으면 503. 사용자 조회(UserGate) 없이 답한다(/health 아래).
+// 누구나 부를 수 있는 주소라 원인 문구 대신 항목과 수준만 준다 (자세한 내용은 관리 > 서버 상태와 로그)
+app.MapGet("/health/ready", async (HttpContext ctx, OpsChecks ops) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store";
+    var checks = await ops.ReadyAsync(ctx.RequestAborted);
+    var ok = checks.All(c => c.Level != CheckLevel.Fail);
+    return Results.Json(new { status = ok ? "ok" : "fail", checks = checks.Select(c => new { name = c.Key, level = c.Level }) },
+        statusCode: ok ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+});
+// 헤더 종의 읽지 않은 알림 수 (보이는 화면이 1분마다 묻는다 — Services/Notifications.cs)
+app.MapNotificationApi();
 // 열려 있는 화면이 서버가 새 버전으로 바뀌었는지 확인하는 주소
 // today: 한국 날짜. 오래 열어 둔 화면이 날짜가 바뀐 것을 알아채고 다시 그린다(DB 를 읽지 않는다)
 app.MapGet("/version", (HttpContext ctx, IClock clock) =>

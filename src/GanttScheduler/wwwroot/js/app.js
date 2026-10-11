@@ -130,13 +130,16 @@
         var body = null;
         try { body = await res.json(); } catch (err) { /* JSON 이 아닌 응답 */ }
         if (!res.ok || !body || body.ok === false) {
+            // 서버 오류(5xx)에는 오류 번호가 붙어 온다(X-Error-Id). 같은 번호가 서버 로그에 남으므로 관리자에게 알릴 수 있게 보인다
+            var errorId = (body && body.errorId) || res.headers.get('X-Error-Id');
             // 503: 서버가 새 버전으로 바뀌는 중 (IIS 가 점검 안내 화면을 대신 내보낸다)
             var err = body && body.error
                 ? fail(body.error, body.field)
                 : res.status === 503
                     ? fail('서버를 업데이트하는 중입니다. 잠시 후 다시 시도해 주세요. 입력한 내용은 그대로 있습니다.')
-                    : fail('요청을 처리하지 못했습니다(' + res.status + '). 잠시 후 다시 시도해 주세요.');
+                    : fail('요청을 처리하지 못했습니다(' + res.status + (errorId ? ', 오류 번호 ' + errorId : '') + '). 잠시 후 다시 시도해 주세요.');
             err.status = res.status;
+            err.errorId = errorId || null;
             err.data = body;          // 409(동시 수정) 처럼 화면이 후속 처리를 해야 하는 응답에 쓴다
             throw err;
         }
@@ -318,6 +321,8 @@
             // 코드로 닫기(삭제·이동 뒤 등) — 묻지 않는다
             close: function () { dlg.close(); },
             isDirty: function () { return state() !== initial; },
+            // 지금 입력을 '바뀌지 않은 상태'로 본다 — 시트를 열어 둔 채 저장하고 이어서 입력할 때(저장 후 계속 추가)
+            markClean: function () { initial = state(); if (draftKey) App.draft.clear(draftKey); },
             saveDraft: saveDraft,
             setError: function (message, field) {
                 form.querySelectorAll('.field.invalid').forEach(function (f) { f.classList.remove('invalid'); });
@@ -391,7 +396,11 @@
         });
 
         if (opts.danger) {
-            dlg.querySelector('[data-danger]').addEventListener('click', function () { opts.danger.onClick(sheet); });
+            // 위험 동작(삭제·사용 중지)은 응답이 올 때까지 다시 눌리지 않게 잠근다 — 두 번 눌러 두 번 처리되지 않게
+            var dangerBtn = dlg.querySelector('[data-danger]');
+            dangerBtn.addEventListener('click', function () {
+                App.busy(dangerBtn, function () { return opts.danger.onClick(sheet); });
+            });
         }
 
         form.addEventListener('submit', async function (e) {

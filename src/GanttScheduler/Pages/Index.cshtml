@@ -7,47 +7,109 @@
     var catMax = Math.Max(1, d.ByCategory.Select(s => s.Total).DefaultIfEmpty(0).Max());
     var corpMax = Math.Max(1, d.ByCorporation.Select(s => s.Total).DefaultIfEmpty(0).Max());
     string Pct(int v, int max) => (v * 100.0 / max).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    var mine = Model.Mine ? "true" : null;
+    var q = d.Query ?? new DashboardQuery();
+    var notes = d.Notes ?? new Dictionary<int, RecentNote>();
+    var risk = d.Risk ?? new List<ProjectView>();
+    var scopes = new[] { ("focus", "주요"), ("delayed", "지연만"), ("all", "전체") };
+    var sorts = new[] { ("delay", "지연 큰 순"), ("end", "목표 종료 순"), ("recent", "최근 변경 순") };
 }
 
 <div class="page-head">
     <h1>대시보드</h1>
     <div class="seg" role="group" aria-label="범위">
-        <a asp-page="/Index" class="@(Model.Mine ? "" : "on")">전체</a>
-        <a asp-page="/Index" asp-route-mine="true" class="@(Model.Mine ? "on" : "")">내 과제</a>
+        <a asp-page="/Index" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-scope="@q.ScopeKey" asp-route-sort="@(q.SortKey == "delay" ? null : q.SortKey)" class="@(Model.Mine ? "" : "on")">전체</a>
+        <a asp-page="/Index" asp-route-mine="true" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-scope="@q.ScopeKey" asp-route-sort="@(q.SortKey == "delay" ? null : q.SortKey)" class="@(Model.Mine ? "on" : "")">내 과제</a>
     </div>
     <span class="spacer"></span>
     @* 지연·임박 판정의 기준이 한국 날짜라 기준 시각도 한국 시간으로 적는다 (규칙 8) *@
     <span class="asof">기준 @Model.AsOf (한국 시간)</span>
     <button type="button" class="btn icon no-print" data-print title="인쇄" aria-label="인쇄"><svg class="ic"><use href="#i-print" /></svg></button>
-    <a class="btn icon" asp-page="/Index" asp-route-mine="@(Model.Mine ? "true" : null)" title="새로고침" aria-label="새로고침"><svg class="ic"><use href="#i-refresh" /></svg></a>
+    <a class="btn icon" asp-page="/Index" asp-all-route-data="Model.Route()" title="새로고침" aria-label="새로고침"><svg class="ic"><use href="#i-refresh" /></svg></a>
 </div>
 
-<section class="kpis">
-    <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@(Model.Mine ? "true" : null)">
+@* 유형·법인: 화면 전체(숫자·카드·간트·막대)를 좁힌다. 숫자를 누르면 같은 조건의 목록으로 간다 *@
+<form method="get" class="filter-row dash-filters no-print" id="dash-filters">
+    @if (Model.Mine) { <input type="hidden" name="mine" value="true" /> }
+    <input type="hidden" name="scope" value="@q.ScopeKey" />
+    @if (q.SortKey != "delay") { <input type="hidden" name="sort" value="@q.SortKey" /> }
+    <select name="category" aria-label="유형">
+        <option value="">유형 전체</option>
+        @foreach (var c in Model.Categories) { <option value="@c.Id" selected="@(Model.Category == c.Id)">@c.Name</option> }
+    </select>
+    <select name="corp" aria-label="법인">
+        <option value="">법인 전체</option>
+        @foreach (var c in Model.Corporations) { <option value="@c.Id" selected="@(Model.Corp == c.Id)">@c.Name</option> }
+    </select>
+    @* 조직: 과제 담당자의 소속(그룹을 고르면 그 아래 파트까지) *@
+    <select name="org" aria-label="조직">
+        <option value="">조직 전체</option>
+        @foreach (var o in Model.Orgs) { <option value="@o.Id" selected="@(Model.Org == o.Id)">@(o.Level == 2 ? "· " : "")@o.Name</option> }
+    </select>
+    <noscript><button type="submit" class="btn">조회</button></noscript>
+    @if (Model.Category != null || Model.Corp != null || Model.Org != null || q.ScopeKey != "focus" || q.SortKey != "delay" || Model.Mine)
+    {
+        @* 기억한 조건까지 지운다(dashboard.js 가 reset 을 보고 저장한 조건을 비운다) *@
+        <a class="btn small" id="dash-reset" asp-page="/Index" asp-route-reset="1">조건 해제</a>
+    }
+</form>
+
+@if (Model.NoProjects)
+{
+    @if (Model.NeedsSetup)
+    {
+        <partial name="_SetupNeeded" model="Model.IsAdmin" />
+    }
+    else
+    {
+        <section class="card setup-guide" id="first-project" role="note">
+            <h2><svg class="ic"><use href="#i-flag" /></svg>아직 등록된 과제가 없습니다</h2>
+            <p>과제를 등록하면 유형에 맞는 단계가 만들어지고, 단계 목표일과 작업을 정하면 이 화면에 진행·지연이 모입니다. 여러 과제를 한 번에 올리려면 과제 목록의 '가져오기'(Excel)를 씁니다.</p>
+            <div class="btns">
+                <a class="btn primary" asp-page="/Projects/Edit"><svg class="ic"><use href="#i-plus" /></svg>과제 등록</a>
+                <a class="btn" asp-page="/Help" asp-fragment="concepts"><svg class="ic"><use href="#i-help" /></svg>과제 · 단계 · 작업이란</a>
+            </div>
+        </section>
+    }
+}
+
+<section class="kpis wide">
+    <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">
         <span class="kpi-label">진행 과제</span>
         <span class="kpi-value">@d.Kpi.Active</span>
         <span class="kpi-sub">보류 @d.Kpi.Hold</span>
     </a>
-    <a class="kpi @(d.Kpi.Delayed > 0 ? "alarm" : "")" asp-page="/Projects/Index" asp-route-state="delayed" asp-route-mine="@(Model.Mine ? "true" : null)">
+    <a class="kpi @(d.Kpi.Delayed > 0 ? "alarm" : "")" asp-page="/Projects/Index" asp-route-state="delayed" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">
         <span class="kpi-label">@if (d.Kpi.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span>
         <span class="kpi-value">@d.Kpi.Delayed</span>
         <span class="kpi-sub">목표일 초과</span>
     </a>
-    <div class="kpi">
+    @* 숫자를 누르면 같은 판정으로 거른 목록으로 간다 (목록의 due·doneYear 조건 — Rules.HasStageDueWithin·CompletedOn) *@
+    <a class="kpi" data-kpi="due" asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Rules.SoonDays" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">
         <span class="kpi-label">@(Rules.SoonDays)일 내 목표</span>
         <span class="kpi-value">@d.Kpi.DueThisWeek</span>
-        <span class="kpi-sub">단계 기준</span>
-    </div>
-    <a class="kpi" asp-page="/Projects/Index" asp-route-state="done" asp-route-mine="@(Model.Mine ? "true" : null)">
+        <span class="kpi-sub">과제 기준</span>
+    </a>
+    <a class="kpi" data-kpi="done" asp-page="/Projects/Index" asp-route-state="done" asp-route-doneYear="@d.Today.Year" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">
         <span class="kpi-label">올해 완료</span>
         <span class="kpi-value">@d.Kpi.DoneThisYear</span>
         <span class="kpi-sub">@d.Today.Year 년</span>
     </a>
+    @* 조기 경보: 지연 전 위험(Rules.RiskReasons)·정체(Rules.StaleDays 일 변경 없음). 두 숫자가 각각 목록의 위험·정체 탭으로 간다 *@
+    <div class="kpi @(d.Kpi.Risk > 0 ? "warn" : "")" data-kpi="risk">
+        <span class="kpi-label">@if (d.Kpi.Risk > 0) {<svg class="ic"><use href="#i-clock" /></svg>}지연 위험</span>
+        <span class="kpi-value kpi-pair">
+            <a data-kpi-risk asp-page="/Projects/Index" asp-route-state="risk" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp"><span class="kpi-pair-label">위험</span> @d.Kpi.Risk</a>
+            <span class="muted" aria-hidden="true">·</span>
+            <a data-kpi-stale asp-page="/Projects/Index" asp-route-state="stale" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp"><span class="kpi-pair-label">정체</span> @d.Kpi.Stale</a>
+        </span>
+        <span class="kpi-sub">예상 초과·밀린 작업 / @(Rules.StaleDays)일 변경 없음</span>
+    </div>
 </section>
 
 <div class="grid-2">
     <section class="card">
-        <header class="card-head"><h2>지연 과제</h2><span class="count">@d.Delayed.Count</span></header>
+        <header class="card-head"><h2>지연 과제</h2><span class="count">@d.Delayed.Count</span><partial name="_HelpQ" model='"state"' /></header>
         @if (d.Delayed.Count == 0)
         {
             <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 중인 과제가 없습니다.</p>
@@ -61,7 +123,8 @@
                         <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@p.Id">
                             <span class="row-main">
                                 <span class="row-title">@p.Title</span>
-                                <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner</span>
+                                <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner@if (Model.NewCounts.GetValueOrDefault(p.Id) is > 0 and var n) {<text> · </text><span class="new-count">새 활동 @n</span>}</span>
+                                @if (notes.TryGetValue(p.Id, out var dn)) {<span class="row-sub row-note" title="@dn.Text">@dn.Text — @dn.User</span>}
                             </span>
                             <partial name="_StatusChip" model="p.Chip" />
                         </a>
@@ -71,6 +134,45 @@
         }
     </section>
 
+    <section class="card" id="risk-card">
+        <header class="card-head"><h2>지연 위험</h2><span class="count">@risk.Count</span><span class="muted">목표일 전이지만 늦어질 신호가 있는 과제</span><partial name="_HelpQ" model='"risk"' /></header>
+        @if (risk.Count == 0)
+        {
+            <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 위험 신호가 있는 과제가 없습니다.</p>
+        }
+        else
+        {
+            <ul class="rows">
+                @foreach (var p in risk.Take(Dashboard.RiskShown))
+                {
+                    <li>
+                        <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@p.Id">
+                            <span class="row-main">
+                                <span class="row-title">@p.Title</span>
+                                <span class="row-sub risk-reasons">@string.Join(" · ", p.Risks.Select(r => r.Text))</span>
+                                @if (notes.TryGetValue(p.Id, out var rn)) {<span class="row-sub row-note" title="@rn.Text">@rn.Text — @rn.User</span>}
+                            </span>
+                            @if (p.RiskDays > 0)
+                            {
+                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>예상 +@(p.RiskDays)일</span>
+                            }
+                            else
+                            {
+                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>위험</span>
+                            }
+                        </a>
+                    </li>
+                }
+            </ul>
+            @if (risk.Count > Dashboard.RiskShown)
+            {
+                <a class="card-foot-link" asp-page="/Projects/Index" asp-route-state="risk" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">과제 @(risk.Count)건 모두 보기<svg class="ic"><use href="#i-right" /></svg></a>
+            }
+        }
+    </section>
+</div>
+
+<div class="dash-upcoming">
     <section class="card">
         <header class="card-head"><h2>다가오는 일정</h2><span class="muted">@Dashboard.UpcomingDays 일 이내</span></header>
         @if (d.Upcoming.Count == 0)
@@ -86,13 +188,17 @@
                         <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@u.ProjectId">
                             <span class="row-main">
                                 <span class="row-title">@u.Project</span>
-                                <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")</span>
+                                <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")@if (Model.NewCounts.GetValueOrDefault(u.ProjectId) is > 0 and var n) {<text> · </text><span class="new-count">새 활동 @n</span>}</span>
                             </span>
                             <partial name="_StatusChip" model="u.Chip" />
                         </a>
                     </li>
                 }
             </ul>
+            @if (d.UpcomingTotal > d.Upcoming.Count)
+            {
+                <a class="card-foot-link" data-upcoming-all asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Dashboard.UpcomingDays" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">과제 @(d.UpcomingProjects)건 모두 보기<svg class="ic"><use href="#i-right" /></svg></a>
+            }
         }
     </section>
 </div>
@@ -100,7 +206,24 @@
 <section class="card">
     <header class="card-head">
         <h2>진행 과제 일정</h2>
-        <span class="count">@d.Timeline.Count</span>
+        <span class="count" title="보이는 과제 / 진행 과제">@d.Timeline.Count@(d.Timeline.Count != d.TimelineTotal ? " / " + d.TimelineTotal : "")</span>
+        @* 범위: 기본 '주요'는 손볼 과제(지연 + 지연 위험 + @Dashboard.FocusDays 일 안 목표)만. '전체'는 모든 진행 과제 *@
+        <nav class="seg small no-print" id="gantt-scope" aria-label="간트 범위">
+            @foreach (var (key, label) in scopes)
+            {
+                <a asp-page="/Index" asp-all-route-data="Model.Route(scope: key)" data-scope="@key" class="@(q.ScopeKey == key ? "on" : "")" aria-current="@(q.ScopeKey == key ? "true" : null)"
+                   title="@(key == "focus" ? $"지연·지연 위험·{Dashboard.FocusDays}일 안 목표가 있는 과제" : null)">@(key == "all" ? "전체 보기" : label)</a>
+            }
+        </nav>
+        <label class="sort-pick no-print">
+            <span class="hide-sm">정렬</span>
+            <select id="gantt-sort" aria-label="간트 정렬">
+                @foreach (var (key, label) in sorts)
+                {
+                    <option value="@Url.Page("/Index", Model.Route(sort: key))" data-sort="@key" selected="@(q.SortKey == key)">@label</option>
+                }
+            </select>
+        </label>
         <span class="spacer"></span>
         <div class="seg small" id="zoom" role="group" aria-label="간트 배율">
             <button type="button" data-zoom="day">일</button>
@@ -109,13 +232,20 @@
         </div>
         <button type="button" class="btn small" id="go-today">오늘</button>
     </header>
-    @if (d.Timeline.Count == 0)
+    @if (d.TimelineTotal == 0)
     {
-        <p class="empty">진행 중인 과제가 없습니다. <a asp-page="/Projects/Edit">과제 등록</a></p>
+        @* 기준 정보가 없으면 등록 화면이 막다른 길이라 등록 링크 대신 위의 첫 설정 안내를 따르게 한다 *@
+        <p class="empty">진행 중인 과제가 없습니다.@if (!Model.NeedsSetup) {<text> <a asp-page="/Projects/Edit">과제 등록</a></text>}</p>
+    }
+    else if (d.Timeline.Count == 0)
+    {
+        <p class="empty" id="gantt-empty"><svg class="ic"><use href="#i-check" /></svg>@(q.ScopeKey == "delayed" ? "지연 과제가 없습니다." : "지연·지연 위험이나 " + Dashboard.FocusDays + "일 안 목표가 있는 과제가 없습니다.")
+            <a asp-page="/Index" asp-all-route-data='Model.Route(scope: "all")'>전체 보기</a></p>
     }
     else
     {
-        <div id="gantt" class="gantt-host"></div>
+        @* tall: 과제가 많아도 화면 높이 안에서 스크롤한다(머리글은 붙어 있다) — 수백 건이면 페이지가 수천 px 로 늘어나지 않게 *@
+        <div id="gantt" class="gantt-host tall"></div>
         <div class="legend">
             <span><i class="lg plan"></i>목표</span>
             <span><i class="lg done"></i>실행(완료)</span>
@@ -132,21 +262,21 @@
         <div class="bars">
             @foreach (var s in d.ByCategory)
             {
-                <div class="bar-row">
+                <a class="bar-row" data-bar-category="@s.Id" asp-page="/Projects/Index" asp-route-state="all" asp-route-current="true" asp-route-category="@s.Id" asp-route-corp="@Model.Corp" asp-route-mine="@mine" asp-route-org="@Model.Org">
                     <span class="bar-name">@s.Name</span>
-                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
+                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 올해 완료 @s.Done · 보류 @s.Paused">
                         @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, catMax)"></i>}
                         @if (s.Delayed > 0) {<i class="b late" style="width:@Pct(s.Delayed, catMax)"></i>}
                         @if (s.Done > 0) {<i class="b done" style="width:@Pct(s.Done, catMax)"></i>}
                         @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, catMax)"></i>}
                     </span>
                     <span class="bar-num">@s.Total</span>
-                </div>
+                </a>
             }
             @if (d.ByCategory.Count == 0) {<p class="empty">과제가 없습니다.</p>}
         </div>
         <div class="legend">
-            <span><i class="lg on"></i>진행</span><span><i class="lg late"></i>지연</span><span><i class="lg done2"></i>완료</span><span><i class="lg paused"></i>보류·중단</span>
+            <span><i class="lg on"></i>진행</span><span><i class="lg late"></i>지연</span><span><i class="lg done2"></i>올해 완료</span><span><i class="lg paused"></i>보류</span><span data-bars-scope>진행·보류 과제와 올해 끝난 과제만 셉니다</span>
         </div>
     </section>
 
@@ -160,16 +290,16 @@
             @for (var i = 0; i < d.ByCorporation.Count; i++)
             {
                 var s = d.ByCorporation[i];
-                <div class="bar-row @(i >= 5 ? "extra" : "")">
+                <a class="bar-row @(i >= 5 ? "extra" : "")" data-bar-corp="@s.Id" asp-page="/Projects/Index" asp-route-state="all" asp-route-current="true" asp-route-corp="@s.Id" asp-route-category="@Model.Category" asp-route-mine="@mine" asp-route-org="@Model.Org">
                     <span class="bar-name">@s.Name</span>
-                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
+                    <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 올해 완료 @s.Done · 보류 @s.Paused">
                         @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, corpMax)"></i>}
                         @if (s.Delayed > 0) {<i class="b late" style="width:@Pct(s.Delayed, corpMax)"></i>}
                         @if (s.Done > 0) {<i class="b done" style="width:@Pct(s.Done, corpMax)"></i>}
                         @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, corpMax)"></i>}
                     </span>
                     <span class="bar-num">@s.Total</span>
-                </div>
+                </a>
             }
             @if (d.ByCorporation.Count == 0) {<p class="empty">과제가 없습니다.</p>}
         </div>

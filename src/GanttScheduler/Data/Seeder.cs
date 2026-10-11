@@ -47,6 +47,12 @@ public static class DbInitializer
 
         await Seeder.SeedMastersAsync(db);
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
+        // 기준선 차수 이력이 생기기 전에 확정한 과제에 1차를 만든다(멱등 — 이미 차수가 있으면 건너뛴다)
+        var migrated = await GanttScheduler.Services.BaselineHistory.EnsureFirstRoundsAsync(db);
+        if (migrated > 0) log.LogInformation("기준선 차수 이력: 과제 {Count}건의 기존 기준선을 1차로 옮겼습니다.", migrated);
+        // 종료일 열이 생기기 전에 끝난(완료·중단) 과제의 종료일을 한 번 채운다(멱등 — 값이 있으면 건너뛴다)
+        var closed = await GanttScheduler.Services.ClosedDates.FillAsync(db, clock.Today);
+        if (closed > 0) log.LogInformation("과제 종료일: 완료·중단 과제 {Count}건의 종료일을 채웠습니다.", closed);
     }
 
     public static string SchemaHash(string script) =>
@@ -79,13 +85,17 @@ public static class AppPaths
     public static string Updates(IConfiguration cfg, string contentRoot) =>
         Resolve(cfg["Update:Path"] ?? "App_Data/updates", contentRoot);
 
+    // 메일 요약의 마지막 실행 기록 (하루 한 번만 보내기 위해)
+    public static string Notify(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Notify:StatePath"] ?? "App_Data/notify.json", contentRoot);
+
     private static string Resolve(string path, string contentRoot) =>
         Path.IsPathRooted(path) ? path : Path.Combine(contentRoot, path);
 }
 
 public static class Seeder
 {
-    // 기준 정보 기본값 — 테이블이 비어 있을 때만 넣는다
+    // 기준 정보 기본값 — 테이블이 비어 있을 때만 넣는다 (공휴일은 해마다: 그 해 공휴일이 하나도 없을 때)
     public static async Task SeedMastersAsync(AppDb db)
     {
         if (!await db.Categories.AnyAsync())
@@ -95,16 +105,24 @@ public static class Seeder
                 ("검수", StageKind.Inspection), ("입고", StageKind.Inbound), ("설치", StageKind.Normal), ("안정화", StageKind.Normal));
             Checks(automation, "검수", "FAT 성적서 확인", "주행 시험 결과 승인", "안전 점검 완료");
             Checks(automation, "입고", "통관 서류 확인", "수량·외관 검수");
+            var general = Cat("물류", CategoryKind.General, 2,
+                ("검토", StageKind.Normal), ("보고", StageKind.Normal), ("적용", StageKind.Normal));
+            var container = Cat("용기", CategoryKind.Container, 3,
+                ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
+                ("입고", StageKind.Normal), ("적용", StageKind.Normal));
+            var simulation = Cat("Simulation", CategoryKind.General, 4,
+                ("데이터 수집", StageKind.Normal), ("모델링", StageKind.Normal), ("검증", StageKind.Normal), ("보고", StageKind.Normal));
 
-            db.Categories.AddRange(
-                automation,
-                Cat("물류", CategoryKind.General, 2,
-                    ("검토", StageKind.Normal), ("보고", StageKind.Normal), ("적용", StageKind.Normal)),
-                Cat("용기", CategoryKind.Container, 3,
-                    ("검토", StageKind.Normal), ("품의", StageKind.Normal), ("발주", StageKind.Normal), ("제작", StageKind.Normal),
-                    ("입고", StageKind.Normal), ("적용", StageKind.Normal)),
-                Cat("Simulation", CategoryKind.General, 4,
-                    ("데이터 수집", StageKind.Normal), ("모델링", StageKind.Normal), ("검증", StageKind.Normal), ("보고", StageKind.Normal)));
+            // 기본 기간(근무일) — 등록 화면의 목표일 초안. 해외 입고는 법인마다 운송 기간이 달라 비워 두고 추천 입고일(검수일 + 해상 운송)을 쓴다
+            Durations(automation, 10, 10, 5, 40, 5, null, 10, 20);
+            Durations(general, 10, 5, 15);
+            Durations(container, 5, 10, 5, 20, 10, 10);
+            Durations(simulation, 10, 15, 10, 5);
+            // 유형 템플릿 작업 — 등록할 때 단계마다 함께 만든다(시작·기간은 근무일, 선행은 같은 단계 안)
+            Works(container, "검토", ("현장 실사", 0, 3, null), ("용기 사양 검토", 3, 5, "현장 실사"));
+            Works(container, "제작", ("시제품 제작", 0, 10, null), ("시제품 검증", 10, 5, "시제품 제작"));
+
+            db.Categories.AddRange(automation, general, container, simulation);
         }
 
         if (!await db.EquipmentTypes.AnyAsync())
@@ -129,11 +147,20 @@ public static class Seeder
                 db.ContainerTypes.Add(new ContainerType { Name = name, SortOrder = ++order });
         }
 
-        if (!await db.Holidays.AnyAsync())
+        // 지연 사유 분류 — 일정 변경 사유 시트의 '분류' 선택과 변경 분석의 원인 파레토(S10)
+        if (!await db.DelayReasons.AnyAsync())
         {
-            foreach (var (date, name) in KoreanHolidays())
-                db.Holidays.Add(new Holiday { Date = date, Name = name });
+            var order = 0;
+            foreach (var name in new[] { "자재·납품 지연", "설계·사양 변경", "협력사 일정", "고객·현업 요청", "인력·우선순위", "품질·시험 문제", "기타" })
+                db.DelayReasons.Add(new DelayReason { Name = name, SortOrder = ++order });
         }
+
+        // 공휴일은 해마다 따로 본다: 내장 목록의 해 중 그 해 공휴일이 하나도 없는 해만 채운다. 서버는 시작할 때마다 이 일을 하므로
+        // 새 릴리스가 다음 해 공휴일을 실어 보내면 운영 중인 서버에도 들어간다(예전에는 표가 비어 있을 때만 넣어 다음 해가 조용히 빠졌다).
+        // 관리자가 일부를 지운 해는 다른 날이 남아 있으므로 다시 채우지 않는다. 내장 목록에 없는 해는 관리자 알림(OpsAlerts)이 10월부터 알린다
+        var years = (await db.Holidays.AsNoTracking().Select(h => h.Date).ToListAsync()).Select(d => d.Year).ToHashSet();
+        foreach (var (date, name) in KoreanHolidays().Where(h => !years.Contains(h.Date.Year)))
+            db.Holidays.Add(new Holiday { Date = date, Name = name });
 
         await db.SaveChangesAsync();
     }
@@ -146,6 +173,24 @@ public static class Seeder
             template.CheckItems.Add(new TemplateCheckItem { Text = text, SortOrder = ++i });
     }
 
+    private static void Works(Category category, string stage, params (string Title, int Offset, int Days, string? After)[] items)
+    {
+        var template = category.StageTemplates.First(t => t.Name == stage);
+        var i = 0;
+        foreach (var (title, offset, days, after) in items)
+            template.Works.Add(new TemplateWork
+            {
+                Title = title, OffsetWorkDays = offset, DurationWorkDays = days, SortOrder = ++i,
+                PredecessorTemplateWork = after == null ? null : template.Works.First(w => w.Title == after),
+            });
+    }
+
+    private static void Durations(Category category, params int?[] days)
+    {
+        var templates = category.StageTemplates.OrderBy(t => t.SortOrder).ToList();
+        for (var i = 0; i < templates.Count && i < days.Length; i++) templates[i].DefaultWorkDays = days[i];
+    }
+
     private static Category Cat(string name, CategoryKind kind, int order, params (string Name, StageKind Kind)[] stages)
     {
         var c = new Category { Name = name, Kind = kind, SortOrder = order };
@@ -155,8 +200,10 @@ public static class Seeder
         return c;
     }
 
-    // 2026~2027 공휴일 (대체공휴일 포함). 이후 연도와 임시공휴일은 관리 화면에서 추가한다
-    private static IEnumerable<(DateOnly, string)> KoreanHolidays()
+    // 내장 공휴일: 정부가 확정 발표한 해(월력요항)만 넣는다 — 2026~2027 (대체공휴일 포함).
+    // 2028년 이후는 대체·임시 공휴일이 아직 정해지지 않아 넣지 않는다(틀린 날이 들어가면 조용히 근무일이 틀린다). 그 해는 관리 화면에서
+    // 여러 줄 붙여넣기로 넣거나, 발표 뒤의 릴리스가 여기에 더하면 다음 시작 때 채워진다. 기준 정보 시드 외에 시험에서도 쓴다
+    internal static IEnumerable<(DateOnly Date, string Name)> KoreanHolidays()
     {
         (int y, int m, int d, string n)[] rows =
         {
@@ -290,6 +337,7 @@ public static class Seeder
                 i++;
             }
             p.Activities.Add(new Activity { Type = ActivityType.Created, Text = "과제 등록", UserId = owner.Id, At = now.AddDays(startOffset) });
+            p.ClosedOn = Rules.ClosedOn(p, D(0));
             db.Projects.Add(p);
             return p;
         }

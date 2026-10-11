@@ -1,0 +1,6 @@
+@model string
+@* 도움말의 한 절로 가는 작은 '?' 링크. 모델은 절 이름(HelpModel.Sections 의 Id) *@
+@{
+    var title = GanttScheduler.Pages.HelpModel.Sections.FirstOrDefault(s => s.Id == Model).Title ?? "도움말";
+}
+<a class="help-q no-print" href="@Url.Content("~/Help#" + Model)" title="도움말: @title" aria-label="도움말: @title" data-help="@Model"><svg class="ic"><use href="#i-help" /></svg></a>
