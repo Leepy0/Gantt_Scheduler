@@ -1,0 +1,65 @@
+@page
+@model GanttScheduler.Pages.My.NotificationsModel
+@{
+    ViewData["Title"] = "알림";
+    ViewData["Nav"] = "my";
+    var d = Model.Data;
+}
+
+<div class="page-head">
+    <a class="btn icon" asp-page="/My/Index" aria-label="내 할 일"><svg class="ic"><use href="#i-left" /></svg></a>
+    <h1>알림</h1>
+    <span class="count" id="unread-count">@(d.Unread > 0 ? d.Unread.ToString() : "")</span>
+    <div class="seg" role="group" aria-label="보기">
+        <a asp-page="/My/Notifications" class="@(Model.Unread ? "" : "on")" aria-current="@(Model.Unread ? null : "page")">전체</a>
+        <a asp-page="/My/Notifications" asp-route-unread="true" class="@(Model.Unread ? "on" : "")" aria-current="@(Model.Unread ? "page" : null)">읽지 않음</a>
+    </div>
+    <span class="spacer"></span>
+    <button type="button" class="btn" id="read-all" @(d.Unread == 0 ? "disabled" : "")><svg class="ic"><use href="#i-check" /></svg>모두 읽음</button>
+</div>
+
+<p class="muted">내 작업(담당·부담당 — 자동 밀기 포함)·내 과제·관심 과제에 다른 사람이 남긴 활동과 나를 알릴 사람으로 고른 댓글입니다.</p>
+
+<section class="card flush">
+    @if (d.Items.Count == 0)
+    {
+        <p class="empty"><svg class="ic"><use href="#i-check" /></svg>@(Model.Unread ? "읽지 않은 알림이 없습니다." : "알림이 없습니다.")</p>
+    }
+    else
+    {
+        <ul class="notes" id="notes">
+            @foreach (var n in d.Items)
+            {
+                <li class="@(n.Read ? "" : "unread")" data-note="@n.Id">
+                    <a class="note-link" asp-page="/My/Notifications" asp-page-handler="Go" asp-route-id="@n.Id">
+                        <span class="note-head">
+                            <span class="chip @(n.Kind == NotifyKinds.Mention ? "accent" : "")">@n.KindLabel</span>
+                            <span class="project">@(n.Project ?? "(삭제된 과제)")</span>
+                            @if (n.Actor != null) {<span>@n.Actor</span>}
+                            <time datetime="@DateTime.SpecifyKind(n.CreatedAt, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ssZ")">@KoreaClock.ToKst(n.CreatedAt).ToString("MM-dd HH:mm")</time>
+                            @if (!n.Read) {<span class="sr-only">읽지 않음</span>}
+                        </span>
+                        <span class="note-text">@n.Text</span>
+                    </a>
+                    <span class="note-actions">
+                        @if (!n.Read)
+                        {
+                            <button type="button" class="btn small" data-read="@n.Id">읽음</button>
+                        }
+                    </span>
+                </li>
+            }
+        </ul>
+        @if (d.More)
+        {
+            <div class="feed-foot">
+                <span class="spacer"></span>
+                <a class="btn small" asp-page="/My/Notifications" asp-route-unread="@(Model.Unread ? "true" : null)" asp-route-before="@d.Items[^1].Id"><svg class="ic"><use href="#i-down" /></svg>이전 알림</a>
+            </div>
+        }
+    }
+</section>
+
+@section Scripts {
+    <script src="~/js/notifications.js" asp-append-version="true"></script>
+}

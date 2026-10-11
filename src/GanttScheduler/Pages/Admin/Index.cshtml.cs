@@ -49,6 +49,24 @@ public class IndexModel : PageModel
 
     public Task<IActionResult> OnPostRemoveIpAsync([FromBody] MasterIp input) => Run("user", () => _masters.RemoveAddressAsync(input));
 
+    public record MailInput(string? Email);
+
+    // 관리 > 사용자의 '시험 메일 보내기': 메일 서버 설정(Notify:Smtp)이 맞는지 그 주소로 한 통 보내 본다(관리자만)
+    public async Task<IActionResult> OnPostTestMailAsync([FromBody] MailInput input)
+    {
+        try
+        {
+            if (!_me.IsAdmin) throw new RuleException("관리자만 시험 메일을 보낼 수 있습니다.");
+            var digest = HttpContext.RequestServices.GetRequiredService<DigestService>();
+            await digest.SendTestAsync(input.Email, _me.Name, HttpContext.RequestAborted);
+            return new JsonResult(new { ok = true });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
     // 변경 실행 → 해당 종류의 최신 목록
     private async Task<IActionResult> Run(string kind, Func<Task> action)
     {

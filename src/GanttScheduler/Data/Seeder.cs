@@ -79,6 +79,10 @@ public static class AppPaths
     public static string Updates(IConfiguration cfg, string contentRoot) =>
         Resolve(cfg["Update:Path"] ?? "App_Data/updates", contentRoot);
 
+    // 메일 요약의 마지막 실행 기록 (하루 한 번만 보내기 위해)
+    public static string Notify(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Notify:StatePath"] ?? "App_Data/notify.json", contentRoot);
+
     private static string Resolve(string path, string contentRoot) =>
         Path.IsPathRooted(path) ? path : Path.Combine(contentRoot, path);
 }

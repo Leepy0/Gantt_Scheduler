@@ -182,7 +182,7 @@ public static class Reporting
 
     public static string KindOf(ActivityType t) => t switch
     {
-        ActivityType.Comment => "comment",
+        ActivityType.Comment or ActivityType.CommentChanged => "comment",
         ActivityType.TargetChanged or ActivityType.WorkPlanChanged or ActivityType.BaselineSet => "schedule",
         ActivityType.StageCompleted or ActivityType.StageReopened or ActivityType.WorkEdited or ActivityType.CheckChanged => "progress",
         ActivityType.StateChanged or ActivityType.Created or ActivityType.Cloned => "state",
@@ -272,7 +272,7 @@ public static class Reporting
 
             var changes = acts.Where(a => a.Type is ActivityType.TargetChanged or ActivityType.WorkPlanChanged or ActivityType.StateChanged or ActivityType.BaselineSet)
                 .Select(Item).ToList();
-            var comments = acts.Where(a => a.Type == ActivityType.Comment).Select(Item).ToList();
+            var comments = acts.Where(a => a.Type == ActivityType.Comment && a.DeletedAt == null).Select(Item).ToList();
 
             var next = new List<string>();
             if (p.State == ProjectState.Active)

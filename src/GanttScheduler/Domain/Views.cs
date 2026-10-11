@@ -78,7 +78,21 @@ public record CrossLinkView(int Id, string Role, int ProjectId, string ProjectTi
     DateOnly? StageDate, bool StageDone, int Lag, DateOnly? Earliest, bool Violated);
 
 public record ActivityView(
-    int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId);
+    int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId)
+{
+    // 아래는 상세 활동 탭(ProjectService 가 지금 사용자 기준으로 채운다)
+    public string Kind { get; init; } = "";             // 종류 칩 (Reporting.KindOf — 변경 이력 화면과 같은 분류)
+    public int UserId { get; init; }
+    public bool Mine { get; init; }                     // 내가 남긴 활동
+    public bool New { get; init; }                      // 마지막으로 본 뒤 다른 사람이 남김 (Rules.IsNewActivity)
+    public DateTime? EditedAt { get; init; }            // 댓글을 고친 시각 ('(수정됨)')
+    public bool Deleted { get; init; }                  // 지운 댓글 (본문은 자리 표시)
+    public bool CanEdit { get; init; }                  // 지금 사용자가 고치거나 지울 수 있음 (Rules.CanEditComment)
+    public int? Ref { get; init; }                      // 댓글 수정·삭제 기록이 가리키는 댓글의 활동 Id
+    public List<MentionView>? Mentions { get; init; }   // 댓글에서 알릴 사람으로 고른 사용자
+}
+
+public record MentionView(int Id, string Name);
 
 public record ItemView(int TypeId, string Name, int Quantity, string? Note);
 

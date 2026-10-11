@@ -689,4 +689,25 @@ public static class Rules
     public static bool StageLinkViolated(StageLink link, Stage predecessor, Stage successor, WorkCalendar cal) =>
         successor.CompletedDate == null && successor.TargetDate != null
         && StageLinkEarliest(link, predecessor, cal) is { } earliest && successor.TargetDate.Value < earliest;
+
+    // ── 협업: 새 활동·댓글 수정 ──────────────────────────────────────────
+    // 목록의 '새 활동 n', 상세의 '여기부터 새 활동' 구분선, 내 할 일의 '새 소식'이 모두 같은 기준을 쓴다
+
+    // 새 활동을 세는 기간의 상한(일). 오래 안 본 과제가 수백 건으로 보이지 않게, 처음 보는 과제는 이 기간만 센다
+    public const int NewActivityDays = 7;
+
+    // 이 시각보다 뒤에 남은 활동이 '새 활동'이다: 마지막으로 본 시각, 그것이 없거나 상한보다 오래됐으면 상한
+    public static DateTime NewSince(DateTime? lastSeen, DateTime utcNow)
+    {
+        var floor = utcNow.AddDays(-NewActivityDays);
+        return lastSeen is { } seen && seen > floor ? seen : floor;
+    }
+
+    // 다른 사람이 since 뒤에 남긴 활동 (내가 남긴 것은 새 소식이 아니다). 댓글 수정·삭제 기록은 그 댓글로 보이므로 따로 세지 않는다
+    public static bool IsNewActivity(ActivityType type, int authorId, DateTime at, int userId, DateTime since) =>
+        type != ActivityType.CommentChanged && authorId != userId && at > since;
+
+    // 댓글은 작성자만, 남긴 뒤 editHours 시간 안에, 지우지 않은 것만 고치거나 지울 수 있다(0 이면 막는다)
+    public static bool CanEditComment(int authorId, DateTime at, DateTime? deletedAt, int userId, DateTime utcNow, int editHours) =>
+        authorId == userId && deletedAt == null && editHours > 0 && utcNow - at <= TimeSpan.FromHours(editHours);
 }

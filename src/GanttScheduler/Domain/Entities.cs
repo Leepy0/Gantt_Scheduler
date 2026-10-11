@@ -30,6 +30,7 @@ public enum ActivityType
     Cloned = 16,
     CheckChanged = 17,
     LinkChanged = 18,
+    CommentChanged = 19,    // 댓글 수정·삭제 기록 (NewValue = 고친 댓글의 활동 Id)
 }
 
 // 조직: 1 그룹 → 2 파트. 사용자는 파트(없으면 그룹)에 속한다
@@ -55,6 +56,8 @@ public class AppUser
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public List<UserAddress> Addresses { get; set; } = new();
+    // 메일 요약을 받을 주소. 관리자만 입력한다 — IP 로 식별하므로 본인이 바꾸게 하면 남의 알림을 가로챌 수 있다
+    public string? Email { get; set; }
 }
 
 // 사용자 접속 IP — 한 사람이 여러 PC/IP 를 쓸 수 있다
@@ -306,6 +309,10 @@ public class Activity
     public int UserId { get; set; }
     public AppUser? User { get; set; }
     public DateTime At { get; set; }
+    // 댓글만: 작성자가 고친 시각(첫 원문은 OldValue 에 남긴다)과 지운 시각(본문은 자리 표시로 바꾸고 행은 남긴다)
+    public DateTime? EditedAt { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public List<ActivityMention> Mentions { get; set; } = new();
 }
 
 // ── 의존 표현 확장: 작업 의존 유형, 과제 간 단계 의존 ─────────────────────
@@ -330,4 +337,57 @@ public class StageLink
     public Stage? SuccessorStage { get; set; }
     public int LagDays { get; set; }                // 근무일 기준 간격
     public DateTime CreatedAt { get; set; }
+}
+
+// ── 협업·새 소식·알림 ─────────────────────────────────────────────────────
+
+// 사용자가 과제 상세를 마지막으로 연 시각. 그 뒤에 다른 사람이 남긴 활동이 '새 활동'이다(Rules.NewSince)
+public class ProjectVisit
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public AppUser? User { get; set; }
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public DateTime LastSeenAt { get; set; }
+}
+
+// 관심 과제 — 담당이 아니어도 내 할 일의 '새 소식'과 알림을 받는다
+public class ProjectWatch
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public AppUser? User { get; set; }
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// 화면 내 알림. 활동을 저장할 때 같은 SaveChanges 로 만든다(ActivityLog). 한 저장에서 한 사람에게는 과제마다 한 건 —
+// 여러 활동이 겹치면 가장 직접적인 이유(Kind)와 대표 활동 하나를 남기고 '외 n건'으로 묶는다.
+// ProjectId 는 느슨한 참조(FK 없음)다 — 과제를 지우면 활동 → 알림 cascade 로 함께 지워진다(과제로 가는 cascade 경로를 하나로 둔다)
+public class Notification
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public AppUser? User { get; set; }
+    public int? ActivityId { get; set; }
+    public Activity? Activity { get; set; }
+    public int ProjectId { get; set; }
+    public string Kind { get; set; } = "";          // mention·work·project·watch (NotifyKinds)
+    public string Text { get; set; } = "";
+    public string Key { get; set; } = "";           // 같은 사건을 두 번 알리지 않게 하는 열쇠(유니크)
+    public DateTime CreatedAt { get; set; }
+    public DateTime? ReadAt { get; set; }
+    public DateTime? EmailedAt { get; set; }        // 메일 요약에 실어 보낸 시각 — 다음 요약에 다시 싣지 않는다
+}
+
+// 댓글에서 알릴 사람으로 고른 사용자(멘션). 이름은 공백이 있을 수 있어 본문을 파싱하지 않고 고른 Id 를 따로 남긴다
+public class ActivityMention
+{
+    public int Id { get; set; }
+    public int ActivityId { get; set; }
+    public Activity? Activity { get; set; }
+    public int UserId { get; set; }
+    public AppUser? User { get; set; }
 }
