@@ -132,7 +132,10 @@ public class AdvancedTests : IClassFixture<TestDb>
 
         var (id2, _, _, _) = await LinkedAsync("테스트 의존-과제삭제");
         using (var s = _db.NewScope())
+        {
             await s.Projects.DeleteAsync(id2);
+            await s.Projects.PurgeAsync(id2);
+        }
         using var check = _db.NewScope();
         Assert.False(await check.Db.WorkLinks.AnyAsync(l => l.ProjectId == id2));
         Assert.False(await check.Db.WorkItems.AnyAsync(w => w.Stage!.ProjectId == id2));

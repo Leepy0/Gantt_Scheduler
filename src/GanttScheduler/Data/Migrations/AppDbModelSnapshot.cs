@@ -198,6 +198,70 @@ namespace GanttScheduler.Data.Migrations
                     b.ToTable("Attachments", "pm");
                 });
 
+            modelBuilder.Entity("GanttScheduler.Domain.Baseline", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("No")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ProjectId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "No")
+                        .IsUnique();
+
+                    b.ToTable("Baselines", "pm");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.BaselineItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("BaselineId")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly?>("End")
+                        .HasColumnType("date");
+
+                    b.Property<int?>("StageId")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly?>("Start")
+                        .HasColumnType("date");
+
+                    b.Property<int?>("WorkItemId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BaselineId");
+
+                    b.ToTable("BaselineItems", "pm");
+                });
+
             modelBuilder.Entity("GanttScheduler.Domain.Category", b =>
                 {
                     b.Property<int>("Id")
@@ -286,6 +350,48 @@ namespace GanttScheduler.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("ContainerTypes", "pm");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.DeletedProjectLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeletedBy")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<int>("ProjectId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("PurgedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PurgedBy")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PurgedAt");
+
+                    b.ToTable("DeletedProjectLogs", "pm");
                 });
 
             modelBuilder.Entity("GanttScheduler.Domain.EquipmentType", b =>
@@ -490,6 +596,16 @@ namespace GanttScheduler.Data.Migrations
                     b.Property<int>("CreatedById")
                         .HasColumnType("int");
 
+                    b.Property<string>("DeleteReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DeletedById")
+                        .HasColumnType("int");
+
                     b.Property<string>("Description")
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
@@ -531,6 +647,10 @@ namespace GanttScheduler.Data.Migrations
                     b.HasIndex("CorporationId");
 
                     b.HasIndex("CreatedById");
+
+                    b.HasIndex("DeletedAt");
+
+                    b.HasIndex("DeletedById");
 
                     b.HasIndex("LocationId");
 
@@ -1007,6 +1127,36 @@ namespace GanttScheduler.Data.Migrations
                     b.Navigation("UploadedBy");
                 });
 
+            modelBuilder.Entity("GanttScheduler.Domain.Baseline", b =>
+                {
+                    b.HasOne("GanttScheduler.Domain.Project", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("GanttScheduler.Domain.AppUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.BaselineItem", b =>
+                {
+                    b.HasOne("GanttScheduler.Domain.Baseline", "Baseline")
+                        .WithMany("Items")
+                        .HasForeignKey("BaselineId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Baseline");
+                });
+
             modelBuilder.Entity("GanttScheduler.Domain.CheckItem", b =>
                 {
                     b.HasOne("GanttScheduler.Domain.AppUser", "DoneBy")
@@ -1093,6 +1243,11 @@ namespace GanttScheduler.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("GanttScheduler.Domain.AppUser", "DeletedBy")
+                        .WithMany()
+                        .HasForeignKey("DeletedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("GanttScheduler.Domain.Location", "Location")
                         .WithMany()
                         .HasForeignKey("LocationId")
@@ -1110,6 +1265,8 @@ namespace GanttScheduler.Data.Migrations
                     b.Navigation("Corporation");
 
                     b.Navigation("CreatedBy");
+
+                    b.Navigation("DeletedBy");
 
                     b.Navigation("Location");
 
@@ -1315,6 +1472,11 @@ namespace GanttScheduler.Data.Migrations
             modelBuilder.Entity("GanttScheduler.Domain.AppUser", b =>
                 {
                     b.Navigation("Addresses");
+                });
+
+            modelBuilder.Entity("GanttScheduler.Domain.Baseline", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("GanttScheduler.Domain.Category", b =>

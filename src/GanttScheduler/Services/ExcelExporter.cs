@@ -350,7 +350,7 @@ public class ExcelExporter
             $" · 상태·기준선 {report.StateCount}건 · 과제 완료 {report.Completed}건 · 작성일 {report.Today:yyyy-MM-dd}(한국 시간){asOf}");
 
         const int head = 4;
-        Header(ws, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 9), ("진행률", 8), ("현재 단계", 16),
+        Header(ws, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 12), ("진행률", 8), ("현재 단계", 16),
             ("이번 주 실적", 36), ("일정 변경 · 사유", 44), ("상태 · 기준선", 30), ("진행 내용", 38), ("밀린 항목", 32), ("다음 주 계획", 34));
 
         var r = head + 1;
@@ -362,6 +362,8 @@ public class ExcelExporter
             ws.Cell(r, 3).Value = p.Corporation;
             ws.Cell(r, 4).Value = p.Owner;
             State(ws.Cell(r, 5), p.StateLabel + (p.DelayDays > 0 ? $" D+{p.DelayDays}" : ""));
+            // 예상 지연(조기 경보)으로 카드에 오른 과제는 그 이유를 상태 칸 아래에 적는다(화면의 칩과 같은 글자) — 무변동인데 왜 접히지 않았는지 보이게
+            if (p.RiskChip is { } risk) ws.Cell(r, 5).Value = ws.Cell(r, 5).GetString() + "\n" + risk.Text;
             Percent(ws.Cell(r, 6), p.Progress);
             ws.Cell(r, 7).Value = p.CurrentStage == null ? "" : p.CurrentStage + (p.CurrentTarget == null ? "" : $"\n목표 {p.CurrentTarget.Value:MM-dd}");
             ws.Cell(r, 8).Value = Lines(p.Done.Select(x => x.Text));
@@ -375,7 +377,7 @@ public class ExcelExporter
             ws.Cell(r, 13).Value = Lines(p.Next);
             r++;
         }
-        Body(ws, head, r - 1, 13, centered: new[] { 5, 6 }, wrap: new[] { 1, 7, 8, 9, 10, 11, 12, 13 }, top: true);
+        Body(ws, head, r - 1, 13, centered: new[] { 5, 6 }, wrap: new[] { 1, 5, 7, 8, 9, 10, 11, 12, 13 }, top: true);
         Print(ws, head);
 
         var folded = report.Folded();

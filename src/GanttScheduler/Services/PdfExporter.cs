@@ -143,6 +143,14 @@ public class PdfExporter
             var state = meta.AddFormattedText(p.StateLabel + (p.DelayDays > 0 ? $" D+{p.DelayDays}" : ""));
             state.Font.Bold = true;
             state.Font.Color = StateColor(p.StateLabel);
+            // 예상 지연(조기 경보)으로 카드에 오른 과제는 그 이유를 화면 칩과 같은 글자로 붙인다 — 무변동인데 왜 접히지 않았는지 보이게
+            if (p.RiskChip is { } risk)
+            {
+                meta.AddText(" · ");
+                var warn = meta.AddFormattedText(risk.Text);
+                warn.Font.Bold = true;
+                warn.Font.Color = Warn;
+            }
             meta.AddText($" · 진행률 {p.Progress}%" + (p.CurrentStage == null ? "" : $" · 현재 {p.CurrentStage}" + (p.CurrentTarget == null ? "" : $" (목표 {p.CurrentTarget.Value:MM-dd})")));
 
             var t = sec.AddTable();

@@ -90,9 +90,8 @@ public partial class ProjectService
         var progress = w.Progress;
         if (actuals != null)
         {
-            (actualStart, actualEnd, progress) = (actuals.ActualStart, actuals.ActualEnd, actuals.Progress);
-            if (actualEnd != null) progress = 100;
-            else if (progress > 0 && actualStart == null) actualStart = Rules.UserToday(actuals.ClientToday, today);
+            actualEnd = actuals.ActualEnd;
+            (progress, actualStart) = Rules.WorkActuals(actuals.Progress, actuals.ActualStart, actuals.ActualEnd, actuals.ClientToday, today);
         }
 
         // 저장(SaveWorkAsync)과 같은 순서로 검사한다 — 저장이 거절할 내용이면 막는 문제로 알린다
@@ -103,11 +102,7 @@ public partial class ProjectService
             if (from > to) throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
             if (actuals != null)
             {
-                if (actuals.ActualEnd != null && actuals.ActualStart == null)
-                    throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
-                if (actuals.ActualStart != null && actuals.ActualEnd != null && actuals.ActualStart.Value > actuals.ActualEnd.Value)
-                    throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
-                Rules.ValidateProgress(actuals.Progress);
+                Rules.ValidateActuals(actuals.ActualStart, actuals.ActualEnd, actuals.Progress);
             }
             ValidateWorkDates(p, isNew ? null : w, from, to, actualStart, actualEnd);
             var movable = Rules.IsMovable(actualStart, stage);
@@ -303,7 +298,7 @@ public partial class ProjectService
     // 같은 요청에서 다른 저장이 일어나도, 엔티티를 공유하는 저장소(섀도 빌드의 가짜 EF)에서도 미리보기가 데이터를 바꾸지 않게
     private async Task<Project> PlanGraphAsync(int projectId)
     {
-        var src = await _db.Projects.AsNoTracking()
+        var src = await _db.LiveProjects.AsNoTracking()
             .Include(p => p.Stages).ThenInclude(s => s.Works)
             .Include(p => p.Links)
             .AsSplitQuery()

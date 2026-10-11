@@ -34,6 +34,9 @@ public class IndexModel : PageModel
     // 대시보드 숫자에서 온 조건: 그 해에 끝난 완료 과제(올해 완료), 미완료 단계 목표일이 n일 안인 진행 과제(n일 내 목표·다가오는 일정)
     [BindProperty(SupportsGet = true)] public int? DoneYear { get; set; }
     [BindProperty(SupportsGet = true)] public int? Due { get; set; }
+    // 머리글 정렬 (Dashboard.SortKeys). 없으면 상태 → 지연 큰 순 → 목표 종료
+    [BindProperty(SupportsGet = true)] public string? Sort { get; set; }
+    [BindProperty(SupportsGet = true)] public bool Desc { get; set; }
 
     public List<ProjectView> Rows { get; private set; } = new();
     // 과제별 '새 활동' 수(다른 사람이 마지막 방문 뒤에 남긴 것)와 내 관심 과제 — 한 번씩만 읽는다
@@ -48,8 +51,63 @@ public class IndexModel : PageModel
 
     public static readonly (string Key, string Label)[] States =
     {
-        ("active", "진행"), ("delayed", "지연"), ("hold", "보류"), ("done", "완료"), ("dropped", "중단"), ("all", "전체"),
+        ("active", "진행"), ("delayed", "지연"), ("risk", "위험"), ("stale", "정체"), ("hold", "보류"), ("done", "완료"), ("dropped", "중단"), ("all", "전체"),
     };
+
+    // 머리글 (정렬 키, 글자)
+    public static readonly (string Key, string Label)[] Columns =
+    {
+        ("title", "과제"), ("corp", "위치"), ("owner", "담당"), ("stage", "현재 단계"), ("progress", "진행률"), ("end", "목표 종료"), ("state", "상태"),
+    };
+
+    // 머리글이 없는 좁은 화면(모바일)의 정렬 고르기 (키, 내림차순, 글자)
+    public static readonly (string? Key, bool Desc, string Label)[] SortChoices =
+    {
+        (null, false, "기본 순서"), ("delay", true, "지연 큰 순"), ("end", false, "목표 종료 빠른 순"), ("recent", true, "최근 변경 순"),
+        ("progress", true, "진행률 높은 순"), ("title", false, "과제명 순"),
+    };
+
+    public Dictionary<string, string> ChoiceRoute(string? key, bool desc)
+    {
+        var r = Route();
+        r.Remove("sort");
+        r.Remove("desc");
+        if (key != null) r["sort"] = key;
+        if (desc) r["desc"] = "true";
+        return r;
+    }
+
+    public string? SortKey => Dashboard.SortKeys.Any(k => k.Key == Sort) ? Sort : null;
+
+    // 머리글 링크: 같은 열을 다시 누르면 방향을 바꾼다. 처음 누르면 그 열의 기본 방향(진행률은 큰 순, 나머지는 작은 순)
+    public Dictionary<string, string> SortRoute(string key)
+    {
+        var r = Route();
+        var first = Dashboard.SortKeys.First(k => k.Key == key).DescFirst;
+        r["sort"] = key;
+        var desc = SortKey == key ? !Desc : first;
+        if (desc) r["desc"] = "true"; else r.Remove("desc");
+        return r;
+    }
+
+    // aria-sort 값 (정렬하지 않은 열은 none)
+    public string AriaSort(string key) =>
+        (SortKey ?? "state") != key ? "none" : Desc ? "descending" : "ascending";
+
+    // 지금 조건 그대로의 쿼리 (Excel·정렬 링크)
+    public Dictionary<string, string> Route()
+    {
+        var r = new Dictionary<string, string> { ["state"] = StateKey };
+        if (!string.IsNullOrWhiteSpace(Q)) r["q"] = Q;
+        if (Category != null) r["category"] = Category.Value.ToString();
+        if (Corp != null) r["corp"] = Corp.Value.ToString();
+        if (Mine) r["mine"] = "true";
+        if (DoneYear != null) r["doneYear"] = DoneYear.Value.ToString();
+        if (Due != null) r["due"] = Due.Value.ToString();
+        if (SortKey != null) r["sort"] = SortKey;
+        if (Desc) r["desc"] = "true";
+        return r;
+    }
 
     public async Task OnGetAsync()
     {
@@ -81,8 +139,14 @@ public class IndexModel : PageModel
         if (!string.IsNullOrWhiteSpace(Q)) parts.Add("검색: " + Q.Trim());
         if (SpecialText is { } special) parts.Add(special);
         if (Mine) parts.Add("내 과제");
+        if (SortKey != null) parts.Add("정렬: " + SortName(SortKey) + (Desc ? " ↓" : " ↑"));
         return string.Join(" · ", parts);
     }
+
+    // 정렬 키의 한국어 이름 (Excel 제목). 머리글이 없는 키(지연·최근 변경 — 좁은 화면의 고르기와 기억한 정렬로만 고른다)도 이름을 둔다
+    public static string SortName(string key) =>
+        Columns.FirstOrDefault(c => c.Key == key).Label
+        ?? key switch { "delay" => "지연 일수", "recent" => "최근 변경", _ => "기본 순서" };
 
     // 대시보드 숫자에서 온 조건의 설명 (없으면 null)
     public string? SpecialText =>
@@ -90,5 +154,5 @@ public class IndexModel : PageModel
         : Due != null ? $"단계 목표일 {Math.Clamp(Due.Value, 0, Dashboard.MaxDueDays)}일 안"
         : null;
 
-    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due);
+    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due, SortKey, Desc);
 }

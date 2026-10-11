@@ -9,7 +9,7 @@
 
 <div class="page-head">
     <h1>내 할 일</h1>
-    <span class="count">@total</span>
+    <span class="count" id="my-total">@total</span>
     <span class="muted">@Model.Name 님이 담당인 미완료 작업</span>
     <span class="spacer"></span>
     <a class="btn" asp-page="/My/Notifications"><svg class="ic"><use href="#i-bell" /></svg>알림</a>
@@ -40,13 +40,14 @@
 }
 
 @functions {
-    // 작업 한 줄: 누르면 과제 상세에서 해당 작업 편집 창이 열린다
+    // 작업 한 줄: 누르면 과제 상세에서 해당 작업 편집 창이 열린다. 아래의 빠른 갱신(진행률·오늘 시작/완료·진행 내용)은 my.js 가
+    // data-* 값으로 그린다 — 저장하면 서버가 다시 나눈 묶음(지연·이번 주·이후)으로 그 행만 옮긴다. 행 모양은 my.js 의 rowHtml 과 같다
     async Task WorkRows(List<MyWork> works)
     {
-        <ul class="rows">
+        <ul class="rows" data-my-list>
             @foreach (var w in works)
             {
-                <li>
+                <li class="my-row" data-my-work="@w.WorkId" data-work="@AppJson.Serialize(w)">
                     <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@w.ProjectId" asp-fragment="@("w" + w.WorkId)">
                         <span class="row-main">
                             <span class="row-title">@w.Title</span>
@@ -69,31 +70,20 @@
 }
 else
 {
-    @if (d.Late.Count > 0)
-    {
-        <section class="card">
-            <header class="card-head"><h2>지연</h2><span class="count">@d.Late.Count</span></header>
-            @{ await WorkRows(d.Late); }
-        </section>
-    }
-    <section class="card">
-        <header class="card-head"><h2>이번 주</h2><span class="count">@d.Soon.Count</span><span class="muted">진행 중이거나 @(Rules.SoonDays)일 안에 끝나야 하는 작업</span></header>
-        @if (d.Soon.Count == 0)
-        {
-            <p class="empty">이번 주에 챙길 작업이 없습니다.</p>
-        }
-        else
-        {
-            await WorkRows(d.Soon);
-        }
+    @* 세 묶음은 늘 그려 두고 빈 묶음은 숨긴다(이번 주는 빈 안내) — 빠른 갱신으로 행이 묶음 사이를 옮겨 다닌다 *@
+    <section class="card" data-my-group="late" hidden="@(d.Late.Count == 0)">
+        <header class="card-head"><h2>지연</h2><span class="count" data-my-count>@d.Late.Count</span></header>
+        @{ await WorkRows(d.Late); }
     </section>
-    @if (d.Later.Count > 0)
-    {
-        <section class="card">
-            <header class="card-head"><h2>이후</h2><span class="count">@d.Later.Count</span></header>
-            @{ await WorkRows(d.Later); }
-        </section>
-    }
+    <section class="card" data-my-group="soon">
+        <header class="card-head"><h2>이번 주</h2><span class="count" data-my-count>@d.Soon.Count</span><span class="muted">진행 중이거나 @(Rules.SoonDays)일 안에 끝나야 하는 작업</span></header>
+        <p class="empty" data-my-empty hidden="@(d.Soon.Count > 0)">이번 주에 챙길 작업이 없습니다.</p>
+        @{ await WorkRows(d.Soon); }
+    </section>
+    <section class="card" data-my-group="later" hidden="@(d.Later.Count == 0)">
+        <header class="card-head"><h2>이후</h2><span class="count" data-my-count>@d.Later.Count</span></header>
+        @{ await WorkRows(d.Later); }
+    </section>
     @if (d.Stages.Count > 0)
     {
         <section class="card">
@@ -140,4 +130,10 @@ else
             }
         </ul>
     </section>
+}
+
+<script id="page-data" type="application/json">@Html.Raw(AppJson.Serialize(new { noteMax = Limits.ActivityText }))</script>
+@section Scripts {
+    <script src="~/js/quick.js" asp-append-version="true"></script>
+    <script src="~/js/my.js" asp-append-version="true"></script>
 }

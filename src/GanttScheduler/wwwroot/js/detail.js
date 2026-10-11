@@ -21,7 +21,10 @@
     var tab = 'schedule';
 
     var $ = function (id) { return document.getElementById(id); };
-    var detailUrl = function (handler) { return App.url('/Projects/Detail?handler=' + handler); };
+    // 기준선 비교 차수(null = 최신). 모든 요청 주소에 붙여, 저장 뒤 서버가 돌려주는 과제도 같은 차수 기준으로 '+n일'을 세게 한다
+    var compare = P.compareNo == null ? null : P.compareNo;
+    function compareQuery() { return compare == null ? '' : '&compare=' + compare; }
+    var detailUrl = function (handler) { return App.url('/Projects/Detail?handler=' + handler) + compareQuery(); };
 
     // 근무일 수·휴일 안내·의존 밀기는 서버가 계산한다(미리보기 ?handler=Preview). 화면의 휴일 판정은 간트 음영(gantt.js)에만 쓴다
 
@@ -104,11 +107,13 @@
     function stageChip(s) { return App.chip(s.chip) + App.chip(s.dueChip); }
     function workChip(w) { return App.chip(w.chip); }
 
+    // 비교 기준을 최신이 아닌 차수로 골랐으면 칩에 'n차'를 붙인다 (같은 '+n일'이라도 기준이 다르다)
     function slipChip(days) {
         if (days == null) return '';
-        if (days > 0) return chip('alarm', 'pin', '기준선 ' + signed(days) + '일');
-        if (days < 0) return chip('ok', 'pin', '기준선 ' + signed(days) + '일');
-        return chip('', 'pin', '기준선 유지');
+        var label = P.compareNo != null ? P.compareNo + '차 기준선 ' : '기준선 ';
+        if (days > 0) return chip('alarm', 'pin', label + signed(days) + '일');
+        if (days < 0) return chip('ok', 'pin', label + signed(days) + '일');
+        return chip('', 'pin', label + '유지');
     }
 
     function owners(w) {
@@ -421,13 +426,15 @@
                     : '<p class="empty">등록된 내역이 없습니다.</p>') +
                 '</section>';
         }
+        compare = P.compareNo == null ? null : P.compareNo;
         var baseline = P.baselineAt
-            ? App.time(P.baselineAt) + ' 확정' + (P.baselineEnd ? ' · 종료 ' + P.baselineEnd : '') + (P.slipDays != null ? ' · 현재 ' + signed(P.slipDays) + '일' : '')
+            ? (P.compareNo != null ? P.compareNo + '차 · ' : '') +
+              App.time(P.baselineAt) + ' 확정' + (P.baselineEnd ? ' · 종료 ' + P.baselineEnd : '') + (P.slipDays != null ? ' · 현재 ' + signed(P.slipDays) + '일' : '')
             : null;
         // 삭제 단추는 지울 수 있는 사람(담당자·등록자·관리자)에게만 — 서버가 canDelete 로 알려 준다
         var danger = P.canDelete
             ? '<section class="card danger-zone"><div><h3>과제 삭제</h3>' +
-              '<p class="muted">단계·작업·첨부·활동 이력이 모두 삭제되며 되돌릴 수 없습니다.</p></div>' +
+              '<p class="muted">휴지통으로 보냅니다. 보관 기간 안에는 관리자가 되살릴 수 있고, 그 뒤 첨부·활동 이력과 함께 영구 삭제됩니다.</p></div>' +
               '<span class="spacer"></span><button type="button" class="btn danger" id="btn-delete">' + icon('trash') + '과제 삭제</button></section>'
             : '';
         $('tab-info').innerHTML =
@@ -442,7 +449,30 @@
             row('협력사', P.vendor) +
             row('등록', (P.createdBy || '') + (P.createdAt ? ' · ' + App.time(P.createdAt) : '')) +
             row('설명', P.description) +
-            '</dl></section>' + itemHtml + '</div>' + danger;
+            '</dl></section>' + baselineCard() + itemHtml + '</div>' + danger;
+    }
+
+    // 기준선 차수 이력: 차수·시각·사람·사유와 비교 기준 고르기. 고른 차수 대비 '+n일'은 서버가 다시 센다(?compare=n)
+    function baselineCard() {
+        var rounds = P.baselines || [];
+        if (!rounds.length) return '';
+        var latest = rounds[0].no;
+        var options = '<option value="">최신 (' + latest + '차)</option>' + rounds.slice(1).map(function (b) {
+            var name = b.no === latest - 1 ? '직전 (' + b.no + '차)' : b.no + '차';
+            return '<option value="' + b.no + '"' + (P.compareNo === b.no ? ' selected' : '') + '>' + name + ' · ' + esc(App.time(b.at)) + '</option>';
+        }).join('');
+        return '<section class="card baseline-card" id="baseline-card"><header class="card-head"><h2>기준선 이력</h2><span class="count">' + rounds.length + '</span></header>' +
+            (rounds.length > 1
+                ? '<label class="field baseline-compare"><span class="label">비교 기준</span><select id="baseline-compare">' + options + '</select></label>'
+                : '') +
+            '<ol class="baseline-list">' + rounds.map(function (b) {
+                var on = (P.compareNo == null ? latest : P.compareNo) === b.no;
+                return '<li' + (on ? ' class="on" aria-current="true"' : '') + ' data-baseline-no="' + b.no + '">' +
+                    '<span class="baseline-no num">' + b.no + '차</span>' +
+                    '<span class="row-main"><span class="row-title">' + App.timeTag(b.at) + ' · ' + esc(b.user) +
+                    (on ? ' ' + chip('accent', 'pin', '비교 중') : '') + '</span>' +
+                    (b.reason ? '<span class="row-sub">' + esc(b.reason) + '</span>' : '') + '</span></li>';
+            }).join('') + '</ol></section>';
     }
 
     // ── 자료(첨부) ──────────────────────────────────────────────────
@@ -1474,13 +1504,28 @@
             if (bits.length) status += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
         }
 
-        var html =
+        // 맨 위 '빠른 갱신'(내 할 일과 같은 조각 — quick.js): 진행률 칩·오늘 시작/완료·진행 내용 한 줄. 진행률 직접 입력은 기존 슬라이더다.
+        // 일정·선행·메모 같은 드문 수정은 아래 <details> 로 접는다(새 작업은 펼친다 — 작업명·일정을 먼저 정해야 하므로).
+        // 펼침 여부는 기억한다(App.pref)
+        var moreOpen = isNew || App.pref.get('detail.workMore', '0') === '1';
+        var quickHtml = Quick.html({ progress: isNew ? 0 : w.progress, actualStart: isNew ? null : w.actualStart, actualEnd: isNew ? null : w.actualEnd }, {
+            noteMax: LIM.text, label: '빠른 갱신',
+            custom: '<span class="range-row" data-field="progress"><input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" /><output></output></span>'
+        });
+        if (isNew) quickHtml = quickHtml.replace(/<input type="text" class="quick-note"[^>]*>/, '');     // 새 작업은 저장 뒤에 진행 내용을 남긴다
+        var html = status + quickHtml +
+            '<div class="field-row">' +
+            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
+            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
+            '</div>' +
+            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 오늘보다 미래입니다.</span></p>' +
+            '<details class="sheet-more" data-work-more-fields' + (moreOpen ? ' open' : '') + '><summary>' + icon('edit') + '작업 정보·일정·선행·메모</summary><div class="more-body">' +
             field('title', '작업명', '<input name="title" maxlength="' + LIM.workTitle + '" required value="' + esc(isNew ? '' : w.title) + '" />') +
             field('stageId', '단계', '<select name="stageId">' + stageOptions + '</select>') +
             '<div class="field-row">' +
             field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? data.me.name : w.owner || '') + '" />') +
             field('coOwner', '부담당', '<input name="coOwner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? '' : w.coOwner || '') + '" />', true) +
-            '</div>' + status + '<div class="field-row">' +
+            '</div><div class="field-row">' +
             field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + planStart + '" />') +
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
@@ -1490,17 +1535,8 @@
             '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
             '<div data-work-preview></div>' +
-            '<div class="field-row">' +
-            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
-            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
-            '</div>' +
-            '<div class="inline-btns"><button type="button" class="btn small" data-start-today>오늘 시작</button>' +
-            '<button type="button" class="btn small" data-end-today>' + icon('check') + '오늘 완료</button></div>' +
-            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 오늘보다 미래입니다.</span></p>' +
-            '<div class="field" data-field="progress"><span class="label">진행률</span><div class="range-row">' +
-            '<input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" />' +
-            '<output></output></div></div>' +
-            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
+            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true) +
+            '</div></details>';
 
         if (!isNew) {
             html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
@@ -1589,6 +1625,7 @@
                     if (f.actualEnd.value) { f.progress.value = 100; f.progress.disabled = true; }
                     else f.progress.disabled = false;
                     out.textContent = f.progress.value + '%';
+                    Quick.update(form.querySelector('[data-quick]'), { progress: +f.progress.value, actualStart: f.actualStart.value, actualEnd: f.actualEnd.value });
                     var now = userToday();
                     future.hidden = !((f.actualStart.value && f.actualStart.value > now) || (f.actualEnd.value && f.actualEnd.value > now));
                     if (reasonBox) reasonBox.hidden = isNew || !(f.planStart.value !== w.planStart || f.planEnd.value !== w.planEnd);
@@ -1621,14 +1658,21 @@
                 preview.now();
                 App.nameHint(f.owner, data.users, isNew ? null : w.owner);
                 App.nameHint(f.coOwner, data.users, isNew ? null : w.coOwner);
+                // 빠른 갱신 조각: 칩·'오늘' 단추는 아래 입력칸(진행률·실적)을 채울 뿐이고 저장은 시트의 저장 단추로 한다.
                 // '오늘'은 접속한 PC 의 날짜 (해외 법인에서 저녁에 눌러도 그 나라 날짜, App.userToday)
-                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); preview.update(); });
-                form.querySelector('[data-end-today]').addEventListener('click', function () {
-                    if (!f.actualStart.value) f.actualStart.value = userToday();
-                    f.actualEnd.value = userToday();
-                    sync();
-                    preview.update();
+                var quick = form.querySelector('[data-quick]');
+                Quick.bind(quick, {
+                    progress: function (v) { f.progress.value = v; sync(); preview.update(); },
+                    start: function () { f.actualStart.value = userToday(); sync(); preview.update(); },
+                    end: function () {
+                        if (!f.actualStart.value) f.actualStart.value = userToday();
+                        f.actualEnd.value = userToday();
+                        sync();
+                        preview.update();
+                    }
                 });
+                var more = form.querySelector('[data-work-more-fields]');
+                if (!isNew) more.addEventListener('toggle', function () { App.pref.set('detail.workMore', more.open ? '1' : '0'); });
                 sync();
                 refreshUi = function () { sync(); preview.update(); };
 
@@ -1656,6 +1700,14 @@
             onClose: function () { if (preview) preview.stop(); },
             onSubmit: async function (form) {
                 var f = form.elements;
+                var quickNote = Quick.note(form);
+                // 접힌 칸(일정·선행·메모)에 걸린 오류는 펼쳐서 보이게 한다
+                var showField = function (err) {
+                    var more = form.querySelector('[data-work-more-fields]');
+                    var el = err && err.field ? form.querySelector('[data-field="' + err.field + '"]') : null;
+                    if (more && el && more.contains(el)) more.open = true;
+                };
+                try {
                 await api('SaveWork', {
                     id: isNew ? null : w.id,
                     stageId: +f.stageId.value,
@@ -1673,6 +1725,13 @@
                     links: selectedLinks(form),
                     clientToday: App.localToday()
                 });
+                } catch (err) { showField(err); throw err; }
+                // 빠른 갱신의 진행 내용 한 줄은 저장 뒤 이 작업의 진행 내용(댓글)으로 남긴다
+                if (quickNote && !isNew) {
+                    try {
+                        await api('Comment', { projectId: P.id, stageId: +f.stageId.value, workId: w.id, text: quickNote });
+                    } catch (err) { App.toast('작업은 저장했지만 진행 내용을 남기지 못했습니다: ' + err.message, 'error'); }
+                }
                 App.toast(isNew ? '작업을 추가했습니다.' : '작업을 저장했습니다.');
             }
         });
@@ -1761,17 +1820,29 @@
         });
     }
 
-    async function deleteProject() {
-        var ok = await App.confirm({
+    // 과제 삭제 = 휴지통으로 보내기. 보관 기간 안에는 관리 > 휴지통에서 되살릴 수 있다. 사유는 선택(휴지통 목록·활동에 남는다)
+    function deleteProject() {
+        var opened = P.version;
+        App.sheet({
             title: '과제 삭제',
-            message: '"' + P.title + '" 과제와 모든 단계·작업·첨부·활동 이력을 삭제합니다. 되돌릴 수 없습니다.',
-            verb: '과제 삭제'
+            primary: '휴지통으로 보내기',
+            html: '<p class="form-warn">' + icon('trash') + '<span>"' + esc(P.title) + '" 과제를 휴지통으로 보냅니다. 목록·대시보드·보고에서 빠지고, ' +
+                '보관 기간 안에는 관리 &gt; 휴지통에서 되살릴 수 있습니다.</span></p>' +
+                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="지우는 이유 (중복 등록, 취소 등)"></textarea>', true),
+            onSubmit: async function (form) {
+                try {
+                    var r = await App.post(detailUrl('Delete'), { id: P.id, reason: form.elements.reason.value, version: opened });
+                    window.location.href = r.redirect || App.url('/Projects');
+                } catch (err) {
+                    if (err.data && err.data.conflict) {
+                        await reload();
+                        opened = P.version;
+                        throw new Error('다른 사용자가 먼저 과제를 바꿨습니다. 최신 내용을 확인한 뒤 다시 삭제해 주세요.');
+                    }
+                    throw err;
+                }
+            }
         });
-        if (!ok) return;
-        try {
-            var r = await App.post(detailUrl('Delete'), { id: P.id });
-            window.location.href = r.redirect || App.url('/Projects');
-        } catch (err) { App.toast(err.message, 'error'); }
     }
 
     // ── 이벤트 ──────────────────────────────────────────────────────
@@ -1856,6 +1927,14 @@
         else if (e.target.closest('#btn-clone')) openCloneSheet();
         else if (e.target.closest('#btn-baseline')) setBaseline();
         else if (e.target.closest('#btn-delete')) deleteProject();
+    });
+
+    // 기준선 비교 차수 고르기 → 그 차수 기준으로 다시 받아 그린다(간트 기준선 막대·'+n일'이 함께 바뀐다)
+    $('tab-info').addEventListener('change', function (e) {
+        if (e.target.id !== 'baseline-compare') return;
+        var prev = compare;
+        compare = e.target.value ? +e.target.value : null;
+        reload().catch(function (err) { compare = prev; App.toast(err.message, 'error'); });
     });
 
     // 활동 탭의 진행 내용: 쓰던 글은 이 탭(sessionStorage)에 임시 저장하고, 다시 열면 복원을 제안한다
@@ -1957,7 +2036,7 @@
             form.append('projectId', P.id);
             if ($('file-stage').value) form.append('stageId', $('file-stage').value);
             form.append('file', file);
-            await change(App.upload(App.url('/Projects/Files?handler=Upload'), form));
+            await change(App.upload(App.url('/Projects/Files?handler=Upload') + compareQuery(), form));
             input.value = '';
             App.toast('올렸습니다.');
         } catch (err) {

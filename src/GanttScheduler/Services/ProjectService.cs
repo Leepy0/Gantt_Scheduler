@@ -101,7 +101,7 @@ public partial class ProjectService
     public async Task<List<string>> UserNamesAsync() =>
         (await _db.Users.AsNoTracking().Where(u => u.IsActive).Select(u => u.Name).ToListAsync()).OrderBy(n => n).ToList();
 
-    private IQueryable<Project> Graph() => _db.Projects
+    private IQueryable<Project> Graph() => _db.LiveProjects
         .Include(p => p.Category)
         .Include(p => p.Owner).ThenInclude(o => o!.OrgUnit).ThenInclude(u => u!.Parent)
         .Include(p => p.Stages).ThenInclude(s => s.Works).ThenInclude(w => w.Owner)
@@ -109,9 +109,11 @@ public partial class ProjectService
 
     // 과제(단계·작업 포함) — 대시보드/목록/보고 집계용. 규모가 작아 메모리에서 계산한다(DESIGN 6장).
     // filter: 두 DB 에서 똑같이 번역되는 단순 조건만 붙인다(상태 같음, 기간 안 활동 존재 등). 판정 규칙(지연 등)은 메모리에서
-    public async Task<List<Project>> AllAsync(Func<IQueryable<Project>, IQueryable<Project>>? filter = null)
+    // withLinks: 작업 의존(Links)도 읽는다 — 대시보드·목록의 위험 판정(전진 계산)이 쓴다
+    public async Task<List<Project>> AllAsync(Func<IQueryable<Project>, IQueryable<Project>>? filter = null, bool withLinks = false)
     {
         IQueryable<Project> q = Graph();
+        if (withLinks) q = q.Include(p => p.Links);
         if (filter != null) q = filter(q);
         return await q.AsNoTracking().AsSplitQuery().ToListAsync();
     }
@@ -131,7 +133,7 @@ public partial class ProjectService
 
     // 과제 수정 화면용: 기본 정보와 기기·용기 내역만 (단계·작업·활동은 읽지 않는다)
     public async Task<Project?> LoadInfoAsync(int id) =>
-        await _db.Projects
+        await _db.LiveProjects
             .Include(p => p.Category)
             .Include(p => p.Owner)
             .Include(p => p.Equipments)
@@ -147,10 +149,13 @@ public partial class ProjectService
     // 상세 화면 데이터. 저장 직후 응답에도 쓰므로 추적하지 않고 DB 에서 새로 읽는다(변경에 쓴 추적 그래프를 다시 쓰지 않는다).
     // activityLimit: 싣는 최근 활동 수 — null 이면 전부(Excel 내보내기)
     // since: 이 시각 뒤에 다른 사람이 남긴 활동을 '새 활동'으로 표시한다(상세를 열 때 — OpenAsync)
-    public async Task<ProjectView?> ViewAsync(int id, int? activityLimit = ActivityPageSize, DateTime? since = null)
+    // compare: '기준선 대비'를 셀 차수(없거나 최신이면 최신 차수 — 저장된 기준선 열)
+    public async Task<ProjectView?> ViewAsync(int id, int? activityLimit = ActivityPageSize, DateTime? since = null, int? compare = null)
     {
         var p = await LoadAsync(id);
         if (p == null) return null;
+        var rounds = await BaselinesAsync(id);
+        var compared = await CompareWithAsync(p, compare, rounds);
         var view = Views.Project(p, _clock.Today, await LocationsAsync(), detail: true, calendar: await CalendarAsync(),
             crossLinks: await CrossLinksAsync(p.Stages.Select(s => s.Id).ToList()));
         // 활동은 과제 그래프에 싣지 않고 따로 센다·읽는다. 오래된 대형 과제는 활동이 수천 건이라 변경할 때마다 전부 보내면 응답이 무겁다
@@ -173,6 +178,8 @@ public partial class ProjectService
             Activities = recent,
             ActivityTotal = total,
             TargetChanges = targetChanges,
+            Baselines = rounds,
+            CompareNo = compared,
         };
     }
 
@@ -182,7 +189,7 @@ public partial class ProjectService
                                                      ActivityFilter? filter = null, DateTime? since = null)
     {
         take = Math.Clamp(take, 1, ActivityPageMax);
-        var q = _db.Activities.AsNoTracking().Where(a => a.ProjectId == projectId);
+        var q = _db.LiveActivities.AsNoTracking().Where(a => a.ProjectId == projectId);
         if (workId != null) q = q.Where(a => a.WorkItemId == workId);
         q = ApplyFilter(q, filter);
         if (beforeId != null)
@@ -190,11 +197,11 @@ public partial class ProjectService
             // 커서: 그 활동보다 뒤(오래된) 것. 시각이 같으면 Id 로 가른다 — 한 번에 남긴 활동(같은 시각)이 쪽 경계에서 빠지거나 겹치지 않게
             var cursor = await _db.Activities.AsNoTracking().Where(a => a.Id == beforeId.Value && a.ProjectId == projectId)
                 .Select(a => new { a.At, a.Id }).FirstOrDefaultAsync();
-            if (cursor == null) return await _db.Projects.AnyAsync(p => p.Id == projectId) ? new ActivityPage(new(), false) : null;
+            if (cursor == null) return await _db.LiveProjects.AnyAsync(p => p.Id == projectId) ? new ActivityPage(new(), false) : null;
             q = q.Where(a => a.At < cursor.At || (a.At == cursor.At && a.Id < cursor.Id));
         }
         var rows = await FilteredRowsAsync(q, filter, take + 1);
-        if (rows.Count == 0 && beforeId == null && !await _db.Projects.AnyAsync(p => p.Id == projectId)) return null;
+        if (rows.Count == 0 && beforeId == null && !await _db.LiveProjects.AnyAsync(p => p.Id == projectId)) return null;
         var more = rows.Count > take;
         return new ActivityPage(await DecorateAsync(projectId, more ? rows.Take(take).ToList() : rows, since), more);
     }
@@ -219,7 +226,7 @@ public partial class ProjectService
     // 과제가 마지막으로 바뀐 시각만 읽는다. 열려 있는 상세 화면이 1분마다 물어 다른 사람의 변경을 알아챈다(없으면 null)
     public async Task<DateTime?> StampAsync(int id)
     {
-        var row = await _db.Projects.AsNoTracking().Where(p => p.Id == id).Select(p => new { p.UpdatedAt }).FirstOrDefaultAsync();
+        var row = await _db.LiveProjects.AsNoTracking().Where(p => p.Id == id).Select(p => new { p.UpdatedAt }).FirstOrDefaultAsync();
         return row?.UpdatedAt;
     }
 
@@ -228,7 +235,7 @@ public partial class ProjectService
     // withItems: 과제 정보 수정·복제처럼 유형·기기·용기 내역이 필요한 변경만
     private async Task<Project?> LoadForChangeAsync(int id, bool withItems = false)
     {
-        IQueryable<Project> q = _db.Projects
+        IQueryable<Project> q = _db.LiveProjects
             .Include(p => p.Stages).ThenInclude(s => s.Works)
             .Include(p => p.Stages).ThenInclude(s => s.Checks)
             .Include(p => p.Links);
@@ -420,21 +427,22 @@ public partial class ProjectService
         await _db.SaveChangesAsync();
     }
 
-    // 과제 행과 의존 관계만 읽는다. 단계·작업·체크·첨부·활동은 DB 의 cascade 가 지운다(AppDb: 과제 → 단계 → 작업·체크, 과제 → 첨부·활동).
-    // 그래프를 읽어 두면 EF 가 행마다 DELETE 를 따로 보낸다
-    public async Task DeleteAsync(int id)
+    // 과제를 휴지통으로 보낸다(표시만 — 단계·작업·첨부·활동은 그대로 두고 모든 조회에서 뺀다). 영구 삭제는 ProjectService.Trash.cs.
+    // 과제 간 단계 연결도 남겨 두고 위반 계산에서만 뺀다 — 복원하면 그대로 돌아온다. version: 화면이 본 과제 버전(없으면 확인하지 않음)
+    public async Task DeleteAsync(int id, string? reason = null, int? version = null)
     {
-        var p = await _db.Projects.Include(x => x.Links).FirstOrDefaultAsync(x => x.Id == id)
+        var p = await _db.LiveProjects.FirstOrDefaultAsync(x => x.Id == id)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         if (!Rules.CanDeleteProject(p, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("과제 삭제는 담당자·등록자 또는 관리자만 할 수 있습니다.");
-        // 의존 관계는 작업보다 먼저 지워야 한다 (작업 쪽 FK 가 Restrict). SQL Server 는 한 문장 안의 cascade 와 NO ACTION 검사 순서가
-        // 얽힐 수 있어, cascade 로도 지워질 의존 관계를 먼저 따로 지운다(같은 SaveChanges 에서 과제 행보다 앞서 나간다).
-        // 과제 간 단계 연결도 단계 쪽 FK 가 Restrict 라 먼저 지운다(상대 과제에는 기록). 단계는 읽지 않았으므로 Id 만 따로 읽는다
-        _db.WorkLinks.RemoveRange(p.Links);
-        p.Links.Clear();
-        await RemoveStageLinksAsync(p, await _db.Stages.Where(s => s.ProjectId == p.Id).Select(s => s.Id).ToListAsync(), removedProject: true);
-        _db.Projects.Remove(p);
+        CheckVersion(version, p.Version, p.Id);
+        reason = Text(reason, Limits.Reason, "사유", "reason");
+        p.DeletedAt = _clock.UtcNow;
+        p.DeletedById = _me.Id;
+        p.DeleteReason = reason;
+        p.Activities.Add(NewActivity(ActivityType.ProjectDeleted, "과제 삭제 (휴지통으로 보냄)", reason));
+        p.Version++;
+        Touch(p);
         await _db.SaveChangesAsync();
     }
 
@@ -465,8 +473,10 @@ public partial class ProjectService
             }
         }
         p.BaselineAt = _clock.UtcNow;
+        // 덮어쓰기 전 기준선은 차수 이력에 남는다 — 확정할 때마다 새 차수(규칙 12)
+        var round = await AddBaselineRoundAsync(p, reason);
         p.Activities.Add(NewActivity(ActivityType.BaselineSet,
-            again ? $"기준선 다시 확정 (목표 종료 {Fmt(oldEnd)} → {Fmt(newEnd)})" : $"기준선 확정 (목표 종료 {Fmt(newEnd)})", reason,
+            again ? $"기준선 다시 확정 ({round.No}차, 목표 종료 {Fmt(oldEnd)} → {Fmt(newEnd)})" : $"기준선 확정 ({round.No}차, 목표 종료 {Fmt(newEnd)})", reason,
             oldValue: again ? Fmt(oldEnd) : null, newValue: Fmt(newEnd)));
         p.Version++;
         Touch(p);
@@ -876,11 +886,7 @@ public partial class ProjectService
             throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart");
         if (input.PlanStart.Value > input.PlanEnd.Value)
             throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
-        if (input.ActualEnd != null && input.ActualStart == null)
-            throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
-        if (input.ActualStart != null && input.ActualEnd != null && input.ActualStart.Value > input.ActualEnd.Value)
-            throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
-        Rules.ValidateProgress(input.Progress);
+        Rules.ValidateActuals(input.ActualStart, input.ActualEnd, input.Progress);
 
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
@@ -893,10 +899,8 @@ public partial class ProjectService
         var coOwner = await _users.ResolveAsync(input.CoOwner, "coOwner", current?.CoOwnerId);
         if (ReferenceEquals(owner, coOwner)) coOwner = null;
 
-        var progress = input.Progress;
-        var actualStart = input.ActualStart;
-        if (input.ActualEnd != null) progress = 100;                          // 종료일이 있으면 100%
-        else if (progress > 0 && actualStart == null) actualStart = Rules.UserToday(input.ClientToday, _clock.Today); // 진행률만 올렸으면 (접속자의) 오늘 시작한 것으로
+        // 종료일이 있으면 100%, 진행률만 올렸으면 (접속자의) 오늘 시작한 것으로 — 내 할 일의 빠른 갱신(UpdateWorkProgressAsync)과 같은 규칙
+        var (progress, actualStart) = Rules.WorkActuals(input.Progress, input.ActualStart, input.ActualEnd, input.ClientToday, _clock.Today);
 
         WorkItem w;
         var batch = Guid.NewGuid();
@@ -1174,7 +1178,7 @@ public partial class ProjectService
     public async Task CommentAsync(CommentInput input)
     {
         var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
-        var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
+        var p = await _db.LiveProjects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         await RequireOwnedAsync(p.Id, input.StageId, input.WorkId);
         var mentions = await ValidateMentionsAsync(input.Mentions);

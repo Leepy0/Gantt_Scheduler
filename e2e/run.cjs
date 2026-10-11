@@ -191,6 +191,13 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
 
 (async () => {
     const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
+    // 작업 시트의 '작업 정보·일정·선행·메모'는 기본으로 접혀 있고 펼침을 기억한다(App.pref). 여러 단계가 그 칸을 직접 고치므로
+    // 모든 화면을 펼친 것으로 시작한다(처음 저장소 값). 접힌 기본 모양은 '작업 시트 빠른 갱신' 단계가 따로 확인한다.
+    // (addInitScript 는 이 환경에서 route.fetch 를 멈추게 해 쓰지 않는다)
+    const plainContext = browser.newContext.bind(browser);
+    browser.newContext = (opts) => plainContext(Object.assign({
+        storageState: { cookies: [], origins: [{ origin: new URL(BASE).origin, localStorage: [{ name: 'gs.detail.workMore', value: '1' }] }] },
+    }, opts));
 
     // ── 데스크톱 ────────────────────────────────────────────────────
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
@@ -310,7 +317,8 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await btn.focus();
         await page.keyboard.press('Enter');
         await page.waitForSelector(SHEET);
-        assert((await page.evaluate(() => document.activeElement && document.activeElement.name)) === 'title', '첫 포커스가 작업명이 아님');
+        // 작업 시트의 맨 위는 '빠른 갱신'(진행률 칩·오늘 시작/완료·진행 내용) — 첫 입력칸인 진행 내용에 포커스
+        assert(await page.evaluate(() => !!document.activeElement && document.activeElement.matches('[data-quick-note]')), '첫 포커스가 빠른 갱신의 진행 내용이 아님');
         await page.keyboard.press('Escape');      // 바꾼 것이 없으면 묻지 않고 닫힌다
         await page.waitForSelector(SHEET, { state: 'detached' });
     });
@@ -589,7 +597,30 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await submitSheet(page);
         await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('기준선 유지'));
         const act = (await projectData(page)).activities.find((a) => a.type === 'baselineSet');
-        assert(act && act.text.includes('기준선 다시 확정 (목표 종료') && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
+        assert(act && /기준선 다시 확정 \(\d+차, 목표 종료/.test(act.text) && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
+    });
+
+    await step('기준선 차수 이력 — 정보 탭에 차수·시각·사람·사유, 이전 차수를 고르면 그 차수 대비 +n일로 다시 그림', async () => {
+        await page.click('.tabs [data-tab=info]');
+        await page.waitForSelector('#baseline-card .baseline-list li');
+        const P = await projectData(page);
+        assert(P.baselines.length >= 2, '차수가 둘 이상이 아님: ' + P.baselines.length);
+        assert(P.baselines[0].reason === '계약 범위 변경', '최신 차수 사유가 이상함');
+        assert(await page.locator('#baseline-card li.on').count() === 1, '비교 중 차수 표시가 없음');
+        await page.selectOption('#baseline-compare', '1');
+        await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('1차 기준선'));
+        assert((await page.locator('#baseline-card li.on').getAttribute('data-baseline-no')) === '1', '1차가 비교 중으로 표시되지 않음');
+        // 고른 차수는 저장 뒤에도 유지된다(요청 주소에 붙여 보냄)
+        await page.click('.tabs [data-tab=activity]');
+        await page.fill('#comment-text', '차수 비교 중 댓글');
+        await page.click('#comment-btn');
+        await page.waitForFunction(() => document.querySelector('#feed') && document.querySelector('#feed').innerText.includes('차수 비교 중 댓글'));
+        assert((await page.locator('#summary .summary-chips').innerText()).includes('1차 기준선'), '저장 뒤 비교 차수가 풀림');
+        await page.click('.tabs [data-tab=info]');
+        await shot(page, 'd08h-baseline-history');
+        await page.selectOption('#baseline-compare', '');
+        await page.waitForFunction(() => !document.querySelector('#summary .summary-chips').innerText.includes('1차 기준선'));
+        await page.click('.tabs [data-tab=schedule]');
     });
 
     await step('목록 보기·정보·활동 탭', async () => {
@@ -601,7 +632,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert((await page.locator('#tab-info').innerText()).includes('물류기술그룹 · 자동화파트'), '담당 소속이 보이지 않음');
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '검수 일정 협력사와 재협의 완료');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => document.getElementById('feed').innerText.includes('재협의 완료'));
         const feed = await page.locator('#feed').innerText();
         assert(feed.includes('연쇄 이동'), '연쇄 이동 이력이 없음');
@@ -800,7 +831,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         // 내가 저장한 직후에는 띠가 뜨지 않는다
         await page.click('.tabs [data-tab=activity]');
         await page.fill('#comment-text', '내가 남긴 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => document.getElementById('feed').innerText.includes('내가 남긴 메모'));
         await page.evaluate(() => App.checkVersion());
         await page.waitForTimeout(500);
@@ -855,7 +886,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await openProject(p2, '광주 냉장고 3라인 AGV 도입');
         await workRow(p2, '안전 인증 서류 준비').locator('.g-name').click();
         await p2.waitForSelector(SHEET);
-        await p2.click(SHEET + ' [data-start-today]');
+        await p2.click(SHEET + ' [data-quick-start]');
         const value = await p2.inputValue(SHEET + ' input[name=actualStart]');
         assert(value === localDate(zone), `오늘 시작이 그 나라 날짜가 아님: ${value} (현지 ${localDate(zone)}, 한국 ${kstToday()})`);
         await discardSheet(p2);
@@ -1300,7 +1331,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert(firstIds.every((t, i) => allTexts[i] === t), '처음 50건 순서가 바뀜');
         // 새 활동을 남기면 받아 둔 옛 활동을 잃지 않고 맨 위에 더해진다
         await page.fill('#comment-text', '더 보기 뒤 남긴 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction((k) => document.querySelectorAll('#feed > li').length === k, added.total + 1);
         assert((await page.locator('#feed > li .feed-text').first().innerText()).includes('더 보기 뒤 남긴 메모'), '새 메모가 맨 위가 아님');
 
@@ -1324,7 +1355,7 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
             }
         }, gap);
         await page.fill('#comment-text', '빈틈 확인 메모');
-        await page.click('#comment-form button[type=submit]');
+        await page.click('#comment-btn');
         await page.waitForFunction(() => (document.querySelector('#feed > li .feed-text') || {}).textContent === '빈틈 확인 메모');
         const expectedTotal = added.total + 1 + gap + 1;
         assert((await page.locator('#feed > li').count()) === 50, '이어지지 않는 옛 목록이 남음: ' + (await page.locator('#feed > li').count()));
@@ -1982,8 +2013,10 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await other.waitForSelector('#summary .summary-meta');
         await page.click('.tabs [data-tab=info]');
         await page.click('#btn-delete');
-        await page.waitForSelector(SHEET + ' [data-yes]');
-        await page.click(SHEET + ' [data-yes]');
+        await page.waitForSelector(SHEET + ' textarea[name=reason]');
+        await page.fill(SHEET + ' textarea[name=reason]', '중복 등록');
+        await shot(page, 'd48-delete-sheet', false);
+        await page.locator(SHEET + ' button[type=submit]').click();
         await page.waitForURL(/\/Projects(\?|$)/);
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 0, '삭제되지 않음');
@@ -1992,6 +2025,166 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await other.waitForSelector('#change-banner.alarm:not([hidden])');
         assert((await other.locator('#change-banner').innerText()).includes('삭제'), '삭제됨 안내가 아님');
         await other.close();
+        active = page;
+    });
+
+    await step('휴지통 — 관리 화면에서 지운 사람·사유를 보고 복원하면 목록·상세가 돌아옴', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#trash-link');
+        await page.waitForSelector('#trash-list');
+        const row = page.locator('.trash-row', { hasText: '컨베이어 개선' });
+        assert(await row.count() === 1, '휴지통에 지운 과제가 없음');
+        const text = await row.innerText();
+        assert(text.includes('평영') && text.includes('사유: 중복 등록') && text.includes('영구 삭제 예정'), '지운 사람·사유·예정일이 없음: ' + text);
+        await shot(page, 'd48b-trash');
+        await row.locator('[data-restore]').click();
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForFunction(() => !document.querySelector('.trash-row') || !document.body.innerText.includes('컨베이어 개선'));
+        await page.goto(BASE + '/Projects?state=all');
+        assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 1, '복원했는데 목록에 없음');
+        await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
+        const P = await projectData(page);
+        assert(P.activities.some((a) => a.type === 'projectDeleted' && a.reason === '중복 등록'), '삭제 기록이 없음');
+        assert(P.activities.some((a) => a.type === 'projectRestored'), '복원 기록이 없음');
+    });
+
+    await step('조기 경보 — 대시보드 지연 위험 카드·위험/정체 KPI 링크·간트 범위 토글과 조건 기억', async () => {
+        await page.goto(BASE + '/?reset=1');
+        await page.waitForSelector('#risk-card');
+        assert(!/reset=/.test(page.url()), '조건 해제 뒤 주소에 쿼리가 남음: ' + page.url());
+        const riskRows = await page.locator('#risk-card .rows li').count();
+        const riskKpi = +(await page.locator('[data-kpi-risk]').innerText()).replace(/\D/g, '');
+        assert(riskRows >= 1 && riskRows === Math.min(riskKpi, 8), `위험 카드 ${riskRows}건, KPI ${riskKpi}`);
+        assert((await page.locator('#risk-card .chip.warn').count()) === riskRows, '위험 칩이 노랑(warn)이 아님');
+        assert((await page.locator('#risk-card .risk-reasons').first().innerText()).length > 0, '위험 이유가 없음');
+        await shot(page, 'd55-dashboard-risk');
+        // KPI '위험' → 목록 위험 탭 (같은 판정이라 건수가 같다)
+        await page.click('[data-kpi-risk]');
+        await page.waitForURL(/state=risk/);
+        assert((await page.locator('.ptable-row').count()) === riskKpi, '위험 탭 건수가 KPI 와 다름');
+        assert((await page.locator('.ptable-row [data-risk]').count()) === riskKpi, '위험 탭 행에 위험 칩이 없음');
+        await page.goto(BASE + '/');
+        // 간트 범위: 주요(기본) → 전체 보기
+        const focus = await page.locator('#gantt .g-row.project').count();
+        await page.click('#gantt-scope [data-scope=all]');
+        await page.waitForURL(/scope=all/);
+        const all = await page.locator('#gantt .g-row.project').count();
+        assert(all >= focus, `전체(${all})가 주요(${focus})보다 적음`);
+        assert((await page.locator('#gantt-scope [data-scope=all]').getAttribute('aria-current')) === 'true', '범위 단추에 aria-current 가 없음');
+        await page.selectOption('#gantt-sort', { label: '목표 종료 순' });
+        await page.waitForURL(/sort=end/);
+        // 조건 없이 다시 열면 마지막 조건(App.pref)으로 연다
+        await page.goto(BASE + '/');
+        await page.waitForURL(/sort=end/);
+        assert(/scope=all/.test(page.url()), '기억한 범위로 열지 않음: ' + page.url());
+        await page.click('#dash-reset');
+        await page.waitForSelector('#risk-card');
+        await page.goto(BASE + '/');
+        await page.waitForSelector('#risk-card');
+        assert(!/scope=|sort=/.test(page.url()), '해제한 뒤에도 조건을 되살림: ' + page.url());
+    });
+
+    await step('목록 정렬 — 머리글 링크(aria-sort)·반대 방향·정렬 기억·협력사 검색', async () => {
+        await page.goto(BASE + '/Projects?state=all');
+        await page.click('.ptable-head [data-sort=title]');
+        await page.waitForURL(/sort=title/);
+        assert((await page.locator('.ptable-head [aria-sort=ascending] [data-sort=title]').count()) === 1, 'aria-sort ascending 이 없음');
+        const titles = await page.locator('.ptable-row .c-title .row-title').allInnerTexts();
+        const sorted = [...titles].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        assert(JSON.stringify(titles) === JSON.stringify(sorted), '과제명 순이 아님: ' + titles.join(' / '));
+        await page.click('.ptable-head [data-sort=title]');
+        await page.waitForURL(/desc=true/);
+        const desc = await page.locator('.ptable-row .c-title .row-title').allInnerTexts();
+        assert(JSON.stringify(desc) === JSON.stringify([...sorted].reverse()), '반대 방향이 아님');
+        assert((await page.locator('.ptable-head [aria-sort=descending]').count()) === 1, 'aria-sort descending 이 없음');
+        await shot(page, 'd56-projects-sort');
+        // 정렬 없이 열면 기억한 정렬로
+        await page.goto(BASE + '/Projects?state=all');
+        await page.waitForURL(/sort=title/);
+        // '기본 순서'는 기억도 지운다 (고르기 상자는 좁은 화면용이라 값을 바꿔 보낸다)
+        await page.evaluate(() => { const s = document.getElementById('list-sort'); s.selectedIndex = 0; s.dispatchEvent(new Event('change')); });
+        await page.waitForURL((u) => !/sort=/.test(u.toString()));
+        await page.goto(BASE + '/Projects?state=all');
+        await page.waitForSelector('.ptable-row');
+        assert(!/sort=/.test(page.url()), '기본 순서로 돌린 뒤에도 정렬을 되살림');
+        // 검색: 협력사 이름으로도 찾는다
+        await page.fill('#filters input[name=q]', '한성로보');
+        await page.click('#filters button[type=submit]');
+        await page.waitForURL(/q=/);
+        assert((await page.locator('.ptable-row').count()) >= 1, '협력사 이름 검색 결과가 없음');
+    });
+
+    await step('내 할 일 — 행에서 바로 진행률·진행 내용 저장, 다른 화면이 먼저 고치면 최신 값으로', async () => {
+        await page.goto(BASE + '/My');
+        // 다른 단계가 쓰는 작업(광주 2공장 '검증 시나리오 실행' — 미착수여야 연쇄 이동 선택지가 보인다)을 피해 마지막 행을 쓴다
+        const id = await page.locator('[data-my-work]').last().getAttribute('data-my-work');
+        const sel = `[data-my-work="${id}"]`;
+        await page.click(sel + ' [data-quick-progress="50"]');
+        await page.waitForFunction((q) => document.querySelector(q + ' [data-quick-progress="50"]').getAttribute('aria-pressed') === 'true', sel);
+        assert((await page.locator(sel + ' .work-progress .num').innerText()).trim() === '50%', '행의 진행률이 바뀌지 않음');
+        assert(await page.locator(sel + ' [data-quick-start]').isHidden(), '진행률을 올렸는데 오늘 시작 단추가 남음(실적 시작이 채워지지 않음)');
+        await page.fill(sel + ' [data-quick-note]', '현장 배선 절반 완료');
+        await page.press(sel + ' [data-quick-note]', 'Enter');
+        await page.waitForFunction((q) => !document.querySelector(q).hasAttribute('aria-busy') && document.querySelector(q + ' [data-quick-note]').value === '', sel);
+        await shot(page, 'd57-my-quick');
+        // 다른 화면이 먼저 바꾼 뒤 이 화면(옛 버전)에서 누르면 409 — 최신 값으로 다시 그리고 알린다
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await other.goto(BASE + '/My');
+        await other.click(sel + ' [data-quick-progress="75"]');
+        await other.waitForFunction((q) => document.querySelector(q + ' [data-quick-progress="75"]').getAttribute('aria-pressed') === 'true', sel);
+        await other.close();
+        active = page;
+        await page.click(sel + ' [data-quick-progress="100"]');
+        await page.waitForSelector(sel + ' [data-my-error]');
+        assert((await page.locator(sel + ' [data-my-error]').innerText()).includes('다른 사용자'), '동시 수정 안내가 아님');
+        assert((await page.locator(sel + ' .work-progress .num').innerText()).trim() === '75%', '최신 값(75%)으로 다시 그리지 않음');
+        // 진행 내용은 그 작업의 활동(댓글)으로 남았다
+        await page.locator(sel + ' a.row-link').click();
+        await page.waitForSelector(SHEET);
+        await closeSheet(page);
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForFunction(() => document.getElementById('feed').textContent.includes('현장 배선 절반 완료'));
+    });
+
+    await step('작업 시트 빠른 갱신 — 맨 위 진행률 칩·진행 내용, 일정·선행·메모는 접힘(새 작업은 펼침)', async () => {
+        await page.evaluate(() => App.pref.set('detail.workMore', '0'));
+        try {
+            await openProject(page, '광주 냉장고 3라인 AGV 도입');
+            const open = worksOf(await projectData(page)).find((w) => !w.actualEnd && !w.closedOn);
+            assert(open, '열린 작업이 없음');
+            // 같은 주소에 해시만 바꾸면 다시 읽지 않으므로 한 번 비운 뒤 연다(상세는 #w{id} 로 작업 시트를 연다)
+            const url = page.url().replace(/#.*/, '') + '#w' + open.id;
+            await page.goto('about:blank');
+            await page.goto(url);
+            await page.waitForSelector(SHEET + ' [data-quick]');
+            assert(!(await page.locator(SHEET + ' [data-work-more-fields]').evaluate((d) => d.open)), '일정·선행·메모가 펼쳐져 있음');
+            assert(await page.locator(SHEET + ' input[name=planStart]').isHidden(), '접혔는데 목표 시작이 보임');
+            const quickTop = await page.evaluate(() => {
+                const q = document.querySelector('dialog.sheet[open] [data-quick]');
+                const t = document.querySelector('dialog.sheet[open] [data-work-more-fields]');
+                return q.getBoundingClientRect().top < t.getBoundingClientRect().top;
+            });
+            assert(quickTop, '빠른 갱신이 맨 위가 아님');
+            await page.click(SHEET + ' [data-quick-progress="75"]');
+            assert((await page.inputValue(SHEET + ' input[name=progress]')) === '75', '칩이 진행률을 바꾸지 않음');
+            assert((await page.locator(SHEET + ' [data-quick-progress="75"]').getAttribute('aria-pressed')) === 'true', '누른 칩이 눌림 표시가 아님');
+            await page.fill(SHEET + ' [data-quick-note]', '시운전 준비 중');
+            await shot(page, 'd58-work-sheet-quick', false);
+            await submitSheet(page);
+            const saved = worksOf(await projectData(page)).find((w) => w.id === open.id);
+            assert(saved.progress === 75 && saved.actualStart, '저장한 진행률(75%)·실적 시작이 없음');
+            await page.click('.tabs [data-tab=activity]');
+            await page.waitForFunction(() => document.getElementById('feed').textContent.includes('시운전 준비 중'));
+            // 새 작업 추가는 처음부터 펼친다(작업명·일정을 먼저 정해야 하므로)
+            await page.click('.tabs [data-tab=schedule]');
+            await page.click('#add-work');
+            await page.waitForSelector(SHEET + ' [data-work-more-fields][open]');
+            assert(await page.locator(SHEET + ' input[name=title]').isVisible(), '새 작업인데 작업명이 접혀 있음');
+            await closeSheet(page);
+        } finally {
+            await page.evaluate(() => App.pref.set('detail.workMore', '1'));
+        }
     });
 
     await desktop.close();
@@ -2029,6 +2222,42 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForSelector('.page-head h1');
         await noOverflow('내 할 일');
         await shot(m, 'm02-my');
+    });
+
+    await step('모바일 내 할 일 바로 갱신 — 진행률 칩(48px)·진행 내용', async () => {
+        await m.goto(BASE + '/My');
+        const id = await m.locator('[data-my-work]').last().getAttribute('data-my-work');
+        const sel = `[data-my-work="${id}"]`;
+        const box = await m.locator(sel + ' [data-quick-progress="25"]').boundingBox();
+        assert(box && box.height >= 48, '진행률 칩 높이가 48px 미만: ' + (box && box.height));
+        await noOverflow('내 할 일 빠른 갱신');
+        await m.click(sel + ' [data-quick-progress="25"]');
+        await m.waitForFunction((q) => document.querySelector(q + ' [data-quick-progress="25"]').getAttribute('aria-pressed') === 'true', sel);
+        await m.fill(sel + ' [data-quick-note]', '모바일에서 남김');
+        await m.click(sel + ' [data-quick-save]');
+        await m.waitForFunction((q) => !document.querySelector(q).hasAttribute('aria-busy') && document.querySelector(q + ' [data-quick-note]').value === '', sel);
+        await shot(m, 'm14-my-quick');
+    });
+
+    await step('모바일 작업 시트 빠른 갱신 — 맨 위 칩, 접힌 일정', async () => {
+        await m.goto(BASE + '/Projects?state=all');
+        await m.evaluate(() => App.pref.set('detail.workMore', '0'));
+        try {
+            await m.locator('.ptable-row', { hasText: '광주 냉장고 3라인 AGV 도입' }).first().click();
+            await m.waitForSelector('#summary .summary-meta');
+            const open = worksOf(await projectData(m)).find((w) => !w.actualEnd && !w.closedOn);
+            const url = m.url().replace(/#.*/, '') + '#w' + open.id;
+            await m.goto('about:blank');
+            await m.goto(url);
+            await m.waitForSelector(SHEET + ' [data-quick]');
+            const box = await m.locator(SHEET + ' [data-quick-progress="50"]').boundingBox();
+            assert(box && box.height >= 48, '시트의 진행률 칩 높이가 48px 미만');
+            assert(await m.locator(SHEET + ' input[name=planStart]').isHidden(), '모바일에서 일정이 접혀 있지 않음');
+            await shot(m, 'm05c-work-sheet-quick', false);
+            await closeSheet(m);
+        } finally {
+            await m.evaluate(() => App.pref.set('detail.workMore', '1'));
+        }
     });
 
     await step('모바일 과제 목록', async () => {
@@ -2259,6 +2488,33 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await noOverflow('업데이트 백업·진단');
         await m.evaluate(() => window.scrollTo(0, 0));
         await shot(m, 'm12b-update-backup');
+    });
+
+    await step('모바일 과제 삭제·휴지통 — 하단 시트로 지우고, 휴지통에서 영구 삭제하면 기록에 남음', async () => {
+        await openProject(m, '베트남 냉장고 1라인 컨베이어 개선');
+        await m.click('.tabs [data-tab=info]');
+        await m.click('#btn-delete');
+        await m.waitForSelector(SHEET + ' textarea[name=reason]');
+        await noOverflow('과제 삭제 시트');
+        await shot(m, 'm14-delete-sheet', false);
+        await m.locator(SHEET + ' button[type=submit]').click();
+        await m.waitForURL(/\/Projects(\?|$)/);
+        await m.goto(BASE + '/Admin/Trash');
+        await m.waitForSelector('#trash-list');
+        await noOverflow('휴지통');
+        const box = await m.locator('.trash-row [data-purge]').first().boundingBox();
+        assert(box && box.height >= 44, '휴지통 단추가 터치 크기보다 작음');
+        await shot(m, 'm14b-trash');
+        await m.locator('.trash-row', { hasText: '컨베이어 개선' }).locator('[data-purge]').click();
+        await m.locator('dialog[open] [data-yes]').click();
+        await m.waitForFunction(() => !document.querySelector('#trash-list') || !document.querySelector('#trash-list').innerText.includes('컨베이어 개선'));
+        assert((await m.locator('#purge-log').innerText()).includes('컨베이어 개선'), '영구 삭제 기록이 없음');
+        await noOverflow('휴지통 기록');
+        // 좁은 화면에서는 기록을 행 목록으로 쌓는다 — 영구 삭제(누가·언제) 칸이 가로로 밀지 않아도 화면 안에 보여야 한다
+        const purged = await m.locator('#purge-log td[data-label="영구 삭제"]').first().boundingBox();
+        const vw = m.viewportSize().width;
+        assert(purged && purged.x >= 0 && purged.x + purged.width <= vw + 1, '모바일 영구 삭제 기록의 영구 삭제 칸이 화면 밖에 있음');
+        await shot(m, 'm14c-trash-log');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {

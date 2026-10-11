@@ -16,6 +16,7 @@
     @if (Model.IsAdmin)
     {
         <a class="btn small" asp-page="/Admin/Status" id="status-link"><svg class="ic"><use href="#i-chart" /></svg>서버 상태</a>
+        <a class="btn small" asp-page="/Admin/Trash" id="trash-link"><svg class="ic"><use href="#i-trash" /></svg>휴지통</a>
     }
     <a class="btn small" asp-page="/Admin/Update"><svg class="ic"><use href="#i-download" /></svg>업데이트 <span class="num muted">v@(Updates.Build.VersionText)</span></a>
 </div>
