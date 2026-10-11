@@ -363,7 +363,7 @@ public class EarlyWarningServiceTests : IClassFixture<TestDb>
         // Excel 도 같은 카드 기준이라 그 과제가 첫 시트에 오르고, 상태 칸에 예상 지연을 적는다(왜 접히지 않았는지 보이게)
         using (var book = new ClosedXML.Excel.XLWorkbook(new MemoryStream(new ExcelExporter().Weekly(report))))
         {
-            var ws = book.Worksheet("주간 보고");
+            var ws = book.Worksheet("과제별");
             var row = ws.RowsUsed().Single(r => r.Cell(1).GetString() == "주간 위험 과제");
             Assert.Contains("예상 지연 +3일", row.Cell(5).GetString());
         }

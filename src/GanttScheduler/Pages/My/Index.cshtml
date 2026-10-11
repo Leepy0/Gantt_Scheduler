@@ -22,7 +22,7 @@
 @if (Model.ReadOnly)
 {
     <p class="form-note readonly-banner" data-my-readonly><svg class="ic"><use href="#i-user" /></svg>
-        <span>@Model.Name 님의 할 일을 읽기 전용으로 보고 있습니다(분석 &gt; 부하에서 열림). 진행률 갱신은 본인 화면이나 과제 상세에서 합니다. <a asp-page="/Insights/Load">부하로 돌아가기</a></span></p>
+        <div>@Model.Name 님의 할 일을 읽기 전용으로 보고 있습니다(분석 &gt; 부하에서 열림). 진행률 갱신은 본인 화면이나 과제 상세에서 합니다. <a asp-page="/Insights/Load">부하로 돌아가기</a></div></p>
 }
 
 @* 새 소식: 내 작업·내 과제·관심 과제·나를 고른 댓글에 다른 사람이 남긴 활동 (그 과제를 마지막으로 본 뒤, 최근 @Rules.NewActivityDays 일).

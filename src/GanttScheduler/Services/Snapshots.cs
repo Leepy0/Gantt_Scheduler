@@ -106,7 +106,7 @@ public class SnapshotWorker : BackgroundService
         if (!Due(_options, now, _lastRunKst, await snapshots.HasTodayAsync())) return null;
         var count = await snapshots.TakeAsync();
         _lastRunKst = now;
-        _log.LogInformation("진척 스냅샷: {Date} 과제 {Count}건", DateOnly.FromDateTime(now), count);
+        _log.LogInformation("진척 스냅샷: {Date} 과제 {Count}건", DateOnly.FromDateTime(now).ToString("yyyy-MM-dd"), count);
         return count;
     }
 

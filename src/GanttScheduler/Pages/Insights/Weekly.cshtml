@@ -5,6 +5,10 @@
     ViewData["Title"] = r.Title;
     ViewData["Nav"] = "insights";
     ViewData["Tab"] = "weekly";
+    // 이전·다음 단추 이름은 기간 단위대로(이전 주·이전 달·이전 기간)
+    var unit = r.Kind switch { "month" => "달", "custom" => "기간", _ => "주" };
+    var prevLabel = "이전 " + unit;
+    var nextLabel = "다음 " + unit;
     var toWeek = Model.Route(kind: "week", day: r.From);
     var toMonth = Model.Route(kind: "month", day: r.From);
     var toCustom = Model.Route(kind: "custom");
@@ -15,9 +19,9 @@
 <partial name="_InsightTabs" />
 
 <div class="toolbar">
-    <a class="btn icon" asp-page="/Insights/Weekly" asp-all-route-data="Model.Shift(-1)" aria-label="이전 기간"><svg class="ic"><use href="#i-left" /></svg></a>
+    <a class="btn icon" asp-page="/Insights/Weekly" asp-all-route-data="Model.Shift(-1)" aria-label="@prevLabel"><svg class="ic"><use href="#i-left" /></svg></a>
     <b class="num" data-report-range>@r.From.ToString("yyyy-MM-dd") ~ @r.To.ToString(r.From.Year == r.To.Year ? "MM-dd" : "yyyy-MM-dd")</b>
-    <a class="btn icon" asp-page="/Insights/Weekly" asp-all-route-data="Model.Shift(1)" aria-label="다음 기간"><svg class="ic"><use href="#i-right" /></svg></a>
+    <a class="btn icon" asp-page="/Insights/Weekly" asp-all-route-data="Model.Shift(1)" aria-label="@nextLabel"><svg class="ic"><use href="#i-right" /></svg></a>
     <div class="seg small" role="group" aria-label="기간 단위">
         <a asp-page="/Insights/Weekly" asp-all-route-data="toWeek" class="@(r.Kind == "week" ? "on" : "")">주</a>
         <a asp-page="/Insights/Weekly" asp-all-route-data="toMonth" class="@(r.Kind == "month" ? "on" : "")" data-period-month>월</a>

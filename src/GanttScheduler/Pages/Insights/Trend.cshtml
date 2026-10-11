@@ -13,11 +13,11 @@
         new ChartSeries("진행", "series-active", d.Points.Select(p => (double?)p.Active).ToArray()),
         new ChartSeries("지연", "series-delayed", d.Points.Select(p => (double?)p.Delayed).ToArray()),
         new ChartSeries("지연 위험", "series-risk", d.Points.Select(p => (double?)p.Risk).ToArray()),
-    }, "건", gap);
+    }, "건", gap, XFrom: d.From, XTo: d.To);
     var progress = new LineChart("진행 과제 평균 진행률", x, new()
     {
         new ChartSeries("평균 진행률", "series-progress", d.Points.Select(p => p.AvgProgress).ToArray()),
-    }, "%", gap, 100);
+    }, "%", gap, 100, d.From, d.To);
     var form = new AnalyticsFilterForm("/Insights/Trend", d.Filter, d.Categories, d.Corporations, d.Orgs, new() { ["range"] = d.Range });
     var last = d.Points.LastOrDefault();
     var eq = d.Equipment;
@@ -36,7 +36,7 @@
 <partial name="_AnalyticsFilter" model="form" />
 
 <p class="form-note" data-trend-note><svg class="ic"><use href="#i-clock" /></svg>
-    <span>스냅샷은 하루 한 번 서버가 남긴 그날의 모습이고, 수집을 시작한 @(d.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "날") 이후만 있습니다. 서버가 꺼져 있던 날은 기록이 없어 선을 잇지 않습니다. 지금 상태는 대시보드에서 봅니다.</span></p>
+    <div>스냅샷은 하루 한 번 서버가 남긴 그날의 모습이고, 수집을 시작한 @(d.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "날") 이후만 있습니다. 서버가 꺼져 있던 날은 기록이 없어 선을 잇지 않습니다. 지금 상태는 대시보드에서 봅니다.</div></p>
 
 @if (d.Points.Count == 0)
 {

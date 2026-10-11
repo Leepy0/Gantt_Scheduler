@@ -13,7 +13,9 @@ public record ChartSeries(string Name, string Cls, double?[] Values);
 
 // 서버가 그리는 꺾은선 그래프(외부 라이브러리 없이 인라인 SVG). 범례·표는 글자로 함께 보인다(색만으로 구분하지 않는다).
 // GapDays: 두 점 사이가 이 일수보다 벌어지면 선을 잇지 않는다 — 기록이 없는 날(서버가 꺼져 있던 날)을 이어 그려 지어내지 않게
-public record LineChart(string Title, List<DateOnly> X, List<ChartSeries> Series, string Unit, int GapDays, double? FixedMax = null)
+// XFrom·XTo: 가로축 범위(고른 기간 전체) — 기록이 최근에만 있으면 오른쪽에만 점이 찍혀 '수집 시작 이후만 있다'가 그대로 보인다
+public record LineChart(string Title, List<DateOnly> X, List<ChartSeries> Series, string Unit, int GapDays, double? FixedMax = null,
+    DateOnly? XFrom = null, DateOnly? XTo = null)
 {
     public const double W = 640, H = 200, Left = 40, Right = 12, Top = 12, Bottom = 28;
 
@@ -29,9 +31,11 @@ public record LineChart(string Title, List<DateOnly> X, List<ChartSeries> Series
 
     private double Px(int i)
     {
-        if (X.Count <= 1) return Left + (W - Left - Right) / 2;
-        var span = X[^1].DayNumber - X[0].DayNumber;
-        return Left + (W - Left - Right) * (X[i].DayNumber - X[0].DayNumber) / Math.Max(1, span);
+        var from = XFrom ?? (X.Count > 0 ? X[0] : default);
+        var to = XTo ?? (X.Count > 0 ? X[^1] : default);
+        var span = to.DayNumber - from.DayNumber;
+        if (span <= 0) return Left + (W - Left - Right) / 2;
+        return Left + (W - Left - Right) * (X[i].DayNumber - from.DayNumber) / span;
     }
 
     private double Py(double v) => Top + (H - Top - Bottom) * (1 - v / MaxY);
@@ -66,6 +70,13 @@ public record LineChart(string Title, List<DateOnly> X, List<ChartSeries> Series
     // 가로축 눈금: 처음·가운데·마지막 날짜
     public IEnumerable<(double X, string Label)> XTicks()
     {
+        if (XFrom is DateOnly f && XTo is DateOnly t && t > f)
+        {
+            var span = t.DayNumber - f.DayNumber;
+            foreach (var d in new[] { f, f.AddDays(span / 2), t })
+                yield return (Left + (W - Left - Right) * (d.DayNumber - f.DayNumber) / span, d.ToString("MM-dd"));
+            yield break;
+        }
         if (X.Count == 0) yield break;
         var idx = new[] { 0, X.Count / 2, X.Count - 1 }.Distinct();
         foreach (var i in idx) yield return (Px(i), X[i].ToString("MM-dd"));

@@ -1167,9 +1167,10 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .load-table th, .load-table td { white-space: nowrap; }
 .load-table thead th { padding-left: 8px; }
 .load-avail { display: block; font-weight: 400; }
-.load-section th { background: var(--surface-2); color: var(--text-2); font-size: var(--fs-xs); padding: 4px 16px; }
-.load-section.lv2 th { padding-left: 32px; background: var(--surface); }
-.load-name { padding-left: 16px; font-weight: 400; color: var(--text); }
+
+.load-table .load-section th { background: var(--surface-2); color: var(--text-2); font-size: var(--fs-xs); padding: 4px 16px; }
+.load-table .load-section.lv2 th { padding-left: 32px; background: var(--surface); }
+.load-table .load-name { padding-left: 16px; font-weight: 400; color: var(--text); border-top: 1px solid var(--line); }
 .load-name .chip { margin-left: 8px; }
 .load-cell a { display: inline-flex; flex-direction: column; align-items: flex-end; color: var(--text); padding: 4px 8px; border-radius: var(--r-sm); min-width: 56px; }
 .load-cell a:hover { background: var(--accent-weak); text-decoration: none; }
@@ -1191,3 +1192,5 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
     .load-cell a { min-width: 48px; padding: 4px; }
 }
 .lead-active a.warn { color: var(--warn); font-weight: 600; }
+.analysis-note { margin: 0; }
+.load-table tr.in-lv2 .load-name { padding-left: 40px; }
