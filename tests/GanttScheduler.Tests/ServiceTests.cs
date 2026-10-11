@@ -17,7 +17,7 @@ public class ServiceTests : IClassFixture<TestDb>
     {
         using var s = _db.NewScope();
         var cat = await s.Db.Categories.FirstAsync(c => c.Name == category);
-        var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "멕시코");
+        var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "미주");
         return await s.Projects.CreateAsync(new ProjectInput(title, cat.Id, corp.Id, null, D(-10), null, null, null, null));
     }
 
@@ -38,7 +38,7 @@ public class ServiceTests : IClassFixture<TestDb>
         Assert.Equal(2, view.Kpi.Delayed);
         Assert.Equal(1, view.Kpi.Hold);
         Assert.Equal(2, view.Kpi.DoneThisYear);
-        Assert.Equal(new[] { "베트남 세탁기 2라인 AMR 확대", "폴란드 세탁기 창고 입출고 개선" }, view.Delayed.Select(p => p.Title).ToArray());
+        Assert.Equal(new[] { "동남아 C제품 2라인 AMR 확대", "유럽 C제품 창고 입출고 개선" }, view.Delayed.Select(p => p.Title).ToArray());
         Assert.Equal(6, view.Delayed[0].DelayDays);
         Assert.Equal("제작", view.Delayed[0].DelayedStage);
     }
@@ -50,7 +50,7 @@ public class ServiceTests : IClassFixture<TestDb>
         var p = await ViewAsync(id);
 
         Assert.Equal(new[] { "검토", "품의", "발주", "제작", "검수", "입고", "설치", "안정화" }, p.Stages.Select(s => s.Name).ToArray());
-        Assert.Equal("멕시코", p.Corporation);
+        Assert.Equal("미주", p.Corporation);
         Assert.Equal("테스터", p.Owner);
         Assert.Equal("active", p.State);
         Assert.Equal(0, p.Progress);
@@ -257,8 +257,8 @@ public class ServiceTests : IClassFixture<TestDb>
 
         var p = await ViewAsync(id);
         Assert.Equal("테스트 과제(수정)", p.Title);
-        Assert.Equal("베트남", p.Corporation);
-        Assert.Equal("세탁기 · 2라인", p.LocationPath);
+        Assert.Equal("동남아", p.Corporation);
+        Assert.Equal("C제품 · 2라인", p.LocationPath);
         Assert.Equal("새담당", p.Owner);
         Assert.Equal(new[] { "AGV · ANT", "리프터" }, p.Equipments!.Select(e => e.Name).OrderBy(n => n).ToArray());
 

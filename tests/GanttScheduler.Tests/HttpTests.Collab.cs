@@ -32,7 +32,7 @@ public partial class HttpTests
         using (var s = _factory.Db.NewScope())
         {
             me = await s.Db.Users.Where(u => u.Name == "통합테스터").Select(u => u.Id).SingleAsync();
-            projectId = await s.Db.Projects.Where(p => p.Title == "멕시코 냉장고 AGV 도입 검토").Select(p => p.Id).SingleAsync();
+            projectId = await s.Db.Projects.Where(p => p.Title == "미주 A제품 AGV 도입 검토").Select(p => p.Id).SingleAsync();
         }
         var before = await UnreadAsync(client);
         using (var s = _factory.Db.NewScope("김물류"))
@@ -81,7 +81,7 @@ public partial class HttpTests
         var client = await RegisteredClientAsync();
         int projectId;
         using (var s = _factory.Db.NewScope())
-            projectId = await s.Db.Projects.Where(p => p.Title == "광주 2공장 물류 동선 Simulation").Select(p => p.Id).SingleAsync();
+            projectId = await s.Db.Projects.Where(p => p.Title == "본사 2공장 물류 동선 Simulation").Select(p => p.Id).SingleAsync();
 
         var html = await client.GetStringAsync($"/Projects/Detail?id={projectId}");
         var data = JsonDocument.Parse(PageDataOf(html)).RootElement;
@@ -148,7 +148,7 @@ public partial class HttpTests
         using (var s = _factory.Db.NewScope())
         {
             me = await s.Db.Users.Where(u => u.Name == "통합테스터").Select(u => u.Id).SingleAsync();
-            projectId = await s.Db.Projects.Where(p => p.Title == "폴란드 세탁기 창고 입출고 개선").Select(p => p.Id).SingleAsync();
+            projectId = await s.Db.Projects.Where(p => p.Title == "유럽 C제품 창고 입출고 개선").Select(p => p.Id).SingleAsync();
         }
         await client.GetStringAsync($"/Projects/Detail?id={projectId}");      // 방문
         using (var s = _factory.Db.NewScope("이자동"))
@@ -162,17 +162,17 @@ public partial class HttpTests
         {
             _factory.Db.Clock.UtcNow = DateTime.UtcNow.AddSeconds(1);
             using (var s = _factory.Db.NewScope("이자동"))
-                await s.Projects.CommentAsync(new CommentInput(projectId, null, null, "폴란드 현장 소식"));
+                await s.Projects.CommentAsync(new CommentInput(projectId, null, null, "유럽 현장 소식"));
         }
         finally { _factory.Db.Clock.UtcNow = saved; }
 
         var list = WebUtility.HtmlDecode(await client.GetStringAsync("/Projects?state=all"));
-        Assert.Matches("폴란드 세탁기 창고 입출고 개선</span>\\s*<span class=\"row-sub\">[^<]*<span class=\"new-count\"[^>]*>새 활동 1</span>", list);
+        Assert.Matches("유럽 C제품 창고 입출고 개선</span>\\s*<span class=\"row-sub\">[^<]*<span class=\"new-count\"[^>]*>새 활동 1</span>", list);
         var dash = WebUtility.HtmlDecode(await client.GetStringAsync("/"));
         Assert.Contains("새 활동 1", dash);
         var my = WebUtility.HtmlDecode(await client.GetStringAsync("/My"));
         Assert.Contains("새 소식", my);
-        Assert.Contains("폴란드 현장 소식", my);
+        Assert.Contains("유럽 현장 소식", my);
         Assert.Contains("#a", my);
     }
 

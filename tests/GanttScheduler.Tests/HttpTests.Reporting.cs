@@ -67,13 +67,13 @@ public partial class HttpTests
         using (var s = _factory.Db.NewScope())
         {
             category = await s.Db.Categories.Where(c => c.Name == "물류 자동화").Select(c => c.Id).FirstAsync();
-            corp = await s.Db.Locations.Where(l => l.Level == 1 && l.Name == "베트남").Select(l => l.Id).FirstAsync();
+            corp = await s.Db.Locations.Where(l => l.Level == 1 && l.Name == "동남아").Select(l => l.Id).FirstAsync();
         }
         var bytes = await client.GetByteArrayAsync($"/Projects?handler=Excel&state=all&category={category}&corp={corp}");
         using var book = new ClosedXML.Excel.XLWorkbook(new MemoryStream(bytes));
         var sub = book.Worksheets.First().Cell(2, 1).GetString();
         Assert.Contains("유형: 물류 자동화", sub);
-        Assert.Contains("법인: 베트남", sub);
+        Assert.Contains("법인: 동남아", sub);
     }
 
     private static HttpRequestMessage AdminJson(string token, string handler, object body)

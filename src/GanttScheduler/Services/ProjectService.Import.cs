@@ -274,7 +274,7 @@ public partial class ProjectService
 
     private static string Short(string s, int max) => s.Length > max ? s[..max] + "…" : s;
 
-    // 법인 이름 + 그 아래 경로('세탁기>2라인' — '>'·'/'·'·' 로 나눔). 사용 중지 항목은 고를 수 없다
+    // 법인 이름 + 그 아래 경로('C제품>2라인' — '>'·'/'·'·' 로 나눔). 사용 중지 항목은 고를 수 없다
     private static Location? FindLocation(LocationIndex index, string? corpName, string? path, out string? error, out string column)
     {
         error = null;

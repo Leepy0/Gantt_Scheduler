@@ -212,7 +212,7 @@ public class AnalyticsRulesTests
         {
             (1, ProjectState.Active, 10, 3), (1, ProjectState.Hold, 10, 2), (1, ProjectState.Done, 11, 4), (2, ProjectState.Dropped, 10, 9),
         }, new[] { new EquipmentColumn(10, "AGV"), new EquipmentColumn(11, "AMR"), new EquipmentColumn(12, "리프터") },
-            new LocationIndex(new[] { new Location { Id = 1, Level = 1, Name = "한국" }, new Location { Id = 2, Level = 1, Name = "베트남" } }));
+            new LocationIndex(new[] { new Location { Id = 1, Level = 1, Name = "한국" }, new Location { Id = 2, Level = 1, Name = "동남아" } }));
         Assert.Equal(new[] { "AGV", "AMR" }, m.Columns.Select(c => c.Name));            // 쓰인 종류만
         var row = Assert.Single(m.Rows);
         Assert.Equal(new[] { 5, 0 }, row.Active);
@@ -399,7 +399,7 @@ public class AnalyticsServiceTests : IDisposable
     public async Task 기간_보고는_조직_범위와_다음_기간_길이를_따르고_스냅샷이_있으면_전주_대비를_싣는다()
     {
         using var s = _db.NewScope();
-        var group = await s.Db.OrgUnits.FirstAsync(o => o.Name == "물류기술그룹");
+        var group = await s.Db.OrgUnits.FirstAsync(o => o.Name == "운영기술그룹");
         var today = _db.Clock.Today;
         var month = Reporting.Period("month", today, null, null, today);
         var all = await s.Insights.ReportAsync(month.From, month.To, new ProjectFilter(null, null, null, null, false), "month");
@@ -409,7 +409,7 @@ public class AnalyticsServiceTests : IDisposable
         var org = await s.Insights.ReportAsync(month.From, month.To, new ProjectFilter(null, null, null, null, false, OrgUnitId: group.Id), "month");
         Assert.True(org.Projects.Count <= all.Projects.Count && org.Projects.Count > 0);
         Assert.All(org.Projects, p => Assert.NotEqual("박설비", p.Owner));
-        var facility = await s.Db.OrgUnits.FirstAsync(o => o.Name == "설비기술그룹");
+        var facility = await s.Db.OrgUnits.FirstAsync(o => o.Name == "설비그룹");
         var other = await s.Insights.ReportAsync(month.From, month.To, new ProjectFilter(null, null, null, null, false, OrgUnitId: facility.Id), "month");
         Assert.All(other.Projects, p => Assert.Equal("박설비", p.Owner));
         Assert.Equal(all.Projects.Count, org.Projects.Count + other.Projects.Count + all.Projects.Count(p => p.Owner is not ("김물류" or "이자동" or "최모델" or "박설비")));
@@ -457,7 +457,7 @@ public class AnalyticsServiceTests : IDisposable
         var people = view.Sections.SelectMany(x => x.People).ToList();
         Assert.NotEmpty(people);
         Assert.Contains(people, p => !p.HasIp);
-        var group = await s.Db.OrgUnits.FirstAsync(o => o.Name == "설비기술그룹");
+        var group = await s.Db.OrgUnits.FirstAsync(o => o.Name == "설비그룹");
         var narrowed = await Analytics(s).LoadAsync(8, group.Id);
         Assert.All(narrowed.Sections.SelectMany(x => x.People), p => Assert.Equal("박설비", p.Name));
         Assert.True((await s.Insights.MyAsync(people[0].UserId)).Late.Count + (await s.Insights.MyAsync(people[0].UserId)).Soon.Count

@@ -99,7 +99,7 @@ public class DataAccessTests : IClassFixture<TestDb>
     {
         using var s = _db.NewScope();
         var cat = await s.Db.Categories.FirstAsync(c => c.Name == category);
-        var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "멕시코");
+        var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "미주");
         return await s.Projects.CreateAsync(new ProjectInput(title, cat.Id, corp.Id, null, Today.AddDays(-10), null, null, null, null));
     }
 

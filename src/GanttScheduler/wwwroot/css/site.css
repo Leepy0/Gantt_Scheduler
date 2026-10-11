@@ -80,7 +80,7 @@ body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: "SamsungOne", "Samsung Sharp Sans", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
     font-size: var(--fs-sm);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
