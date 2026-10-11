@@ -76,7 +76,7 @@
         box.classList.add('mention-box');
         box.innerHTML =
             '<div class="mention-row"><span class="mention-label">' + App.icon('at') + '알릴 사람</span><span class="mention-chips" data-chips></span></div>' +
-            '<div class="mention-add"><input data-mention-input list="' + listId + '" autocomplete="off" maxlength="50" placeholder="이름을 넣고 목록에서 고르기" aria-label="알릴 사람 이름" />' +
+            '<div class="mention-add"><input data-mention-input list="' + listId + '" autocomplete="off" maxlength="50" placeholder="목록에서 이름 고르기" aria-label="알릴 사람 이름" />' +
             '<button type="button" class="btn small" data-mention-add>' + App.icon('plus') + '추가</button></div>' +
             '<datalist id="' + listId + '">' + people.map(function (p) { return '<option value="' + esc(p.name) + '"></option>'; }).join('') + '</datalist>' +
             '<span class="hint" data-mention-hint>' + HINT + '</span>';

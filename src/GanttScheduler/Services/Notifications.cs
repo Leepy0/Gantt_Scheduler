@@ -165,7 +165,12 @@ public sealed class ActivityLog : ISaveHook
                 // 이미 저장된 활동을 가리키는 알림(고친 댓글의 멘션)은 활동·사람마다 한 번만 — 같은 사람을 뺐다 다시 골라도 또 알리지 않는다.
                 // 새 활동은 Id 가 없으니 이번 저장·과제·사람으로 묶는다
                 var key = lead.Id > 0 ? $"a{lead.Id}:u{userId}" : $"s{save}:p{projectId}:u{userId}";
-                if (lead.Id > 0 && await _db.Notifications.AnyAsync(n => n.Key == key, ct)) continue;
+                if (lead.Id > 0)
+                {
+                    var leadId = lead.Id;
+                    // 댓글을 남길 때 이미 같은 이유로 알렸으면(그때의 열쇠는 저장 단위라 다르다) 다시 알리지 않는다
+                    if (await _db.Notifications.AnyAsync(n => n.Key == key || (n.ActivityId == leadId && n.UserId == userId && n.Kind == kind), ct)) continue;
+                }
                 var n = new Notification
                 {
                     UserId = userId, ProjectId = projectId, Kind = kind, Text = Summary(lead, count), Key = key, CreatedAt = _clock.UtcNow,

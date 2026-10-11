@@ -1352,6 +1352,162 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         }
     });
 
+    // ── 협업: 관심 과제·알림·멘션·활동 조건·댓글 고치기 ──
+    // 다른 사용자는 X-Forwarded-For 로 다른 PC 를 흉내 낸다(개발 환경은 같은 서버의 프록시 머리글을 믿는다 — appsettings.Development.json).
+    // 이 단계들은 '광주 2공장 물류 동선 Simulation' 에 댓글을 남기고, 평영이 그 과제를 관심 과제로 둔다
+    const COLLAB = '광주 2공장 물류 동선 Simulation';
+
+    await step('관심 과제 — 상세·목록의 별을 누르면 눌린 상태로 바뀌고 내 할 일에 관심 과제로 보임', async () => {
+        await openProject(page, COLLAB);
+        const star = page.locator('#watch-btn');
+        assert((await star.getAttribute('aria-pressed')) === 'false', '처음부터 관심 과제로 표시됨');
+        await star.click();
+        await page.waitForFunction(() => document.getElementById('watch-btn').getAttribute('aria-pressed') === 'true');
+        assert((await star.getAttribute('aria-label')).includes('빼기'), '별의 이름이 바뀌지 않음');
+        await page.goto(BASE + '/Projects?state=all');
+        const row = page.locator('.prow', { hasText: COLLAB });
+        assert((await row.locator('[data-watch]').getAttribute('aria-pressed')) === 'true', '목록의 별이 눌려 있지 않음');
+        // 목록에서 다른 과제의 별을 눌러도 행(상세)으로 넘어가지 않는다
+        const other = page.locator('.prow', { hasText: '멕시코 에어컨 용기 표준화' }).locator('[data-watch]');
+        await other.click();
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'true'));
+        assert(new URL(page.url()).pathname === '/Projects', '별을 누르니 상세로 넘어감: ' + page.url());
+        await shot(page, 'd48-watch-list', false);
+        await other.click();
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'false'));
+        await page.goto(BASE + '/My');
+        const watched = await page.locator('#watched').innerText();
+        assert(watched.includes(COLLAB) && !watched.includes('멕시코 에어컨 용기 표준화'), '내 할 일의 관심 과제가 다름: ' + watched);
+    });
+
+    await step('알림 — 다른 사람이 나를 알릴 사람으로 고르면 종에 읽지 않은 수, 새 소식·새 활동 표시, 알림을 누르면 그 활동을 강조', async () => {
+        const otherPc = await browser.newContext({
+            viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul', extraHTTPHeaders: { 'X-Forwarded-For': '10.77.0.21' },
+        });
+        const c = await otherPc.newPage();
+        watch(c, 'colleague');
+        c.setDefaultTimeout(10000);
+        active = c;
+        await c.goto(BASE + '/');
+        await c.waitForURL(/\/Welcome/);
+        await c.fill('input[name=Name]', '동료');
+        await c.click('button[type=submit]');
+        await c.waitForSelector('.kpis');
+        await openProject(c, COLLAB);
+        await c.click('.tabs [data-tab=activity]');
+        // 본문에서 '@' 를 치면 이름 칸으로 옮겨 목록에서 고른다(이름에 공백이 있을 수 있어 본문을 파싱하지 않는다)
+        await c.fill('#comment-text', '모델 검증 결과 공유합니다 ');
+        await c.focus('#comment-text');
+        await c.keyboard.press('End');
+        await c.keyboard.type('@');
+        await c.waitForFunction(() => document.activeElement && document.activeElement.matches('[data-mention-input]'));
+        await c.keyboard.type('없는사람');
+        await c.keyboard.press('Enter');
+        assert((await c.locator('#comment-mentions [data-mention-hint]').innerText()).includes('목록에 없습니다'), '목록에 없는 이름을 받음');
+        await c.fill('#comment-mentions [data-mention-input]', '평영');
+        await c.keyboard.press('Enter');
+        assert((await c.locator('#comment-mentions .mention-chip').allInnerTexts()).join() === '@평영', '고른 사람 칩이 없음');
+        assert((await c.inputValue('#comment-text')).includes('@평영'), '본문에 @이름이 들어가지 않음');
+        await shot(c, 'd49-mention-pick', false);
+        await c.click('#comment-btn');
+        await c.waitForSelector('#feed > li .mention-chip');
+        assert((await c.locator('#comment-mentions .mention-chip').count()) === 0, '등록 뒤 알릴 사람이 남음');
+        await c.fill('#comment-text', '2차 시뮬레이션은 다음 주에 돌립니다');
+        await c.click('#comment-btn');
+        await c.waitForFunction(() => document.querySelector('#feed > li .feed-text').textContent.includes('2차 시뮬레이션'));
+        await otherPc.close();
+        active = page;
+
+        // 평영: 종에 읽지 않은 수(멘션 1 + 관심 과제 1), 목록의 새 활동, 내 할 일의 새 소식
+        await page.goto(BASE + '/Projects?state=all');
+        await page.waitForFunction(() => !document.getElementById('bell-count').hidden && document.getElementById('bell-count').textContent === '2');
+        assert((await page.getAttribute('#bell', 'aria-label')).includes('읽지 않은 2건'), '종의 이름에 읽지 않은 수가 없음');
+        assert((await page.locator('.prow', { hasText: COLLAB }).innerText()).includes('새 활동 2'), '목록에 새 활동 수가 없음');
+        await shot(page, 'd50-bell-new-count', false);
+        await page.goto(BASE + '/My');
+        const news = await page.locator('#news').innerText();
+        assert(news.includes('모델 검증 결과') && news.includes('멘션') && news.includes('2차 시뮬레이션') && news.includes('관심 과제'), '새 소식이 다름: ' + news);
+        await shot(page, 'd50b-my-news', false);
+
+        await page.click('#bell');
+        await page.waitForURL(/\/My\/Notifications/);
+        assert((await page.locator('.note-list > li.unread').count()) === 2, '읽지 않은 알림이 2건이 아님');
+        await shot(page, 'd51-notifications', false);
+        await page.locator('.note-list > li', { hasText: '모델 검증 결과' }).locator('.note-link').click();
+        await page.waitForURL(/\/Projects\/Detail\?id=\d+#a\d+$/);
+        await page.waitForSelector('#feed > li.hit');
+        const hit = await page.locator('#feed > li.hit').innerText();
+        assert(hit.includes('모델 검증 결과') && hit.includes('@평영'), '강조한 활동이 다름: ' + hit);
+        assert((await page.locator('#feed .feed-divider').innerText()).includes('여기부터'), '새 활동 구분선이 없음');
+        assert((await page.locator('#activity-new').innerText()).trim() === '새 2', '활동 탭에 새 활동 수가 없음');
+        await shot(page, 'd52-activity-deeplink', false);
+        // 누른 알림은 읽음 — 남은 하나는 '모두 읽음'
+        await page.goto(BASE + '/My/Notifications');
+        assert((await page.locator('.note-list > li.unread').count()) === 1, '누른 알림이 읽음이 되지 않음');
+        await page.click('#read-all');
+        await page.waitForFunction(() => document.querySelectorAll('.note-list > li.unread').length === 0 && document.getElementById('bell-count').hidden);
+        assert(await page.locator('#read-all').isDisabled(), '모두 읽은 뒤에도 단추가 켜져 있음');
+    });
+
+    await step('활동 조건·댓글 고치기 — 종류 칩·단계·검색으로 거르고 조건대로 더 보기, 내 댓글은 고치고 지움', async () => {
+        await openProject(page, COLLAB);
+        await page.click('.tabs [data-tab=activity]');
+        await page.fill('#comment-text', 'e2e 확인용 첫 글');
+        await page.click('#comment-btn');
+        await page.waitForSelector('#feed > li:has-text("e2e 확인용 첫 글") [data-edit-comment]');
+        // 고치기: 원문은 기록으로 남고 '(수정됨)'
+        await page.locator('#feed > li', { hasText: 'e2e 확인용 첫 글' }).locator('[data-edit-comment]').click();
+        await page.waitForSelector(SHEET + ' textarea[name=text]');
+        await page.fill(SHEET + ' textarea[name=text]', 'e2e 확인용 고친 글');
+        await submitSheet(page);
+        await page.waitForSelector('#feed > li:has-text("e2e 확인용 고친 글") .edited');
+        assert((await page.locator('#feed').innerText()).includes('댓글 수정'), '수정 기록이 없음');
+        // '해당 댓글 보기' 는 그 댓글을 강조한다
+        await page.locator('#feed > li', { hasText: '댓글 수정' }).first().locator('[data-goto]').click();
+        await page.waitForSelector('#feed > li.hit:has-text("e2e 확인용 고친 글")');
+
+        // 종류 칩: 댓글만
+        await page.click('#feed-filters [data-kind=comment]');
+        await page.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        const comments = await page.locator('#feed').innerText();
+        assert(comments.includes('e2e 확인용 고친 글') && !comments.includes('과제 등록'), '댓글 조건이 맞지 않음');
+        // 검색까지 겹치면 둘 다 맞는 것만
+        await page.fill('#feed-q', '고친 글');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length === 1 && document.querySelector('#feed > li').innerText.includes('고친 글'));
+        await shot(page, 'd53-activity-filter', false);
+        // 단계 조건: 그 단계의 활동만
+        // 검색어는 입력을 멈춘 뒤(0.3초) 조회한다 — 지운 결과가 그려진 다음에 조건을 바꾼다
+        await page.fill('#feed-q', '');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length > 1);
+        await page.click('#feed-filters [data-kind=""]');
+        await page.selectOption('#feed-stage', { label: '모델링' });
+        await page.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        const metas = await page.locator('#feed > li .feed-meta').allInnerTexts();
+        assert(metas.length > 0 && metas.every((t) => t.includes('모델링')), '단계 조건이 맞지 않음: ' + metas.join(' / '));
+        await page.selectOption('#feed-stage', '');
+        await page.waitForFunction(() => !document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+
+        // 지우기: 자리 표시만 남는다
+        await page.locator('#feed > li', { hasText: 'e2e 확인용 고친 글' }).locator('[data-delete-comment]').click();
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForSelector('#feed > li:has-text("삭제된 댓글")');
+        assert((await page.locator('#feed').innerText()).includes('댓글 삭제'), '삭제 기록이 없음');
+        assert(!(await page.locator('#feed').innerText()).includes('e2e 확인용 고친 글'), '지운 글이 남음');
+        await shot(page, 'd54-comment-deleted', false);
+
+        // 조건을 건 채로 더 보기: 체크를 켜고 끈 활동이 많은 과제에서 '진행' 만
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await page.click('.tabs [data-tab=activity]');
+        await page.click('#feed-filters [data-kind=progress]');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length === 50 && !document.getElementById('feed-more').hidden);
+        await page.click('#feed-more');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length > 50);
+        // 이 과제에는 '더 보기' 단계가 남긴 메모(댓글)가 있다 — 진행 조건에서는 빠진다
+        const texts = await page.locator('#feed > li .feed-text').allInnerTexts();
+        assert(!texts.some((t) => t.includes('메모')), '진행이 아닌 활동(댓글)이 섞임');
+        assert(texts.some((t) => t.includes('체크')), '체크 활동이 없음');
+    });
+
     await step('대시보드 간트 — 과제가 많아도 페이지가 늘지 않고 간트 안에서 스크롤, 머리글은 붙어 있음', async () => {
         // 진행 과제를 잠시 늘린다(복제) — 끝나면 지운다
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
@@ -1512,6 +1668,29 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.waitForSelector('#draft .sched-row');
         await page.waitForFunction(() => document.querySelector('#draft').innerText.includes('기본 12근무일'));
         assert((await page.locator('#draft .sched-row').nth(2).locator('.sched-gap').innerText()).includes('+12근무일'), '바꾼 기본 기간이 초안에 쓰이지 않음');
+    });
+
+    await step('관리 — 사용자 메일 주소(관리자만 정함), 메일 서버가 없으면 시험 메일은 이유를 알림', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#admin-tabs [data-kind=user]');
+        await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('김물류'));
+        await page.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' input[name=email]');
+        await page.fill(SHEET + ' input[name=email]', '주소아님');
+        await page.click(SHEET + ' button[type=submit]');
+        assert((await sheetError(page)).includes('메일 주소'), '잘못된 메일 주소를 받음');
+        await page.fill(SHEET + ' input[name=email]', 'kim@example.com');
+        await page.click(SHEET + ' [data-test-mail]');
+        await page.waitForFunction(() => {
+            const el = document.querySelector('dialog.sheet[open] .sheet-body > .form-error');
+            return el && !el.hidden && el.innerText.includes('Notify:Smtp');
+        });
+        await shot(page, 'd20c-admin-user-email', false);
+        await submitSheet(page);
+        await page.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' input[name=email]');
+        assert((await page.inputValue(SHEET + ' input[name=email]')) === 'kim@example.com', '메일 주소가 저장되지 않음');
+        await closeSheet(page);
     });
 
     await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
@@ -1915,6 +2094,32 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForSelector('#history-project');
         await noOverflow('과제 전체 이력');
         await shot(m, 'm13b-history-project', false);
+    });
+
+    await step('모바일 알림·활동 조건·알릴 사람 고르기 — 하단 탭 화면에서 넘치지 않고 입력은 터치 크기', async () => {
+        await m.goto(BASE + '/My/Notifications');
+        await m.waitForSelector('.page-head h1');
+        assert(await m.locator('#bell').isVisible(), '모바일 상단에 알림 종이 없음');
+        await noOverflow('알림 목록');
+        await shot(m, 'm14-notifications');
+        await m.goto(BASE + '/Projects?state=all');
+        await m.locator('.ptable-row', { hasText: '광주 2공장 물류 동선 Simulation' }).first().click();
+        await m.waitForSelector('#summary .summary-meta');
+        await m.click('.tabs [data-tab=activity]');
+        await m.waitForSelector('#feed > li');
+        const box = await m.locator('#comment-mentions [data-mention-input]').boundingBox();
+        assert(box && box.height >= 48, '이름 칸이 터치 크기(48px)보다 작음: ' + (box && box.height));
+        await m.click('#feed-filters [data-kind=comment]');
+        await m.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        await noOverflow('활동 조건');
+        await m.locator('#feed-filters').scrollIntoViewIfNeeded();
+        await shot(m, 'm15-activity-filter', false);
+        await m.evaluate(() => window.scrollTo(0, 0));
+        await m.locator('#comment-form').scrollIntoViewIfNeeded();
+        await shot(m, 'm15b-mention-box', false);
+        await m.goto(BASE + '/My');
+        await m.waitForSelector('#watched');
+        await noOverflow('내 할 일 관심 과제');
     });
 
     await step('모바일 업데이트 — 시작되지 않아 되돌린 버전 안내', async () => {

@@ -1006,3 +1006,9 @@ a.chip:hover { text-decoration: none; filter: brightness(.96); }
     .note-list > li { padding: 12px 16px; grid-template-columns: minmax(0, 1fr); }
     .note-actions { justify-content: flex-end; }
 }
+@media print {
+    /* 개인 설정·입력 도구는 종이에 필요 없다 */
+    .btn.watch, .feed-filters, .feed-actions, .feed > li.feed-divider, .note-actions, #news { display: none !important; }
+    .ptable.watchable .ptable-head, .ptable.watchable .ptable-row { padding-left: 20px; }
+    .feed > li.new, .feed > li.hit { box-shadow: none; background: none; }
+}

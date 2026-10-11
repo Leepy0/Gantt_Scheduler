@@ -357,6 +357,17 @@ public class CollabTests : IClassFixture<TestDb>
         }
         finally { _db.Clock.UtcNow = saved; }
 
+        // 댓글을 남길 때 고른 사람을 뺐다가 다시 골라도 또 알리지 않는다
+        var first = await UserIdAsync("처음멘션");
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.CommentAsync(new CommentInput(id, null, null, "처음부터 고른 글", new() { first }));
+        var firstId = await CommentIdAsync(id, "처음부터 고른 글");
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.EditCommentAsync(new CommentEditInput(firstId, "처음부터 고른 글", new()));
+        using (var s = _db.NewScope("김물류"))
+            await s.Projects.EditCommentAsync(new CommentEditInput(firstId, "처음부터 고른 글", new() { first }));
+        Assert.Single(await NotesAsync("처음멘션", id));
+
         // 댓글이 아닌 활동은 고칠 수 없다
         using (var s = _db.NewScope())
         {

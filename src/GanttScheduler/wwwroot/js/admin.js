@@ -175,7 +175,7 @@
                 '<input type="hidden" name="orgUnitId" /></div>' +
                 '<label class="check"><input type="checkbox" name="isAdmin"' + (n.isAdmin ? ' checked' : '') + ' />관리자 (기준 정보 변경·과제 삭제)</label>' +
                 // 메일 요약 받는 주소 — 관리자만 보고 정한다(IP 식별이라 본인 입력은 가로채기 위험)
-                (isAdmin ? field('email', '메일 주소 <span class="opt">선택</span>', '<div class="ip-add"><input name="email" type="email" maxlength="200" autocomplete="off" placeholder="name@company.com" value="' + esc(n.email || '') + '" />' +
+                (isAdmin ? field('email', '메일 주소 <span class="opt">선택</span>', '<div class="ip-add"><input name="email" type="text" inputmode="email" maxlength="200" autocomplete="off" placeholder="name@company.com" value="' + esc(n.email || '') + '" />' +
                     '<button type="button" class="btn" data-test-mail>' + icon('mail') + '시험 메일</button></div>') +
                     '<span class="hint">하루 한 번 받을 메일 요약(읽지 않은 알림, 내 작업의 지연·임박)의 주소입니다. 시험 메일로 메일 서버 설정을 확인할 수 있습니다.</span>' : '') +
                 '<div class="field" data-field="ip"><span class="label">접속 IP</span><ul class="ip-list" data-ips>' + ipItems(n) + '</ul>' +
@@ -217,6 +217,7 @@
                 var test = form.querySelector('[data-test-mail]');
                 if (test) test.addEventListener('click', function () {
                     App.busy(test, async function () {
+                        sheet.setError(null);       // 앞의 오류(저장 실패 등)를 지우고 이번 결과만 보인다
                         try {
                             await App.post(url('TestMail'), { email: form.elements.email.value });
                             sheet.setError(null);
