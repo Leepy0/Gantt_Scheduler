@@ -18,6 +18,10 @@ public class AttachmentService
     public int MaxMB { get; }
     public long MaxBytes => MaxMB * 1024L * 1024;
 
+    // 과제 하나의 첨부 합계 상한(MB) — Storage:ProjectMaxMB. 기본은 없음(null). 디스크를 한 과제가 다 쓰지 않게 고를 수 있다
+    public static int? ProjectMaxMBOf(IConfiguration cfg) => cfg.GetValue<int?>("Storage:ProjectMaxMB") is int v && v > 0 ? v : null;
+    public int? ProjectMaxMB { get; }
+
     // 파일·폴더 지우기 (시험에서 '지우지 못함'을 흉내 내려고 바꿔 끼운다 — 리눅스 root 는 권한으로 막을 수 없다)
     internal Action<string> DeleteFile { get; set; } = File.Delete;
     internal Action<string> DeleteFolder { get; set; } = dir => Directory.Delete(dir, recursive: true);
@@ -51,6 +55,7 @@ public class AttachmentService
         _root = AppPaths.Uploads(cfg, env.ContentRootPath);
         _log = log ?? new ActivityLog(db, clock, me);
         MaxMB = MaxMBOf(cfg);
+        ProjectMaxMB = ProjectMaxMBOf(cfg);
         _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
 
@@ -70,6 +75,14 @@ public class AttachmentService
         var project = await _db.LiveProjects.Include(p => p.Stages).FirstOrDefaultAsync(p => p.Id == projectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         var stage = stageId == null ? null : project.Stages.FirstOrDefault(s => s.Id == stageId.Value);
+        // 과제 첨부 합계 상한: 상한을 정했을 때만 합계를 읽는다(기본은 쿼리 없음)
+        if (ProjectMaxMB is int cap)
+        {
+            var used = (await _db.Attachments.AsNoTracking().Where(a => a.ProjectId == projectId).Select(a => a.Size).ToListAsync()).Sum();
+            var capBytes = cap * 1024L * 1024;
+            if (used + length > capBytes)
+                throw new RuleException($"이 과제의 첨부 합계가 상한({cap}MB)을 넘습니다. 지금 {SizeText(used)} 사용 중이라 {SizeText(Math.Max(0, capBytes - used))}까지 더 올릴 수 있습니다. 쓰지 않는 자료를 지우거나 관리자에게 문의해 주세요.", "file");
+        }
 
         var stored = Guid.NewGuid().ToString("N") + ext.ToLowerInvariant();
         Directory.CreateDirectory(FolderOf(projectId));
@@ -98,6 +111,9 @@ public class AttachmentService
         }
         return projectId;
     }
+
+    private static string SizeText(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024.0 / 1024:0.#}MB" : $"{Math.Ceiling(bytes / 1024.0):0}KB";
 
     // 내려받기·미리보기용: 실제 파일 경로와 정보
     public async Task<(string Path, Attachment File)?> FindAsync(int id)

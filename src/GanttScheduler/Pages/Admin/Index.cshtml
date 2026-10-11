@@ -40,11 +40,17 @@
     <button type="button" role="tab" data-kind="user">사용자</button>
     <button type="button" role="tab" data-kind="holiday">공휴일</button>
     <button type="button" role="tab" data-kind="reason">지연 사유</button>
+    <button type="button" role="tab" data-kind="usage">사용 현황</button>
+    @if (Model.IsAdmin)
+    {
+        <button type="button" role="tab" data-kind="changes">변경 이력</button>
+    }
 </div>
 
 <section id="admin-body" class="admin-body" data-admin="@(Model.IsAdmin ? "1" : "0")" data-limits="@Model.LimitsJson" data-field-limits="@Model.FieldLimitsJson" aria-live="polite"></section>
 
 @section Scripts {
     <script src="~/js/org.js" asp-append-version="true"></script>
+    <script src="~/js/admin-people.js" asp-append-version="true"></script>
     <script src="~/js/admin.js" asp-append-version="true"></script>
 }

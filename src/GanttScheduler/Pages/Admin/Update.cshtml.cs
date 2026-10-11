@@ -19,15 +19,19 @@ public class UpdateModel : PageModel
     private readonly BackupService? _backup;
     private readonly FileLog? _log;
     private readonly IHostApplicationLifetime? _lifetime;
+    // 관리 변경 이력 — 설정 변경·적용·되돌리기·올리기·지금 백업을 남긴다(업데이트 기록은 state.json 에도 있지만 서버를 옮기면 사라진다)
+    private readonly MasterLog? _changes;
 
     // 백업·로그는 선택 인자다 (업데이트 시험이 페이지를 직접 만들 때 없어도 되게)
-    public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null, IHostApplicationLifetime? lifetime = null)
+    public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null, IHostApplicationLifetime? lifetime = null,
+        MasterLog? changes = null)
     {
         _updates = updates;
         _me = me;
         _backup = backup;
         _log = log;
         _lifetime = lifetime;
+        _changes = changes;
     }
 
     public bool IsAdmin => _me.IsAdmin;
@@ -48,9 +52,19 @@ public class UpdateModel : PageModel
 
     public Task<IActionResult> OnPostDiscardAsync() => Run(() => _updates.Discard());
 
-    public Task<IActionResult> OnPostApplyAsync() => Run(() => _updates.Apply(_me.Name));
+    public Task<IActionResult> OnPostApplyAsync() => Run(async () =>
+    {
+        var target = _updates.Status().Staged?.Version;
+        _updates.Apply(_me.Name);
+        await RecordAsync("update", $"업데이트 적용: {_updates.Status().Version} → {target}", _updates.Status().Version, target);
+    });
 
-    public Task<IActionResult> OnPostRollbackAsync() => Run(() => _updates.Rollback(_me.Name));
+    public Task<IActionResult> OnPostRollbackAsync() => Run(async () =>
+    {
+        var target = _updates.Status().Previous?.Version;
+        _updates.Rollback(_me.Name);
+        await RecordAsync("update", $"이전 버전으로 되돌리기: {_updates.Status().Version} → {target}", _updates.Status().Version, target);
+    });
 
     public Task<IActionResult> OnPostDismissFailureAsync() => Run(() => _updates.DismissFailure());
 
@@ -64,6 +78,7 @@ public class UpdateModel : PageModel
         if (!entry.Ok)
             throw new UpdateException("백업하지 못했습니다: " + entry.Error,
                 "백업 경로(Backup:Path, Backup:FilesPath)와 쓰기 권한·디스크 여유를 확인하세요. 아래 목록에 실패 기록이 남습니다.");
+        await RecordAsync("backup", "지금 백업 실행");
     });
 
     // 진단 정보: 교체 기록(apply.log) 끝부분, 시작 오류(startup-error.log), 상태 요약, 최근 업데이트·백업 경고
@@ -85,8 +100,33 @@ public class UpdateModel : PageModel
     private static JsonResult Denied() =>
         new(new { ok = false, error = "관리자만 업데이트를 다룰 수 있습니다." }) { StatusCode = StatusCodes.Status403Forbidden };
 
-    public Task<IActionResult> OnPostSettingsAsync([FromBody] SettingsInput input) =>
-        Run(() => _updates.SaveSettings(new UpdateSettings(input.AutoCheck, input.AutoApply, input.WindowFrom, input.WindowTo, input.IdleMinutes)));
+    public Task<IActionResult> OnPostSettingsAsync([FromBody] SettingsInput input) => Run(async () =>
+    {
+        var before = _updates.Status().Settings;
+        var after = new UpdateSettings(input.AutoCheck, input.AutoApply, input.WindowFrom, input.WindowTo, input.IdleMinutes);
+        _updates.SaveSettings(after);
+        if (before != after)
+            await RecordAsync("update", "업데이트 설정 변경: " + string.Join(", ", SettingsDiff(before, after).Select(d => d.Label)),
+                string.Join("; ", SettingsDiff(before, after).Select(d => $"{d.Label}: {d.Old}")),
+                string.Join("; ", SettingsDiff(before, after).Select(d => $"{d.Label}: {d.New}")));
+    });
+
+    private static IEnumerable<(string Label, string Old, string New)> SettingsDiff(UpdateSettings a, UpdateSettings b)
+    {
+        static string OnOff(bool v) => v ? "켬" : "끔";
+        if (a.AutoCheck != b.AutoCheck) yield return ("자동 확인", OnOff(a.AutoCheck), OnOff(b.AutoCheck));
+        if (a.AutoApply != b.AutoApply) yield return ("자동 적용", OnOff(a.AutoApply), OnOff(b.AutoApply));
+        if (a.WindowFrom != b.WindowFrom || a.WindowTo != b.WindowTo)
+            yield return ("적용 시간", $"{a.WindowFrom}~{a.WindowTo}시", $"{b.WindowFrom}~{b.WindowTo}시");
+        if (a.IdleMinutes != b.IdleMinutes) yield return ("대기 시간", $"{a.IdleMinutes}분", $"{b.IdleMinutes}분");
+    }
+
+    private async Task RecordAsync(string kind, string text, string? oldValue = null, string? newValue = null)
+    {
+        if (_changes == null) return;
+        _changes.Add(kind, (int?)null, text, oldValue, newValue);
+        await _changes.SaveAsync();
+    }
 
     // 배포 파일(zip)과 함께 배포 정보(GanttScheduler.json)·서명(GanttScheduler.json.sig)을 올릴 수 있다.
     // 한 입력란에서 여러 파일을 골라도, 입력란 이름이 달라도 되게 파일 이름(확장자)으로 가른다
@@ -106,6 +146,7 @@ public class UpdateModel : PageModel
         if (zip == null) throw new UpdateException("zip 파일이 없습니다.", "릴리스의 GanttScheduler-win-x64.zip 을 그대로 올려 주세요.");
         await using var stream = zip.OpenReadStream();
         await _updates.UploadAsync(stream, _me.Name, HttpContext.RequestAborted, await BytesAsync(manifest), await BytesAsync(signature));
+        await RecordAsync("update", $"배포 파일 올리기: {zip.FileName}", null, _updates.Status().Staged?.Version);
     });
 
     // 배포 정보·서명은 몇 KB 라 메모리로 읽는다 (너무 크면 엉뚱한 파일이다)

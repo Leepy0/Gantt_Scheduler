@@ -500,3 +500,21 @@ public class DelayReason
     public int SortOrder { get; set; }
     public bool IsActive { get; set; } = true;
 }
+
+// ── 관리 변경 이력 ────────────────────────────────────────────────────────
+
+// 기준 정보·사용자·설정의 변경 한 줄. 공휴일·해상 운송일·유형 템플릿·관리자 지정은 일정 계산과 권한을 바꾸는데
+// 과제 활동(Activity)은 과제에 묶여 있어 담을 곳이 없다. 이력은 추가만 한다(고치거나 지우지 않는다).
+// UserId 가 없으면 서버가 스스로 한 일(보존 기간 정리 등)이다. EntityId 는 느슨한 참조 — 지운 항목의 기록도 남는다
+public class MasterChange
+{
+    public int Id { get; set; }
+    public DateTime At { get; set; }
+    public int? UserId { get; set; }
+    public AppUser? User { get; set; }
+    public string Kind { get; set; } = "";          // 엔티티 종류(MasterLog.Kinds — location·holiday·user·ip·update …)
+    public int? EntityId { get; set; }
+    public string Text { get; set; } = "";
+    public string? OldValue { get; set; }
+    public string? NewValue { get; set; }
+}

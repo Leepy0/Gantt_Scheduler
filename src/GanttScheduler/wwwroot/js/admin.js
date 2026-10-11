@@ -25,7 +25,10 @@
         org: { levels: ['그룹', '파트'] },
         user: { levels: ['사용자'], fixedOrder: true },
         holiday: { levels: ['공휴일'], fixedOrder: true, removable: [1] },
-        reason: { levels: ['지연 사유 분류'] }
+        reason: { levels: ['지연 사유 분류'] },
+        // 열 탐색이 아닌 탭 — admin-people.js 가 그린다
+        changes: { custom: true },
+        usage: { custom: true }
     };
 
     var kind = 'location';
@@ -98,16 +101,22 @@
         });
     }
 
+    // 사용 수(그 항목을 쓰는 과제 수 — 조직은 사용자 수, 지연 사유는 기록 수). 서버가 센 값
+    function usesText(n) {
+        if (n.uses == null) return '';
+        return (kind === 'org' ? '사용자 ' : kind === 'reason' ? '기록 ' : '과제 ') + n.uses;
+    }
+
     function extraText(n) {
-        if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일'].filter(Boolean).join(' · ');
-        if (kind === 'category' && n.level === 1) return n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '';
+        if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일', usesText(n)].filter(Boolean).join(' · ');
+        if (kind === 'category' && n.level === 1) return [n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '', usesText(n)].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 2) {
             return [n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '',
                 n.defaultWorkDays != null ? '기본 ' + n.defaultWorkDays + '근무일' : ''].filter(Boolean).join(' · ');
         }
-        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속'].filter(Boolean).join(' · ');
+        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', AdminPeople.loadText(n), n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속'].filter(Boolean).join(' · ');
         if (kind === 'holiday') return n.date;
-        return '';
+        return usesText(n);
     }
 
     function render() {
@@ -247,6 +256,11 @@
     }
 
     async function load() {
+        if (conf().custom) {
+            if (kind === 'changes') AdminPeople.renderChanges(body);
+            else AdminPeople.renderUsage(body, isAdmin);
+            return;
+        }
         body.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중…</div>';
         try {
             var r = await App.get(url('Data') + '&kind=' + kind);
@@ -341,6 +355,9 @@
                     '<button type="button" class="btn" data-add-ip>' + icon('plus') + '연결</button></div>' +
                     '<span class="hint">관리자는 이름 등록 화면에서 새 PC 를 연결할 수 없습니다. PC 를 바꾼 관리자는 여기서 IP 를 추가해 주세요.</span>' : '') +
                 '</div>';
+            // 사용자 정리: 맡은 일(진행 과제·미완료 작업)과 합치기
+            if (AdminPeople.loadText(n)) html += '<p class="hint" data-user-load>지금 맡은 일: ' + esc(AdminPeople.loadText(n)) + '</p>';
+            if (isAdmin) html += '<div class="form-actions start"><button type="button" class="btn small" data-merge>' + icon('link') + '다른 사용자로 합치기</button></div>';
         }
 
         var isRemovable = removable(level);
@@ -351,6 +368,12 @@
             danger: !isAdmin ? null : {
                 label: isRemovable ? '삭제' : (n.active ? '사용 중지' : '다시 사용'),
                 onClick: async function (sheet) {
+                    // 맡은 일이 있는 사용자를 사용 중지하면 이관 시트로 — 담당이 사용 중지된 사람으로 남지 않게
+                    if (kind === 'user' && n.active && AdminPeople.hasLoad(n)) {
+                        sheet.close();
+                        AdminPeople.openReassign(n, nodes, change);
+                        return;
+                    }
                     if (isRemovable) {
                         var ok = await App.confirm({ title: '삭제', message: '"' + n.name + '" 항목을 삭제합니다. 되돌릴 수 없습니다.', verb: '삭제' });
                         if (!ok) return;
@@ -370,6 +393,11 @@
                     form.elements.defaultWorkDays.dispatchEvent(new Event('input', { bubbles: true }));
                 });
                 if (kind !== 'user') return;
+                var merge = form.querySelector('[data-merge]');
+                if (merge) merge.addEventListener('click', function () {
+                    sheet.close();
+                    AdminPeople.openMerge(n, nodes, change);
+                });
                 OrgPicker.bind(orgs, form.querySelector('[data-org-group]'), form.querySelector('[data-org-part]'),
                     form.elements.orgUnitId, form.querySelector('[data-org-field]'), n.orgUnitId);
                 bindIps(form, sheet, level, id);
@@ -461,7 +489,10 @@
         });
     });
 
+    AdminPeople.bind(body);
+
     body.addEventListener('click', async function (e) {
+        if (conf().custom) return;
         var t;
         if ((t = e.target.closest('[data-year]'))) {
             holidayYear = +t.dataset.year;
@@ -497,6 +528,7 @@
     });
 
     body.addEventListener('submit', async function (e) {
+        if (conf().custom) return;
         var form = e.target.closest('[data-add]');
         if (!form) return;
         e.preventDefault();

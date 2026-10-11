@@ -102,6 +102,10 @@ builder.Services.AddSingleton(_ => SnapshotOptions.From(config));
 builder.Services.AddScoped<SnapshotService>();
 builder.Services.AddScoped<AnalyticsService>();
 builder.Services.AddHostedService<SnapshotWorker>();
+// 사용자·기준 정보 관리: 관리 변경 이력(MasterLog — 변경과 같은 저장), 사용자 병합·이관·사용 현황, IP 연결 보존 정리(Access:AddressKeepDays)
+builder.Services.AddScoped<MasterLog>();
+builder.Services.AddScoped<UserAdminService>();
+builder.Services.AddHostedService<AddressRetentionWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);

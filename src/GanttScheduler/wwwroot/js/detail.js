@@ -482,9 +482,20 @@
         return App.url('/Projects/Files?handler=Download&id=' + id + (inline ? '&inline=true' : ''));
     }
 
+    // 과제 첨부 합계 — 상한(Storage:ProjectMaxMB)을 정했으면 함께 보인다. 상한 검사는 서버가 한다
+    function renderFilesTotal(list) {
+        var box = $('files-total');
+        if (!box) return;
+        var cap = data.upload && data.upload.projectMaxMB;
+        var used = list.reduce(function (n, a) { return n + (a.size || 0); }, 0);
+        box.hidden = !list.length && !cap;
+        box.textContent = '첨부 합계 ' + App.size(used) + (cap ? ' / 과제 상한 ' + cap + 'MB' : '');
+    }
+
     function renderFiles() {
         var list = P.attachments || [];
         $('files-count').textContent = list.length ? String(list.length) : '';
+        renderFilesTotal(list);
         $('file-stage').innerHTML = '<option value="">과제 전체</option>' + P.stages.map(function (s) {
             return '<option value="' + s.id + '">' + esc(s.name) + '</option>';
         }).join('');
