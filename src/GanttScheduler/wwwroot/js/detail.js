@@ -1504,13 +1504,28 @@
             if (bits.length) status += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
         }
 
-        var html =
+        // 맨 위 '빠른 갱신'(내 할 일과 같은 조각 — quick.js): 진행률 칩·오늘 시작/완료·진행 내용 한 줄. 진행률 직접 입력은 기존 슬라이더다.
+        // 일정·선행·메모 같은 드문 수정은 아래 <details> 로 접는다(새 작업은 펼친다 — 작업명·일정을 먼저 정해야 하므로).
+        // 펼침 여부는 기억한다(App.pref)
+        var moreOpen = isNew || App.pref.get('detail.workMore', '0') === '1';
+        var quickHtml = Quick.html({ progress: isNew ? 0 : w.progress, actualStart: isNew ? null : w.actualStart, actualEnd: isNew ? null : w.actualEnd }, {
+            noteMax: LIM.text, label: '빠른 갱신',
+            custom: '<span class="range-row" data-field="progress"><input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" /><output></output></span>'
+        });
+        if (isNew) quickHtml = quickHtml.replace(/<input type="text" class="quick-note"[^>]*>/, '');     // 새 작업은 저장 뒤에 진행 내용을 남긴다
+        var html = status + quickHtml +
+            '<div class="field-row">' +
+            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
+            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
+            '</div>' +
+            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 오늘보다 미래입니다.</span></p>' +
+            '<details class="sheet-more" data-work-more-fields' + (moreOpen ? ' open' : '') + '><summary>' + icon('edit') + '작업 정보·일정·선행·메모</summary><div class="more-body">' +
             field('title', '작업명', '<input name="title" maxlength="' + LIM.workTitle + '" required value="' + esc(isNew ? '' : w.title) + '" />') +
             field('stageId', '단계', '<select name="stageId">' + stageOptions + '</select>') +
             '<div class="field-row">' +
             field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? data.me.name : w.owner || '') + '" />') +
             field('coOwner', '부담당', '<input name="coOwner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? '' : w.coOwner || '') + '" />', true) +
-            '</div>' + status + '<div class="field-row">' +
+            '</div><div class="field-row">' +
             field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + planStart + '" />') +
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
@@ -1520,17 +1535,8 @@
             '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
             '<div data-work-preview></div>' +
-            '<div class="field-row">' +
-            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
-            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
-            '</div>' +
-            '<div class="inline-btns"><button type="button" class="btn small" data-start-today>오늘 시작</button>' +
-            '<button type="button" class="btn small" data-end-today>' + icon('check') + '오늘 완료</button></div>' +
-            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 오늘보다 미래입니다.</span></p>' +
-            '<div class="field" data-field="progress"><span class="label">진행률</span><div class="range-row">' +
-            '<input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" />' +
-            '<output></output></div></div>' +
-            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
+            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true) +
+            '</div></details>';
 
         if (!isNew) {
             html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
@@ -1619,6 +1625,7 @@
                     if (f.actualEnd.value) { f.progress.value = 100; f.progress.disabled = true; }
                     else f.progress.disabled = false;
                     out.textContent = f.progress.value + '%';
+                    Quick.update(form.querySelector('[data-quick]'), { progress: +f.progress.value, actualStart: f.actualStart.value, actualEnd: f.actualEnd.value });
                     var now = userToday();
                     future.hidden = !((f.actualStart.value && f.actualStart.value > now) || (f.actualEnd.value && f.actualEnd.value > now));
                     if (reasonBox) reasonBox.hidden = isNew || !(f.planStart.value !== w.planStart || f.planEnd.value !== w.planEnd);
@@ -1651,14 +1658,21 @@
                 preview.now();
                 App.nameHint(f.owner, data.users, isNew ? null : w.owner);
                 App.nameHint(f.coOwner, data.users, isNew ? null : w.coOwner);
+                // 빠른 갱신 조각: 칩·'오늘' 단추는 아래 입력칸(진행률·실적)을 채울 뿐이고 저장은 시트의 저장 단추로 한다.
                 // '오늘'은 접속한 PC 의 날짜 (해외 법인에서 저녁에 눌러도 그 나라 날짜, App.userToday)
-                form.querySelector('[data-start-today]').addEventListener('click', function () { f.actualStart.value = userToday(); sync(); preview.update(); });
-                form.querySelector('[data-end-today]').addEventListener('click', function () {
-                    if (!f.actualStart.value) f.actualStart.value = userToday();
-                    f.actualEnd.value = userToday();
-                    sync();
-                    preview.update();
+                var quick = form.querySelector('[data-quick]');
+                Quick.bind(quick, {
+                    progress: function (v) { f.progress.value = v; sync(); preview.update(); },
+                    start: function () { f.actualStart.value = userToday(); sync(); preview.update(); },
+                    end: function () {
+                        if (!f.actualStart.value) f.actualStart.value = userToday();
+                        f.actualEnd.value = userToday();
+                        sync();
+                        preview.update();
+                    }
                 });
+                var more = form.querySelector('[data-work-more-fields]');
+                if (!isNew) more.addEventListener('toggle', function () { App.pref.set('detail.workMore', more.open ? '1' : '0'); });
                 sync();
                 refreshUi = function () { sync(); preview.update(); };
 
@@ -1686,6 +1700,14 @@
             onClose: function () { if (preview) preview.stop(); },
             onSubmit: async function (form) {
                 var f = form.elements;
+                var quickNote = Quick.note(form);
+                // 접힌 칸(일정·선행·메모)에 걸린 오류는 펼쳐서 보이게 한다
+                var showField = function (err) {
+                    var more = form.querySelector('[data-work-more-fields]');
+                    var el = err && err.field ? form.querySelector('[data-field="' + err.field + '"]') : null;
+                    if (more && el && more.contains(el)) more.open = true;
+                };
+                try {
                 await api('SaveWork', {
                     id: isNew ? null : w.id,
                     stageId: +f.stageId.value,
@@ -1703,6 +1725,13 @@
                     links: selectedLinks(form),
                     clientToday: App.localToday()
                 });
+                } catch (err) { showField(err); throw err; }
+                // 빠른 갱신의 진행 내용 한 줄은 저장 뒤 이 작업의 진행 내용(댓글)으로 남긴다
+                if (quickNote && !isNew) {
+                    try {
+                        await api('Comment', { projectId: P.id, stageId: +f.stageId.value, workId: w.id, text: quickNote });
+                    } catch (err) { App.toast('작업은 저장했지만 진행 내용을 남기지 못했습니다: ' + err.message, 'error'); }
+                }
                 App.toast(isNew ? '작업을 추가했습니다.' : '작업을 저장했습니다.');
             }
         });

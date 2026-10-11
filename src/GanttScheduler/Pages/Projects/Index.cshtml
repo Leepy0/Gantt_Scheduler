@@ -3,14 +3,8 @@
 @{
     ViewData["Title"] = "과제";
     ViewData["Nav"] = "projects";
-    // Excel 내보내기는 현재 필터 그대로
-    var excelRoute = new Dictionary<string, string> { ["state"] = Model.StateKey };
-    if (!string.IsNullOrWhiteSpace(Model.Q)) excelRoute["q"] = Model.Q;
-    if (Model.Category != null) excelRoute["category"] = Model.Category.Value.ToString();
-    if (Model.Corp != null) excelRoute["corp"] = Model.Corp.Value.ToString();
-    if (Model.Mine) excelRoute["mine"] = "true";
-    if (Model.DoneYear != null) excelRoute["doneYear"] = Model.DoneYear.Value.ToString();
-    if (Model.Due != null) excelRoute["due"] = Model.Due.Value.ToString();
+    // Excel 내보내기는 현재 필터·정렬 그대로 (같은 순서로 내보낸다)
+    var excelRoute = Model.Route();
 }
 
 <div class="page-head">
@@ -35,7 +29,7 @@
     <div class="filter-row">
         <label class="search">
             <svg class="ic"><use href="#i-search" /></svg>
-            <input type="search" name="q" value="@Model.Q" placeholder="과제명·담당자·위치 검색" aria-label="검색" />
+            <input type="search" name="q" value="@Model.Q" placeholder="과제명·담당자·위치·협력사 검색" aria-label="검색" title="과제명·과제 담당·법인·위치·협력사·작업 담당자 이름으로 찾습니다" />
         </label>
         <select name="category" aria-label="유형">
             <option value="">유형 전체</option>
@@ -52,6 +46,18 @@
             }
         </select>
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
+        @* 정렬은 조회해도 유지한다(머리글로 바꾼다) *@
+        @if (Model.SortKey != null) { <input type="hidden" name="sort" value="@Model.SortKey" /> }
+        @if (Model.Desc) { <input type="hidden" name="desc" value="true" /> }
+        <label class="sort-pick list-sort">
+            <span>정렬</span>
+            <select id="list-sort" aria-label="정렬">
+                @foreach (var (key, desc, label) in GanttScheduler.Pages.Projects.IndexModel.SortChoices)
+                {
+                    <option value="@Url.Page("/Projects/Index", Model.ChoiceRoute(key, desc))" data-sort="@(key ?? "")" selected="@(Model.SortKey == key && (key == null || Model.Desc == desc))">@label</option>
+                }
+            </select>
+        </label>
         <button type="submit" class="btn">조회</button>
     </div>
     @if (Model.SpecialText != null)
@@ -79,14 +85,15 @@ else
 {
     <section class="card flush">
         <div class="ptable watchable" role="table" aria-label="과제 목록">
+            @* 머리글을 누르면 그 열로 정렬한다(다시 누르면 반대 방향). 정렬은 서버가 하고 Excel 도 같은 순서다 *@
             <div class="ptable-head" role="row">
-                <span role="columnheader">과제</span>
-                <span role="columnheader">위치</span>
-                <span role="columnheader">담당</span>
-                <span role="columnheader">현재 단계</span>
-                <span role="columnheader">진행률</span>
-                <span role="columnheader">목표 종료</span>
-                <span role="columnheader">상태</span>
+                @foreach (var (key, label) in GanttScheduler.Pages.Projects.IndexModel.Columns)
+                {
+                    var sorted = Model.AriaSort(key);
+                    <span role="columnheader" aria-sort="@sorted">
+                        <a class="sort-link" data-sort="@key" asp-page="/Projects/Index" asp-all-route-data="Model.SortRoute(key)">@label@if (sorted != "none") {<svg class="ic" aria-hidden="true"><use href="@(sorted == "descending" ? "#i-down" : "#i-up")" /></svg>}</a>
+                    </span>
+                }
             </div>
             @foreach (var p in Model.Rows)
             {
@@ -122,7 +129,18 @@ else
                         <span class="num">@p.Progress%</span>
                     </span>
                     <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
-                    <span class="c-state" role="cell"><partial name="_StatusChip" model="p.Chip" /></span>
+                    <span class="c-state" role="cell">
+                        <partial name="_StatusChip" model="p.Chip" />
+                        @* 조기 경보: 지연 전 위험(노랑 — 예상 초과 일수)과 정체. 이유는 마우스를 올리면 보인다 *@
+                        @if (p.AtRisk)
+                        {
+                            <span class="chip warn" data-risk title="@string.Join(" · ", p.Risks.Select(r => r.Text))"><svg class="ic"><use href="#i-clock" /></svg>@(p.RiskDays > 0 ? $"예상 +{p.RiskDays}일" : "위험")</span>
+                        }
+                        @if (p.Stale)
+                        {
+                            <span class="chip" data-stale title="@(Rules.StaleDays)일 넘게 변경 없음"><svg class="ic"><use href="#i-pause" /></svg>정체</span>
+                        }
+                    </span>
                 </a>
                 </div>
             }
@@ -132,8 +150,30 @@ else
 
 @section Scripts {
     <script>
+        // 정렬: 고른 정렬을 기억해(App.pref) 정렬 없이 목록을 열면 그 정렬로 연다. 머리글·고르기 상자 어느 쪽으로 골라도 같다
+        (function () {
+            var params = new URLSearchParams(location.search);
+            if (params.has('sort')) {
+                App.pref.set('list.sort', params.get('sort') + (params.get('desc') === 'true' ? ':desc' : ''));
+            } else {
+                var saved = App.pref.get('list.sort', '');
+                if (saved) {
+                    var parts = saved.split(':');
+                    params.set('sort', parts[0]);
+                    if (parts[1] === 'desc') params.set('desc', 'true');
+                    location.replace(location.pathname + '?' + params.toString());
+                    return;
+                }
+            }
+            var pick = document.getElementById('list-sort');
+            if (pick) pick.addEventListener('change', function () {
+                // '기본 순서'는 기억도 지운다
+                if (pick.selectedOptions[0].dataset.sort === '') App.pref.set('list.sort', '');
+                location.href = pick.value;
+            });
+        })();
         // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)은 푼다
-        document.querySelectorAll('#filters input[type=radio], #filters select, #filters input[type=checkbox]')
+        document.querySelectorAll('#filters input[type=radio], #filters select:not(#list-sort), #filters input[type=checkbox]')
             .forEach(function (el) {
                 el.addEventListener('change', function () {
                     if (el.type === 'radio') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });

@@ -167,6 +167,12 @@ public record ProjectView
     // 기준선 차수 이력(최신 순)과 지금 '기준선 대비'를 센 차수. CompareNo 가 null 이면 최신 차수 기준 (상세에서만 채운다)
     public List<BaselineView>? Baselines { get; init; }
     public int? CompareNo { get; init; }
+    // 조기 경보(Rules.RiskReasons) — 진행 과제만. Risks: 위험 이유(화면에 그대로 쓰는 문구), RiskDays: 예상 지연 일수(단계 예상 종료의 목표 초과 최댓값),
+    // AtRisk: 아직 지연은 아니지만 이유가 있음(목록 '위험' 탭·대시보드 '지연 위험' 카드), Stale: 마지막 변경이 Rules.StaleDays 일 넘게 지남
+    public List<Rules.RiskReason> Risks { get; init; } = new();
+    public int RiskDays { get; init; }
+    public bool AtRisk { get; init; }
+    public bool Stale { get; init; }
 }
 
 // 기준선 한 차수 (상세의 기준선 이력·비교 기준 고르기)
@@ -178,11 +184,14 @@ public record TimelineStageView(
     string Name, string Status, DateOnly? PlanFrom, DateOnly? TargetDate, DateOnly? ActualFrom, DateOnly? ActualTo,
     DateOnly? CompletedDate, int LateDays, bool DoneLate);
 
-public record TimelineView(int Id, string Title, string Corporation, string? CurrentStage, int DelayDays, int Progress, List<TimelineStageView> Stages)
+// RiskDays·AtRisk·Stale·Risk(첫 위험 이유): 조기 경보 — 간트 이름 칸에 '예상 +n일'·정체 표시
+public record TimelineView(int Id, string Title, string Corporation, string? CurrentStage, int DelayDays, int Progress, List<TimelineStageView> Stages,
+    int RiskDays = 0, bool AtRisk = false, bool Stale = false, string? Risk = null)
 {
     public static TimelineView From(ProjectView p) => new(p.Id, p.Title, p.Corporation, p.CurrentStage, p.DelayDays, p.Progress,
         p.Stages.Select(s => new TimelineStageView(s.Name, s.Status, s.PlanFrom, s.TargetDate, s.ActualFrom, s.ActualTo,
-            s.CompletedDate, s.LateDays, s.DoneLate)).ToList());
+            s.CompletedDate, s.LateDays, s.DoneLate)).ToList(),
+        p.RiskDays, p.AtRisk, p.Stale, p.Risks.FirstOrDefault()?.Text);
 }
 
 // 위치 트리 조회용 색인
@@ -370,8 +379,11 @@ public static class Views
         return list;
     }
 
+    // forecast: 작업 목록은 내보내지 않아도(withWorks=false) 전진 계산으로 단계 예상 종료를 구한다 — 대시보드·목록의 위험 판정용(작업 의존 Links 가 읽혀 있어야 한다).
+    // utcNow: 정체 판정 기준 시각(없으면 정체로 보지 않는다)
     public static ProjectView Project(Project p, DateOnly today, LocationIndex locations, bool detail,
-        bool withWorks = true, WorkCalendar? calendar = null, IReadOnlyList<StageLink>? crossLinks = null)
+        bool withWorks = true, WorkCalendar? calendar = null, IReadOnlyList<StageLink>? crossLinks = null,
+        bool forecast = false, DateTime? utcNow = null)
     {
         var corp = locations.Get(p.CorporationId);
         var lead = corp?.OceanLeadDays ?? 0;
@@ -380,10 +392,12 @@ public static class Views
         var delayDays = Rules.DelayDays(p, today);
         var cal = calendar ?? WorkCalendar.WeekendsOnly;
         // 오늘 기준 예상 일정은 한 번만 계산해 단계·작업 표시와 재계획 수에 같이 쓴다
-        var expected = withWorks ? Rules.ForwardPass(p, cal, today) : null;
+        var expected = withWorks || forecast ? Rules.ForwardPass(p, cal, today) : null;
         var stages = Stages(p, today, lead, withWorks, cal, crossLinks, expected);
         var endTarget = Rules.EndTarget(p);
         var baselineEnd = Rules.BaselineEnd(p);
+        int? linkViolations = crossLinks == null ? null : stages.Sum(s => s.CrossLinks.Count(x => x.Violated));
+        var risks = Rules.RiskReasons(p, today, expected, linkViolations);
 
         return new ProjectView
         {
@@ -414,11 +428,15 @@ public static class Views
             TargetChanges = detail ? Rules.DecisionCount(p.Activities.Where(a => a.Type == ActivityType.TargetChanged).Select(a => a.BatchId)) : 0,
             CreatedBy = detail ? p.CreatedBy?.Name : null,
             CreatedAt = detail ? p.CreatedAt : null,
-            UpdatedAt = detail ? p.UpdatedAt : null,
+            UpdatedAt = p.UpdatedAt,      // 목록·대시보드의 '최근 변경' 정렬에도 쓴다
             Chip = ProjectChip(p.State, delayDays),
             StateLabel = StateLabel(p.State, delayDays),
-            ReplanCount = expected != null ? Rules.ReplanMoves(p, cal, today, expected).Count : 0,
-            LinkViolations = crossLinks == null ? null : stages.Sum(s => s.CrossLinks.Count(x => x.Violated)),
+            ReplanCount = withWorks && expected != null ? Rules.ReplanMoves(p, cal, today, expected).Count : 0,
+            LinkViolations = linkViolations,
+            Risks = risks,
+            RiskDays = Rules.RiskDays(risks),
+            AtRisk = Rules.AtRisk(delayDays, risks),
+            Stale = utcNow != null && Rules.IsStale(p.State, p.UpdatedAt, utcNow.Value),
         };
     }
 

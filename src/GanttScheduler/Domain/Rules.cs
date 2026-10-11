@@ -829,4 +829,73 @@ public static class Rules
             if (b == null || seen.Add(b.Value)) count++;
         return count;
     }
+
+    // ── 지연 위험·정체 (조기 경보) ──────────────────────────────────────
+    // '지연'은 목표일이 지난 단계만 센다. 그 전에 보이는 신호(예상 초과·기한 지난 작업·기준선 대비 밀림·과제 간 연결 위반)를
+    // 대시보드·목록·주간 보고가 같은 판정으로 보이도록 여기서 이유 목록으로 만든다
+
+    // 기준선 대비 목표 종료가 이 일수 이상 밀리면 위험 이유로 본다
+    public const int RiskSlipDays = 5;
+    // 진행 과제가 이 일수 넘게 아무 변경(작업·단계·댓글·첨부 — 모두 UpdatedAt 을 갱신한다)이 없으면 정체
+    public const int StaleDays = 14;
+
+    // Kind: forecast(단계 예상 종료가 목표일을 넘음 — Days = 가장 큰 초과 일수), lateWorks(기한 지난 미완료 작업 — Count),
+    // slip(기준선 대비 목표 종료 밀림 — Days), links(과제 간 단계 연결 위반 — Count). Text 는 화면에 그대로 쓰는 한 줄
+    public record RiskReason(string Kind, int Value, string Text);
+
+    // 진행 과제의 위험 이유. expected: 전진 계산(ForwardPass) 결과 — 주면 작업 의존이 전파된 예상 종료로, 없으면 작업별 간단한 계산으로 본다.
+    // linkViolations: 위반한 과제 간 연결 수(연결을 읽지 않은 경로는 null — 이유에서 빠진다)
+    public static List<RiskReason> RiskReasons(Project p, DateOnly today, IReadOnlyDictionary<WorkItem, Expected>? expected = null, int? linkViolations = null)
+    {
+        var list = new List<RiskReason>();
+        if (p.State != ProjectState.Active) return list;
+
+        Stage? worst = null;
+        var over = 0;
+        var lateWorks = 0;
+        foreach (var s in Ordered(p))
+        {
+            if (s.CompletedDate != null) continue;
+            var d = ForecastOverDays(s, today, expected);
+            if (d > over) { over = d; worst = s; }
+            lateWorks += s.Works.Count(w => IsLate(w, s, today));
+        }
+        if (over > 0) list.Add(new RiskReason("forecast", over, $"'{worst!.Name}' 예상 종료가 목표일보다 {over}일 늦음"));
+        if (lateWorks > 0) list.Add(new RiskReason("lateWorks", lateWorks, $"기한 지난 작업 {lateWorks}건"));
+        if (EndTarget(p) is { } end && BaselineEnd(p) is { } baseEnd && end.DayNumber - baseEnd.DayNumber is var slip && slip >= RiskSlipDays)
+            list.Add(new RiskReason("slip", slip, $"기준선보다 목표 종료 {slip}일 밀림"));
+        if (linkViolations is > 0)
+            list.Add(new RiskReason("links", linkViolations.Value, $"다른 과제 단계 연결 위반 {linkViolations}건"));
+        return list;
+    }
+
+    // 예상 지연 일수(주간 보고·간트의 '예상 지연 +n일'): 단계 예상 종료가 목표일을 넘는 가장 큰 일수. 다른 이유만 있으면 0
+    public static int RiskDays(IEnumerable<RiskReason> reasons) =>
+        reasons.Where(r => r.Kind == "forecast").Select(r => r.Value).DefaultIfEmpty(0).Max();
+
+    // 지연 위험 과제: 아직 지연(목표일 지난 단계)은 아니지만 이유가 있는 진행 과제. 지연 과제는 '지연'으로 따로 센다
+    public static bool AtRisk(int delayDays, IReadOnlyCollection<RiskReason> reasons) => delayDays == 0 && reasons.Count > 0;
+
+    // 정체: 진행 과제인데 마지막 변경이 StaleDays 일 넘게 지남
+    public static bool IsStale(ProjectState state, DateTime updatedAtUtc, DateTime utcNow) =>
+        state == ProjectState.Active && utcNow - updatedAtUtc > TimeSpan.FromDays(StaleDays);
+
+    // ── 작업 진행률·실적 (작업 시트·내 할 일 빠른 갱신 공용) ────────────
+    // 같은 입력이 어느 화면에서 왔든 같은 값이 저장되도록 한 곳에 둔다:
+    // 실적 종료가 있으면 진행률 100%, 진행률만 올렸으면(실적 시작 없음) 접속자의 오늘 시작한 것으로 본다(UserToday)
+    public static void ValidateActuals(DateOnly? actualStart, DateOnly? actualEnd, int progress)
+    {
+        if (actualEnd != null && actualStart == null)
+            throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
+        if (actualStart != null && actualEnd != null && actualStart.Value > actualEnd.Value)
+            throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
+        ValidateProgress(progress);
+    }
+
+    public static (int Progress, DateOnly? ActualStart) WorkActuals(int progress, DateOnly? actualStart, DateOnly? actualEnd, DateOnly? clientToday, DateOnly today)
+    {
+        if (actualEnd != null) return (100, actualStart);
+        if (progress > 0 && actualStart == null) return (progress, UserToday(clientToday, today));
+        return (progress, actualStart);
+    }
 }

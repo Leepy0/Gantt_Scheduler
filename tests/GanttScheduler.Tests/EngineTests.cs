@@ -737,9 +737,15 @@ public class EngineServiceTests : IClassFixture<TestDb>
         var theirs = Assert.Single(pv.Stages[0].CrossLinks);
         Assert.Equal(("succ", q, true), (theirs.Role, theirs.ProjectId, theirs.Violated));
         Assert.Equal(((int?)1, (int?)1), (qv.LinkViolations, pv.LinkViolations));
-        // 연결을 읽지 않는 목록·대시보드 경로는 0(위반 없음)이 아니라 null(모름)
+        // 목록·대시보드도 과제 간 연결을 읽어 위반을 센다(조기 경보 — S7). 연결을 넘기지 않는 순수 계산(옛 호출)은 null(모름)
         using (var s = _db.NewScope())
-            Assert.Null(Assert.Single(await s.Dashboard.ListAsync(new ProjectFilter(null, null, null, null, false)), v => v.Id == q).LinkViolations);
+        {
+            var listed = Assert.Single(await s.Dashboard.ListAsync(new ProjectFilter(null, null, null, null, false)), v => v.Id == q);
+            Assert.Equal(1, listed.LinkViolations);
+            Assert.Contains(listed.Risks, r => r.Kind == "links" && r.Value == 1);
+            Assert.Null(Dashboard.Filter(await s.Projects.AllAsync(), await s.Projects.LocationsAsync(), _db.Clock.Today,
+                new ProjectFilter(null, null, null, null, false), _db.Me.Id).Single(v => v.Id == q).LinkViolations);
+        }
         Assert.Equal(Day(10, 16), qv.Stages[0].TargetDate);                // 자동으로 옮기지 않는다
         Assert.NotEqual(qUpdated, qv.UpdatedAt);                             // 상대 과제 화면의 변경 띠가 뜨도록
 

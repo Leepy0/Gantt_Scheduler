@@ -157,6 +157,12 @@ public class TrashTests : IClassFixture<TestDb>
             await s.Projects.AddStageLinkAsync(new StageLinkInput(succStage, predStage, "pred", 0));
         }
         Assert.Equal(1, (await ViewAsync(succ)).LinkViolations);
+        using (var s = _db.NewScope())
+        {
+            Assert.Contains(await s.Projects.AllCrossLinksAsync(), l => l.PredecessorStageId == predStage);
+            await s.Projects.CommentAsync(new CommentInput(pred, null, null, "휴지통 사유 댓글"));
+            Assert.True((await s.Projects.RecentNotesAsync(new[] { pred })).ContainsKey(pred));
+        }
 
         using (var s = _db.NewScope())
             await s.Projects.DeleteAsync(pred);
@@ -165,12 +171,17 @@ public class TrashTests : IClassFixture<TestDb>
         Assert.Empty(view.Stages[0].CrossLinks);
         using (var s = _db.NewScope())
         {
+            // 대시보드·목록의 조기 경보도 같은 규칙: 휴지통 과제와의 연결·사유는 세지 않는다
+            Assert.DoesNotContain(await s.Projects.AllCrossLinksAsync(), l => l.PredecessorStageId == predStage);
+            Assert.Empty(await s.Projects.RecentNotesAsync(new[] { pred }));
             Assert.True(await s.Db.StageLinks.AnyAsync(l => l.PredecessorStageId == predStage));
             // 휴지통의 과제와는 새로 잇지 않는다
             await Assert.ThrowsAsync<RuleException>(() => s.Projects.AddStageLinkAsync(new StageLinkInput(succStage, predStage, "succ", 0)));
             await s.Projects.RestoreAsync(pred);
         }
         Assert.Equal(1, (await ViewAsync(succ)).LinkViolations);
+        using (var s = _db.NewScope())
+            Assert.Contains(await s.Projects.AllCrossLinksAsync(), l => l.PredecessorStageId == predStage);
     }
 
     [Fact]

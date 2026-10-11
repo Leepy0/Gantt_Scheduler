@@ -58,6 +58,10 @@
             {
                 <partial name="_StatusChip" model="p.Chip" />
             }
+            @if (p.RiskChip != null)
+            {
+                <span data-risk-chip><partial name="_StatusChip" model="p.RiskChip" /></span>
+            }
             <span class="spacer"></span>
             <span class="muted">@p.Category · @p.Corporation · @p.Owner · 진행률 @p.Progress%@(p.CurrentStage == null ? "" : " · " + p.CurrentStage + (p.CurrentTarget == null ? "" : " 목표 " + p.CurrentTarget.Value.ToString("MM-dd")))</span>
         </header>

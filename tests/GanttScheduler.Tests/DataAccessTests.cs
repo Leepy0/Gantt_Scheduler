@@ -398,8 +398,9 @@ public class DataAccessTests : IClassFixture<TestDb>
         }
 
         using var c = _db.NewScope();
-        var all = await c.Projects.AllAsync();
+        var all = await c.Projects.AllAsync(withLinks: true);
         var locations = await c.Projects.LocationsAsync();
+        var risk = new RiskContext(await c.Projects.CalendarAsync(), await c.Projects.AllCrossLinksAsync(), _db.Clock.UtcNow);
         Assert.Contains(all, p => p.Id == doneId && p.State == ProjectState.Done);
 
         foreach (var (key, _) in Pages.Projects.IndexModel.States)
@@ -407,7 +408,7 @@ public class DataAccessTests : IClassFixture<TestDb>
             foreach (var mine in new[] { false, true })
             {
                 var filter = new ProjectFilter(null, null, null, key, mine);
-                var want = Dashboard.Filter(all, locations, Today, filter, _db.Me.Id).Select(v => v.Id).ToList();
+                var want = Dashboard.Filter(all, locations, Today, filter, _db.Me.Id, risk).Select(v => v.Id).ToList();
                 var got = (await c.Dashboard.ListAsync(filter)).Select(v => v.Id).ToList();
                 Assert.Equal(want, got);
             }
@@ -415,7 +416,7 @@ public class DataAccessTests : IClassFixture<TestDb>
         var cat = all.First(p => p.Id == doneId).CategoryId;
         var corp = all.First(p => p.Id == doneId).CorporationId;
         var narrowed = new ProjectFilter(null, cat, corp, "all", false);
-        Assert.Equal(Dashboard.Filter(all, locations, Today, narrowed, _db.Me.Id).Select(v => v.Id),
+        Assert.Equal(Dashboard.Filter(all, locations, Today, narrowed, _db.Me.Id, risk).Select(v => v.Id),
             (await c.Dashboard.ListAsync(narrowed)).Select(v => v.Id));
 
         // 주간 보고: 진행 과제 + 그 주에 움직인 과제만 읽어도 같은 보고
@@ -423,7 +424,7 @@ public class DataAccessTests : IClassFixture<TestDb>
         var start = KoreaClock.StartOfDayUtc(from);
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
         var acts = await c.Db.Activities.AsNoTracking().Include(a => a.User).Where(a => a.At >= start && a.At < end).ToListAsync();
-        var wantWeekly = Reporting.Weekly(all, acts, locations, from, to, Today);
+        var wantWeekly = Reporting.Weekly(all, acts, locations, from, to, Today, risk.Calendar);
         var gotWeekly = await c.Insights.WeeklyAsync(null, false);
         Assert.Equal(JsonSerializer.Serialize(wantWeekly), JsonSerializer.Serialize(gotWeekly));
         Assert.Contains(gotWeekly.Projects, p => p.Id == doneId);
@@ -442,7 +443,7 @@ public class DataAccessTests : IClassFixture<TestDb>
         using var s = _db.NewScope();
         var all = await s.Projects.AllAsync();
         var locations = await s.Projects.LocationsAsync();
-        var dash = Dashboard.Build(all, locations, Today);
+        var dash = Dashboard.Build(all, locations, Today, new DashboardQuery(Scope: "all"));
         var full = all.Where(p => p.State == ProjectState.Active)
             .Select(p => Views.Project(p, Today, locations, detail: false, withWorks: false)).ToList();
         Assert.Equal(full.Count, dash.Timeline.Count);
