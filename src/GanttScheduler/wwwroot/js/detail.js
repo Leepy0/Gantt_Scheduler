@@ -153,7 +153,9 @@
             '<div class="summary-actions">' +
             '<a class="btn small" href="' + App.url('/Projects/Edit?id=' + P.id) + '">' + icon('edit') + '수정</a>' +
             '<button type="button" class="btn small" id="btn-clone">' + icon('copy') + '복제</button>' +
-            '<button type="button" class="btn small" id="btn-baseline">' + icon('pin') + (P.baselineAt ? '기준선 다시 확정' : '기준선 확정') + '</button>' +
+            // 기준선 다시 확정은 담당자·관리자만 (서버가 canRebaseline 으로 알려 준다)
+            (P.baselineAt && !P.canRebaseline ? ''
+                : '<button type="button" class="btn small" id="btn-baseline">' + icon('pin') + (P.baselineAt ? '기준선 다시 확정' : '기준선 확정') + '</button>') +
             '<a class="btn small" href="' + detailUrl('Excel') + '&id=' + P.id + '">' + icon('download') + 'Excel</a>' +
             '<a class="btn small" href="' + detailUrl('Pdf') + '&id=' + P.id + '">' + icon('download') + 'PDF</a>' +
             // 인쇄는 데스크톱에서 쓴다 — 모바일에서는 단추 줄만 늘리므로 숨긴다
@@ -619,9 +621,11 @@
     function checksHtml(s) {
         if (!s.checks.length) return '<li class="muted">체크 항목이 없습니다.</li>';
         return s.checks.map(function (c) {
-            return '<li><label class="check"><input type="checkbox" data-check="' + c.id + '"' + (c.done ? ' checked' : '') + ' />' +
+            return '<li data-check-row="' + c.id + '"><label class="check"><input type="checkbox" data-check="' + c.id + '"' + (c.done ? ' checked' : '') + ' />' +
                 '<span>' + esc(c.text) + '</span></label>' +
                 (c.done && c.doneBy ? '<span class="muted check-by">' + esc(c.doneBy) + '</span>' : '') +
+                // 완료한 단계의 완료 조건 문구는 고칠 수 없다(서버도 거절한다)
+                (s.completedDate ? '' : '<button type="button" class="btn icon small ghost" data-edit-check="' + c.id + '" aria-label="항목 문구 고치기" title="문구 고치기">' + icon('edit') + '</button>') +
                 '<button type="button" class="btn icon small ghost" data-del-check="' + c.id + '" aria-label="항목 삭제">' + icon('x') + '</button></li>';
         }).join('');
     }
@@ -800,25 +804,42 @@
                 '<button type="button" class="btn small" data-move="1"' + (index >= P.stages.length - 1 ? ' disabled' : '') + '>' + icon('down') + '뒤로</button></div></div>';
         }
 
+        function stageConflict(form, sheet) {
+            var cur = stageById(sid);
+            if (!cur) return '다른 사용자가 이 단계를 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
+            sheet.clearConflictNotes();
+            var f = form.elements;
+            mergeField(sheet, f.name, 'name', s.name, cur.name);
+            mergeField(sheet, f.targetDate, 'targetDate', s.targetDate, cur.targetDate, cur.targetDate || '미정');
+            mergeField(sheet, f.completedDate, 'completedDate', s.completedDate, cur.completedDate, cur.completedDate ? '완료 ' + cur.completedDate : '완료 취소');
+            s = cur;
+            version = cur.version;
+            refreshUi();
+            return CONFLICT;
+        }
+        // 저장 단추 밖의 동작(삭제·순서·체크리스트)이 409 면 저장과 같이 최신 버전으로 맞추고 알린다
+        function stageFail(sheet, err) {
+            var message = err.message;
+            if (err.status === 409) message = stageConflict(sheet.form, sheet) || message;
+            sheet.setError(message, err.field);
+        }
+        // 체크리스트를 바꾸면 단계 버전이 오른다. 이 시트가 저장하는 칸(이름·목표일·완료일)이 그대로면 새 버전을 받아들인다 —
+        // 그러지 않으면 내가 체크한 뒤 단계를 저장할 때 스스로 충돌한다. 그 칸을 다른 사람이 바꿨으면 그대로 두어 저장할 때 맞춘다
+        function adoptVersion() {
+            var cur = stageById(sid);
+            if (cur && cur.name === s.name && cur.targetDate === s.targetDate && cur.completedDate === s.completedDate) {
+                s = cur;
+                version = cur.version;
+            }
+        }
+
         App.sheet({
             title: isNew ? '단계 추가' : '단계 · ' + s.name,
             html: html,
             primary: isNew ? '추가' : '저장',
             draftKey: 'stage.' + (isNew ? 'new.' + P.id : sid),
             // 다른 사용자가 먼저 고쳤으면: 최신 버전으로 바꾸고, 그 사람이 바꾼 값을 항목 옆에 보인다. 입력한 값은 그대로 둔다
-            onConflict: isNew ? null : function (form, sheet) {
-                var cur = stageById(sid);
-                if (!cur) return '다른 사용자가 이 단계를 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
-                sheet.clearConflictNotes();
-                var f = form.elements;
-                mergeField(sheet, f.name, 'name', s.name, cur.name);
-                mergeField(sheet, f.targetDate, 'targetDate', s.targetDate, cur.targetDate, cur.targetDate || '미정');
-                mergeField(sheet, f.completedDate, 'completedDate', s.completedDate, cur.completedDate, cur.completedDate ? '완료 ' + cur.completedDate : '완료 취소');
-                s = cur;
-                version = cur.version;
-                refreshUi();
-                return CONFLICT;
-            },
+            onConflict: isNew ? null : stageConflict,
             danger: isNew ? null : {
                 label: '단계 삭제',
                 onClick: async function (sheet) {
@@ -829,10 +850,11 @@
                     });
                     if (!ok) return;
                     try {
-                        await api('DeleteStage', { id: sid });
+                        // 시트를 연 뒤 다른 사람이 바꾼 단계(작업이 늘었을 수 있다)를 모르고 지우지 않게 본 버전을 함께 보낸다
+                        await api('DeleteStage', { id: sid, version: version });
                         sheet.close();
                         App.toast('단계를 삭제했습니다.');
-                    } catch (err) { sheet.setError(err.message, err.field); }
+                    } catch (err) { stageFail(sheet, err); }
                 }
             },
             onOpen: function (form, sheet) {
@@ -894,11 +916,17 @@
                 if (clearBtn) clearBtn.addEventListener('click', function () { done.value = ''; onDone(); });
 
                 form.querySelectorAll('[data-move]').forEach(function (b) {
-                    b.addEventListener('click', async function () {
-                        try {
-                            await api('MoveStage', { id: sid, dir: +b.dataset.move });
-                            sheet.close();
-                        } catch (err) { sheet.setError(err.message, err.field); }
+                    b.addEventListener('click', function () {
+                        App.busy(b, async function () {
+                            // 맞바꿀 이웃 단계와 두 단계의 버전을 보낸다 — 그 사이 순서가 바뀌었으면 서버가 409 로 알린다
+                            var i = P.stages.findIndex(function (x) { return x.id === sid; });
+                            var other = P.stages[i + (+b.dataset.move < 0 ? -1 : 1)];
+                            try {
+                                await api('MoveStage', { id: sid, dir: +b.dataset.move, version: version,
+                                    otherId: other ? other.id : null, otherVersion: other ? other.version : null });
+                                sheet.close();
+                            } catch (err) { stageFail(sheet, err); }
+                        });
                     });
                 });
 
@@ -911,12 +939,26 @@
                         checksEl.innerHTML = checksHtml(cur);
                         form.querySelector('[data-check-count]').textContent = cur.checkTotal ? cur.checkDone + '/' + cur.checkTotal : '';
                     };
-                    var run = async function (handler, body) {
-                        try {
-                            await api(handler, body);
-                            sheet.setError(null);
-                        } catch (err) { sheet.setError(err.message, err.field); }
-                        refresh();
+                    // 체크리스트 변경은 단계 버전을 확인·증가시키므로 한 번에 하나씩 차례로 보낸다(빠르게 여러 개 눌러도
+                    // 앞 응답의 새 버전으로 다음을 보낸다). 버전은 보낼 때 화면이 아는 최신 단계 버전
+                    var queue = Promise.resolve();
+                    var run = function (handler, body) {
+                        var next = queue.then(async function () {
+                            var cur = stageById(sid);
+                            body.version = cur ? cur.version : version;
+                            try {
+                                await api(handler, body);
+                                sheet.setError(null);
+                                adoptVersion();
+                                return true;
+                            } catch (err) {
+                                if (err.status === 409) adoptVersion();
+                                sheet.setError(err.message, err.field);
+                                return false;
+                            } finally { refresh(); }
+                        });
+                        queue = next.catch(function () { });
+                        return next;
                     };
                     refresh();
                     checksEl.addEventListener('change', function (e) {
@@ -925,12 +967,36 @@
                     });
                     checksEl.addEventListener('click', function (e) {
                         var del = e.target.closest('[data-del-check]');
-                        if (del) run('DeleteCheck', { id: +del.dataset.delCheck });
+                        if (del) { run('DeleteCheck', { id: +del.dataset.delCheck }); return; }
+                        var edit = e.target.closest('[data-edit-check]');
+                        if (edit) editCheck(+edit.dataset.editCheck);
                     });
+                    // 문구 고치기: 그 줄을 입력칸으로 바꾸고 Enter·저장으로 보낸다(Esc·취소는 되돌림). 서버가 '옛 → 새' 이력을 남긴다
+                    var editCheck = function (id) {
+                        var row = checksEl.querySelector('[data-check-row="' + id + '"]');
+                        var cur = stageById(sid);
+                        var item = cur && cur.checks.filter(function (c) { return c.id === id; })[0];
+                        if (!row || !item) return;
+                        row.innerHTML = '<input data-edit-text maxlength="200" aria-label="체크 항목 문구" value="' + esc(item.text) + '" />' +
+                            '<button type="button" class="btn small" data-edit-save>저장</button>' +
+                            '<button type="button" class="btn small ghost" data-edit-cancel>취소</button>';
+                        var box = row.querySelector('[data-edit-text]');
+                        box.focus();
+                        var save = function () {
+                            if (!box.value.trim() || box.value.trim() === item.text) { refresh(); return; }
+                            run('SaveCheck', { stageId: sid, id: id, text: box.value });
+                        };
+                        row.querySelector('[data-edit-save]').addEventListener('click', save);
+                        row.querySelector('[data-edit-cancel]').addEventListener('click', function () { refresh(); });
+                        box.addEventListener('keydown', function (e) {
+                            if (e.key === 'Enter') { e.preventDefault(); save(); }
+                            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); refresh(); }
+                        });
+                    };
                     var input = form.querySelector('[data-new-check]');
                     var add = function () {
                         if (!input.value.trim()) return;
-                        run('SaveCheck', { stageId: sid, id: null, text: input.value }).then(function () { input.value = ''; });
+                        run('SaveCheck', { stageId: sid, id: null, text: input.value }).then(function (ok) { if (ok) input.value = ''; });
                     };
                     form.querySelector('[data-add-check]').addEventListener('click', add);
                     input.addEventListener('keydown', function (e) {
@@ -1270,13 +1336,14 @@
             }).filter(Boolean).join(', ') || '없음';
         }
         var preview = null;
+        var workConflict = null;     // 아래 onConflict — 삭제가 409 일 때도 같은 맞추기를 한다
 
         App.sheet({
             title: isNew ? '작업 추가' : '작업 · ' + w.title,
             html: html,
             primary: isNew ? '추가' : '저장',
             draftKey: 'work.' + (isNew ? 'new.' + P.id : w.id),
-            onConflict: isNew ? null : function (form, sheet) {
+            onConflict: isNew ? null : workConflict = function (form, sheet) {
                 var cur = workById(w.id);
                 if (!cur) return '다른 사용자가 이 작업을 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
                 sheet.clearConflictNotes();
@@ -1318,10 +1385,15 @@
                     var ok = await App.confirm({ title: '작업 삭제', message: '"' + w.title + '" 작업을 삭제합니다. 되돌릴 수 없습니다.', verb: '작업 삭제' });
                     if (!ok) return;
                     try {
-                        await api('DeleteWork', { id: w.id });
+                        // 시트를 연 뒤 다른 사람이 실적·일정을 적었으면 모르고 지우지 않게 본 버전을 함께 보낸다
+                        await api('DeleteWork', { id: w.id, version: w.version });
                         sheet.close();
                         App.toast('작업을 삭제했습니다.');
-                    } catch (err) { sheet.setError(err.message, err.field); }
+                    } catch (err) {
+                        var message = err.message;
+                        if (err.status === 409 && workConflict) message = workConflict(sheet.form, sheet) || message;
+                        sheet.setError(message, err.field);
+                    }
                 }
             },
             onOpen: function (form, sheet) {
@@ -1475,19 +1547,35 @@
         });
     }
 
+    // 기준선 확정. 다시 확정하면 '기준선 대비 +n일'이 0 으로 돌아가므로 사유를 받고(이력에 직전·새 목표 종료가 남는다), 과제 버전을 확인한다
     async function setBaseline() {
-        if (P.baselineAt) {
-            var ok = await App.confirm({
-                title: '기준선 다시 확정',
-                message: '지금의 목표 일정으로 기준선을 덮어씁니다. 이전 기준선은 되돌릴 수 없습니다.',
-                verb: '다시 확정'
-            });
-            if (!ok) return;
+        if (!P.baselineAt) {
+            try {
+                await api('Baseline', { id: P.id, version: P.version });
+                App.toast('지금의 목표 일정을 기준선으로 확정했습니다.');
+            } catch (err) { App.toast(err.message, 'error'); }
+            return;
         }
-        try {
-            await api('Baseline', { id: P.id });
-            App.toast('지금의 목표 일정을 기준선으로 확정했습니다.');
-        } catch (err) { App.toast(err.message, 'error'); }
+        var opened = P.version;
+        App.sheet({
+            title: '기준선 다시 확정',
+            primary: '다시 확정',
+            html: '<p class="form-warn">' + icon('alert') + '<span>지금의 목표 일정으로 기준선을 덮어씁니다. 기준선 대비 밀린 일수가 0 으로 돌아가고 이전 기준선은 되돌릴 수 없습니다.</span></p>' +
+                '<div class="form-note" data-baseline-ends>' + icon('pin') + '<span>기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' + esc(P.endTarget || '미정') + '</b>' +
+                (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '') + '</span></div>' +
+                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="500" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
+            // 다른 사람이 과제를 바꿨으면 최신 일정을 보고 다시 확정하게 한다 (api 가 P 를 최신으로 바꿔 둔다)
+            onConflict: function (form) {
+                opened = P.version;
+                form.querySelector('[data-baseline-ends] span').innerHTML = '기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' +
+                    esc(P.endTarget || '미정') + '</b>' + (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '');
+                return '다른 사용자가 먼저 과제를 바꿨습니다. 최신 목표 일정을 확인한 뒤 다시 확정해 주세요.';
+            },
+            onSubmit: async function (form) {
+                await api('Baseline', { id: P.id, reason: form.elements.reason.value, version: opened });
+                App.toast('기준선을 다시 확정했습니다.');
+            }
+        });
     }
 
     async function deleteProject() {

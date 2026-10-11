@@ -625,6 +625,9 @@ public static class Rules
     public static bool CanDeleteAttachment(Attachment a, int? projectOwnerId, int? userId, bool isAdmin) =>
         isAdmin || (userId != null && (a.UploadedById == userId || projectOwnerId == userId));
 
+    // 기준선 다시 확정: 기준선 대비 밀린 기록을 0 으로 되돌리므로 과제 담당자·관리자만 (처음 확정은 누구나)
+    public static bool CanRebaseline(Project p, int? userId, bool isAdmin) => isAdmin || (userId != null && p.OwnerId == userId);
+
     // ── 단계 일정 계획: 목표일 초안·근무일 간격 ─────────────────────────
     // 기본 기간(StageTemplate.DefaultWorkDays)·초안·간격·리드타임 힌트가 모두 같은 거리를 쓴다:
     // "앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지의 근무일 거리(WorkCalendar.Distance)".

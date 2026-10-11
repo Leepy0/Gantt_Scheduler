@@ -26,10 +26,14 @@ public class DetailModel : PageModel
         _clock = clock;
     }
 
-    public record IdInput(int Id);
-    public record MoveInput(int Id, int Dir);
+    // Version: 화면이 본 버전 (단계·작업 삭제는 그 항목, 체크 항목은 그 단계의 버전). 없으면 확인하지 않는다(예전 화면 호환)
+    public record IdInput(int Id, int? Version = null);
+    // OtherId·OtherVersion: 화면이 본 맞바꿀 이웃 단계와 그 버전
+    public record MoveInput(int Id, int Dir, int? Version = null, int? OtherId = null, int? OtherVersion = null);
     public record StateInput(int ProjectId, string? State, string? Reason, int? Version);
-    public record ToggleInput(int Id, bool Done);
+    public record ToggleInput(int Id, bool Done, int? Version = null);
+    // 기준선 확정·다시 확정 (다시 확정은 사유 필수, 담당자·관리자만)
+    public record BaselineInput(int Id, string? Reason = null, int? Version = null);
     public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
 
     public ProjectView Project { get; private set; } = null!;
@@ -183,16 +187,16 @@ public class DetailModel : PageModel
         Run(input.ProjectId, () => _projects.RemoveStageLinkAsync(input));
 
     public Task<IActionResult> OnPostMoveStageAsync([FromBody] MoveInput input) =>
-        Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir));
+        Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir, input.Version, input.OtherId, input.OtherVersion));
 
     public Task<IActionResult> OnPostDeleteStageAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteStageAsync(input.Id));
+        Run(null, () => _projects.DeleteStageAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostSaveWorkAsync([FromBody] WorkInput input) =>
         Run(null, () => _projects.SaveWorkAsync(input));
 
     public Task<IActionResult> OnPostDeleteWorkAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteWorkAsync(input.Id));
+        Run(null, () => _projects.DeleteWorkAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostCommentAsync([FromBody] CommentInput input) =>
         Run(input.ProjectId, async () => { await _projects.CommentAsync(input); return input.ProjectId; });
@@ -206,17 +210,17 @@ public class DetailModel : PageModel
             return input.ProjectId;
         });
 
-    public Task<IActionResult> OnPostBaselineAsync([FromBody] IdInput input) =>
-        Run(input.Id, async () => { await _projects.SetBaselineAsync(input.Id); return input.Id; });
+    public Task<IActionResult> OnPostBaselineAsync([FromBody] BaselineInput input) =>
+        Run(input.Id, async () => { await _projects.SetBaselineAsync(input.Id, input.Reason, input.Version); return input.Id; });
 
     public Task<IActionResult> OnPostSaveCheckAsync([FromBody] CheckInput input) =>
         Run(null, () => _projects.SaveCheckAsync(input));
 
     public Task<IActionResult> OnPostToggleCheckAsync([FromBody] ToggleInput input) =>
-        Run(null, () => _projects.ToggleCheckAsync(input.Id, input.Done));
+        Run(null, () => _projects.ToggleCheckAsync(input.Id, input.Done, input.Version));
 
     public Task<IActionResult> OnPostDeleteCheckAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteCheckAsync(input.Id));
+        Run(null, () => _projects.DeleteCheckAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostDeleteFileAsync([FromBody] IdInput input) =>
         Run(null, () => _files.DeleteAsync(input.Id));

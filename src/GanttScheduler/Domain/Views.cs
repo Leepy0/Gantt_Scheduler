@@ -145,6 +145,7 @@ public record ProjectView
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (지연이면 '지연 D+n')
     public string StateLabel { get; init; } = "";       // 표 글자 (지연이면 '지연', 아니면 진행·보류·중단·완료)
     public bool CanDelete { get; init; }                // 지금 사용자가 과제를 지울 수 있는지 (상세 화면에서만 채운다)
+    public bool CanRebaseline { get; init; }            // 지금 사용자가 기준선을 다시 확정할 수 있는지 (담당자·관리자, 상세 화면에서만)
     public int ReplanCount { get; init; }               // 예측과 목표가 다른 미착수 작업 수 (Rules.ReplanMoves — 상세의 '재계획')
     // 위반한 과제 간 단계 연결 수. 연결을 읽은 경로(상세 — ProjectService.ViewAsync)에서만 센다. 대시보드·목록은 연결을 읽지 않으므로
     // null(모름)이다 — 0(위반 없음)과 구별해, 그 경로의 위험 판정에 쓰려면 연결을 읽어 Views.Project 에 넘겨야 함을 드러낸다
