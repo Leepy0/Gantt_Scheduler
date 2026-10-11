@@ -242,8 +242,9 @@ public static class Views
         };
     }
 
+    // expected: 이미 계산한 예상 일정(Rules.ForwardPass)이 있으면 다시 계산하지 않는다 (Project 가 재계획 수와 함께 쓴다)
     public static List<StageView> Stages(Project p, DateOnly today, int oceanLeadDays, bool withWorks, WorkCalendar? calendar = null,
-        IReadOnlyList<StageLink>? crossLinks = null)
+        IReadOnlyList<StageLink>? crossLinks = null, IReadOnlyDictionary<WorkItem, Rules.Expected>? expected = null)
     {
         var cal = calendar ?? WorkCalendar.WeekendsOnly;
         var list = new List<StageView>();
@@ -253,13 +254,12 @@ public static class Views
 
         // 의존 관계에서 나오는 값은 작업을 내보낼 때만 계산한다
         IReadOnlyDictionary<int, int>? floats = null;
-        Dictionary<WorkItem, Rules.Expected>? expected = null;
         var preds = new Dictionary<int, List<int>>();
         var violated = new HashSet<int>();
         if (withWorks)
         {
             floats = Rules.Floats(p, cal);
-            expected = Rules.ForwardPass(p, cal, today);
+            expected ??= Rules.ForwardPass(p, cal, today);
             var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
             foreach (var st in p.Stages)
                 foreach (var w in st.Works) byId[w.Id] = (w, st);
@@ -339,7 +339,10 @@ public static class Views
         var current = Rules.CurrentStage(p);
         var delayed = Rules.MostDelayedStage(p, today);
         var delayDays = Rules.DelayDays(p, today);
-        var stages = Stages(p, today, lead, withWorks, calendar, crossLinks);
+        var cal = calendar ?? WorkCalendar.WeekendsOnly;
+        // 오늘 기준 예상 일정은 한 번만 계산해 단계·작업 표시와 재계획 수에 같이 쓴다
+        var expected = withWorks ? Rules.ForwardPass(p, cal, today) : null;
+        var stages = Stages(p, today, lead, withWorks, cal, crossLinks, expected);
         var endTarget = Rules.EndTarget(p);
         var baselineEnd = Rules.BaselineEnd(p);
 
@@ -375,7 +378,7 @@ public static class Views
             UpdatedAt = detail ? p.UpdatedAt : null,
             Chip = ProjectChip(p.State, delayDays),
             StateLabel = StateLabel(p.State, delayDays),
-            ReplanCount = withWorks ? Rules.ReplanMoves(p, calendar ?? WorkCalendar.WeekendsOnly, today).Count : 0,
+            ReplanCount = expected != null ? Rules.ReplanMoves(p, cal, today, expected).Count : 0,
             LinkViolations = stages.Sum(s => s.CrossLinks.Count(x => x.Violated)),
         };
     }
