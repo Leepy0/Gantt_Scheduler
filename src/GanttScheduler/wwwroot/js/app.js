@@ -321,6 +321,8 @@
             // 코드로 닫기(삭제·이동 뒤 등) — 묻지 않는다
             close: function () { dlg.close(); },
             isDirty: function () { return state() !== initial; },
+            // 지금 입력을 '바뀌지 않은 상태'로 본다 — 시트를 열어 둔 채 저장하고 이어서 입력할 때(저장 후 계속 추가)
+            markClean: function () { initial = state(); if (draftKey) App.draft.clear(draftKey); },
             saveDraft: saveDraft,
             setError: function (message, field) {
                 form.querySelectorAll('.field.invalid').forEach(function (f) { f.classList.remove('invalid'); });

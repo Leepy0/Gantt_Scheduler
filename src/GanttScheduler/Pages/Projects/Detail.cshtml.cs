@@ -218,6 +218,22 @@ public class DetailModel : PageModel
     public Task<IActionResult> OnPostSaveWorkAsync([FromBody] WorkInput input) =>
         Run(null, () => _projects.SaveWorkAsync(input));
 
+    // 작업 여러 개 추가: 붙여넣은 글을 해석·검증한 표(저장하지 않는다) → 확인한 줄을 한 번에 저장
+    public async Task<IActionResult> OnPostPreviewWorksAsync([FromBody] PreviewWorksInput input)
+    {
+        try
+        {
+            return new JsonResult(new { ok = true, preview = await _projects.PreviewWorksAsync(input) });
+        }
+        catch (RuleException ex)
+        {
+            return Fail(ex);
+        }
+    }
+
+    public Task<IActionResult> OnPostAddWorksAsync([FromBody] AddWorksInput input) =>
+        Run(null, () => _projects.AddWorksAsync(input));
+
     public Task<IActionResult> OnPostDeleteWorkAsync([FromBody] IdInput input) =>
         Run(null, () => _projects.DeleteWorkAsync(input.Id, input.Version));
 
@@ -267,6 +283,15 @@ public class DetailModel : PageModel
 
     public Task<IActionResult> OnPostDeleteFileAsync([FromBody] IdInput input) =>
         Run(null, () => _files.DeleteAsync(input.Id));
+
+    // 복제 시트의 위치 연쇄 선택용 목록 (상세를 열 때마다 싣지 않고 복제할 때만 받는다)
+    public async Task<IActionResult> OnGetLocationsAsync() =>
+        new JsonResult(new
+        {
+            ok = true,
+            locations = (await _projects.LocationsAsync()).All.OrderBy(l => l.Level).ThenBy(l => l.SortOrder).ThenBy(l => l.Id)
+                .Select(l => new { id = l.Id, parentId = l.ParentId, level = l.Level, name = l.Name, active = l.IsActive }),
+        });
 
     public async Task<IActionResult> OnPostCloneAsync([FromBody] CloneInput input)
     {

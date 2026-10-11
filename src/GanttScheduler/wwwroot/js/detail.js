@@ -376,7 +376,8 @@
                 (s.checkTotal ? chip(s.checkDone === s.checkTotal ? 'ok' : '', 'tasks', '체크 ' + s.checkDone + '/' + s.checkTotal) : '') +
                 '<span class="stage-dates">' + dates + '</span></button>' + warn + cross +
                 (works ? '<ul class="work-list">' + works + '</ul>' : '') +
-                '<div class="stage-foot"><button type="button" class="btn small" data-add-work="' + s.id + '">' + icon('plus') + '작업</button></div>' +
+                '<div class="stage-foot"><button type="button" class="btn small" data-add-work="' + s.id + '">' + icon('plus') + '작업</button>' +
+                '<button type="button" class="btn small" data-add-works="' + s.id + '">' + icon('tasks') + '여러 개 추가</button></div>' +
                 '</section>';
         }).join('');
         $('schedule-list').innerHTML = html || '<div class="card"><p class="empty">단계가 없습니다. 단계를 추가해 주세요.</p></div>';
@@ -1008,6 +1009,9 @@
                     ? '<label class="check" data-close-works hidden><input type="checkbox" name="closeWorks" />' +
                       '남은 작업 ' + s.openWorks + '건을 완료일로 닫고 완료</label>'
                     : '');
+            // Excel 에서 복사한 작업 목록을 이 단계에 한 번에 넣는다
+            html += '<div class="field"><span class="label">작업</span><div class="inline-btns">' +
+                '<button type="button" class="btn small" data-stage-add-works>' + icon('tasks') + '작업 여러 개 추가</button></div></div>';
             html += '<div class="field"><span class="label">순서</span><div class="inline-btns">' +
                 '<button type="button" class="btn small" data-move="-1"' + (index <= 0 ? ' disabled' : '') + '>' + icon('up') + '앞으로</button>' +
                 '<button type="button" class="btn small" data-move="1"' + (index >= P.stages.length - 1 ? ' disabled' : '') + '>' + icon('down') + '뒤로</button></div></div>';
@@ -1123,6 +1127,14 @@
                 if (todayBtn) todayBtn.addEventListener('click', function () { done.value = userToday(); onDone(); });
                 var clearBtn = form.querySelector('[data-clear-done]');
                 if (clearBtn) clearBtn.addEventListener('click', function () { done.value = ''; onDone(); });
+
+                var addWorks = form.querySelector('[data-stage-add-works]');
+                // 단계 시트는 저장하지 않은 입력이 없을 때만 닫고 붙여넣기 시트로 넘어간다(입력이 있으면 먼저 저장하거나 버리게)
+                if (addWorks) addWorks.addEventListener('click', function () {
+                    if (sheet.isDirty()) { sheet.setError('저장하지 않은 입력이 있습니다. 먼저 저장하거나 취소한 뒤 작업을 추가해 주세요.'); return; }
+                    sheet.close();
+                    openWorksPaste(stageById(sid));
+                });
 
                 form.querySelectorAll('[data-move]').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -1440,6 +1452,12 @@
         }
     }
 
+    // 작업 여러 개 추가(붙여넣기) — works-paste.js
+    function openWorksPaste(s) {
+        if (!s) return;
+        WorksPaste.open({ stage: s, api: api, previewUrl: detailUrl('PreviewWorks') });
+    }
+
     function openWorkSheet(w, stageId) {
         var isNew = !w;
         if (isNew && !P.stages.length) { App.toast('단계를 먼저 추가해 주세요.', 'error'); return; }
@@ -1553,6 +1571,7 @@
             }).filter(Boolean).join(', ') || '없음';
         }
         var preview = null;
+        var continueNext = false;    // '저장 후 계속 추가'로 제출했는가
         var workConflict = null;     // 아래 onConflict — 삭제가 409 일 때도 같은 맞추기를 한다
 
         App.sheet({
@@ -1696,9 +1715,24 @@
                     });
                 }
                 if (!isNew) loadWorkFeed(form.querySelector('[data-feed]'), w.id);
+
+                // 새 작업: '저장 후 계속 추가' — 저장한 뒤 작업명만 비우고(담당·날짜·단계·선행은 그대로) 다음 작업을 이어서 넣는다.
+                // 제출 단추는 '추가' 하나로 두어 입력칸의 Enter 는 늘 '추가'가 되게 한다
+                if (isNew) {
+                    var foot = sheet.el.querySelector('.sheet-foot');
+                    var cont = document.createElement('button');
+                    cont.type = 'button';
+                    cont.className = 'btn';
+                    cont.setAttribute('data-continue', '');
+                    cont.textContent = '저장 후 계속 추가';
+                    cont.addEventListener('click', function () { continueNext = true; form.requestSubmit(); });
+                    foot.insertBefore(cont, foot.querySelector('button[type=submit]'));
+                }
             },
             onClose: function () { if (preview) preview.stop(); },
-            onSubmit: async function (form) {
+            onSubmit: async function (form, sheet) {
+                var again = continueNext;
+                continueNext = false;
                 var f = form.elements;
                 var quickNote = Quick.note(form);
                 // 접힌 칸(일정·선행·메모)에 걸린 오류는 펼쳐서 보이게 한다
@@ -1726,6 +1760,19 @@
                     clientToday: App.localToday()
                 });
                 } catch (err) { showField(err); throw err; }
+                if (isNew && again) {
+                    // 방금 만든 작업도 다음 작업의 선행으로 고를 수 있게 목록을 다시 그린다(고른 선행은 유지)
+                    var picked = selectedLinks(form);
+                    form.querySelector('[data-pre-list]').innerHTML = preListHtml(picked);
+                    var added = f.title.value.trim();
+                    f.title.value = '';
+                    if (sheet.markClean) sheet.markClean();
+                    sheet.setError(null);
+                    if (preview) preview.update();
+                    f.title.focus();
+                    App.toast('\'' + added + '\' 을(를) 추가했습니다. 다음 작업을 입력해 주세요.');
+                    return false;
+                }
                 // 빠른 갱신의 진행 내용 한 줄은 저장 뒤 이 작업의 진행 내용(댓글)으로 남긴다
                 if (quickNote && !isNew) {
                     try {
@@ -1770,18 +1817,36 @@
         });
     }
 
-    function openCloneSheet() {
+    // 복제: 다른 라인·법인에 같은 과제를 펼치는 일이 많아 위치와 담당을 함께 정한다(기본: 원본 위치, 나)
+    async function openCloneSheet() {
+        var locations;
+        try { locations = (await App.get(detailUrl('Locations'))).locations; }
+        catch (err) { App.toast(err.message, 'error'); return; }
+        var picker = null;
         App.sheet({
             title: '과제 복제',
             html: field('title', '새 과제명', '<input name="title" maxlength="' + LIM.projectTitle + '" required value="' + esc(P.title + ' (복제)') + '" />') +
                 field('startDate', '착수일', '<input type="date" name="startDate" required value="' + today + '" />') +
+                '<div class="field" data-field="locationId"><span class="label">위치</span>' + LocationPicker.html('clone') + '</div>' +
+                field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(data.me.name) + '" />') +
                 '<label class="check"><input type="checkbox" name="works" checked />작업과 의존 관계도 복사</label>' +
-                '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 간격 그대로 새 착수일에 맞춰 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다.</span>',
+                '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 간격 그대로 새 착수일에 맞춰 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다. 작업 담당은 원본 그대로입니다.</span>',
             primary: '복제',
+            onOpen: function (form) {
+                picker = LocationPicker.bind(form.querySelector('[data-location-picker]'), locations, P.locationId);
+                App.nameHint(form.elements.owner, data.users || [], null);
+            },
             onSubmit: async function (form) {
                 var f = form.elements;
+                var loc = picker.value();
+                if (!loc) {
+                    var bad = new Error('법인을 선택해 주세요.');
+                    bad.field = 'locationId';
+                    throw bad;
+                }
                 var r = await App.post(detailUrl('Clone'), {
-                    projectId: P.id, title: f.title.value, startDate: f.startDate.value || null, includeWorks: f.works.checked
+                    projectId: P.id, title: f.title.value, startDate: f.startDate.value || null, includeWorks: f.works.checked,
+                    locationId: loc, owner: f.owner.value
                 });
                 window.location.href = r.redirect;
                 return false;
@@ -1921,6 +1986,7 @@
         if ((t = e.target.closest('#stepper [data-stage], #schedule-list [data-stage]'))) openStageSheet(stageById(+t.dataset.stage));
         else if ((t = e.target.closest('#schedule-list [data-work]'))) openWorkSheet(workById(+t.dataset.work));
         else if ((t = e.target.closest('[data-add-work]'))) openWorkSheet(null, +t.dataset.addWork);
+        else if ((t = e.target.closest('[data-add-works]'))) openWorksPaste(stageById(+t.dataset.addWorks));
         else if ((t = e.target.closest('[data-preview]'))) previewFile(+t.dataset.preview);
         else if ((t = e.target.closest('[data-delete-file]'))) deleteFile(+t.dataset.deleteFile);
         else if (e.target.closest('#btn-state')) openStateSheet();
