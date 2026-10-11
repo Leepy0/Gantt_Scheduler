@@ -1070,6 +1070,7 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .trash-row .row-main { flex: 1 1 280px; }
 .trash-row .row-sub { white-space: normal; }
 .trash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.trash-log { min-width: 560px; }
 .trash-log td { vertical-align: top; }
 @media (max-width: 767px) {
     .trash-actions { width: 100%; }

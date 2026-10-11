@@ -59,7 +59,11 @@
     - 선행 일정이 늦어지면 **아직 시작하지 않은** 후행은 근무일 기간을 유지한 채 자동으로 밀린다(`Rules.Reschedule`). 바뀐 작업에서 닿는 후행만 위상 정렬 순서로 보고, 선행이 여럿이면 모든 선행이 정해진 뒤 가장 늦은 요구에 맞춰 **한 번만** 옮긴다. 이력은 작업당 1건(같은 BatchId). 이미 시작한 후행과 완료된 단계의 작업은 건드리지 않고, 앞으로 당기지는 않는다.
     - **여유** = 일정을 미뤄도 단계 목표일과 후행 작업에 영향이 없는 **근무일 수**. 목표일이 주말이고 작업이 직전 금요일에 끝나면 여유 0 이다. 미완료이고 여유가 0 이하인 작업이 **임계 작업**이다. 후행과의 틈도 `EarliestStart` 로 재므로 유형을 따른다(같이 시작인 후행이 꽉 차 있으면 선행도 임계).
     - **과제 간 단계 의존**(`StageLink`): 서로 다른 과제의 단계를 "선행 단계 완료일(없으면 목표일) 다음 근무일 + 간격 이후에 후행 단계 목표일"로 잇는다(`Rules.StageLinkEarliest`·`StageLinkViolated`). **자동으로 밀지 않고 위반만 계산한다** — 다른 과제 담당자의 일정을 몰래 바꾸지 않기 위해서다. 후행 단계가 완료됐거나 어느 쪽이든 날짜가 없으면 판정하지 않는다. 위반은 두 과제 상세의 단계에 경고 칩(누르면 상대 과제로 이동)과 간트 이름 칸 아이콘으로 보이고, `ProjectView.LinkViolations`(위반 연결 수)로 노출한다. 이 값은 연결을 읽는 상세 경로에서만 세고, 연결을 읽지 않는 대시보드·목록에서는 0(위반 없음)과 구별되게 null(모름)이다 — 대시보드 위험 판정에 넣을 때는 그 경로에서 연결을 한 번 읽어 `Views.Project` 에 넘긴다. 단계 시트의 "다른 과제 단계에 연결"에서 방향(선행·후행) → 과제 검색 → 단계 → 간격을 골라 잇는다. 같은 과제끼리·같은 쌍·과제 간 연결을 따라 되돌아오는 순환은 거절한다. 연결·해제는 두 과제 모두에 `LinkChanged` 이력을 남기고 변경 시각을 갱신한다(열린 상대 과제 화면에 변경 띠). 단계·과제를 지우면 서비스가 그 연결을 먼저 지우고 상대 과제에 이유를 남긴다(두 FK 모두 Restrict — 같은 단계 테이블로 가는 cascade 경로가 둘이면 SQL Server 가 거절한다). 복제는 과제 간 연결을 복사하지 않는다. 단계 목표일 미리보기는 이 변경으로 새로 어긋나는 연결을 (막지 않고) 알린다.
-12. **기준선**은 "기준선 확정"을 누른 시점의 단계 목표일·작업 목표 일정을 따로 저장한 것이다. 이후 일정이 바뀌면 기준선 대비 +n일로 보여 준다. 다시 확정하면 덮어쓰므로 밀린 기록이 0 으로 돌아간다 — 그래서 **다시 확정은 과제 담당자·관리자만**(`Rules.CanRebaseline`), **사유 필수**, 이력의 OldValue/NewValue 에 직전·새 목표 종료일을 남기고 과제 버전을 확인한다. 처음 확정은 누구나 한다.
+12. **기준선**은 "기준선 확정"을 누른 시점의 단계 목표일·작업 목표 일정을 따로 저장한 것이다. 이후 일정이 바뀌면 기준선 대비 +n일로 보여 준다. 다시 확정하면 '최신 기준선'이 바뀌어 밀린 일수가 0 으로 돌아간다 — 그래서 **다시 확정은 과제 담당자·관리자만**(`Rules.CanRebaseline`), **사유 필수**, 이력의 OldValue/NewValue 에 직전·새 목표 종료일을 남기고 과제 버전을 확인한다. 처음 확정은 누구나 한다.
+    - **차수 이력**: 확정할 때마다 새 차수(`Baseline` No 1, 2, …: 시각·사람·사유)와 그때의 단계 목표일·작업 목표 일정(`BaselineItem`)을 더한다. 덮어쓰지 않으므로 이전 기준선을 언제든 다시 볼 수 있다. 기존 열(`Stage.BaselineDate`, `WorkItem.BaselineStart/End`, `Project.BaselineAt`)은 **최신 차수의 사본**으로 그대로 둔다 — 목록·대시보드·Excel·PDF·리드타임은 예전처럼 최신 기준선을 쓴다. 활동 문구에 차수를 적는다('기준선 다시 확정 (2차, …)').
+    - **비교 기준**: 상세 > 정보의 '기준선 이력'에서 차수(최신·직전·1차 …)를 고르면 서버가 그 차수의 값을 읽은 그래프의 기준선 열에 넣고(`Rules.UseBaseline`) 같은 규칙(`Rules.SlipDays(지금, 기준)`)으로 단계·작업·과제의 +n일과 간트 기준선 막대를 다시 계산한다. 화면은 고른 차수를 모든 요청 주소에 `?compare=n` 으로 붙여 저장 뒤 응답도 같은 기준으로 받는다. 그 차수 뒤에 생긴 단계·작업은 기준값이 없다. 최신이거나 없는 차수는 최신 그대로(`ProjectView.CompareNo` = null).
+    - 단계·작업 Id 는 느슨한 참조라 지워도 차수 기록은 남는다. 복제는 기준선(차수 포함)을 가져가지 않는다(규칙 15).
+    - **기존 데이터 이전**: 차수 이력이 생기기 전에 확정한 과제(`BaselineAt` 은 있는데 차수가 없음)는 서버 시작 단계(`StartupWork` → `DbInitializer`)에서 지금의 기준선 열로 1차를 한 번 만든다(`BaselineHistory.EnsureFirstRoundsAsync`, 차수가 있으면 건너뛰어 멱등). 확정한 사람·사유는 마지막 '기준선 확정' 활동에서, 없으면 과제 담당자로 둔다.
 13. **체크리스트**: 단계에 체크 항목을 둘 수 있고, 남은 항목이 있으면 단계를 완료할 수 없다. 유형의 단계 템플릿에 기본 항목을 넣어 두면 과제 생성 시 복사된다.
 14. **동시 수정**: 과제·단계·작업에 버전 번호를 둔다. 화면이 읽은 버전과 저장 시점의 버전이 다르면 저장을 거절하고(HTTP 409) 화면을 최신 내용으로 바꾼다. 뒤에 저장한 사람이 앞사람 내용을 모르고 덮어쓰는 일을 막는다.
     - 삭제(단계·작업·체크 항목)와 체크 토글·문구 수정도 화면이 본 버전을 받는다. 체크리스트는 단계의 완료 조건이라 **단계 버전**으로 가리고 바꾸면 단계 버전을 올린다. 단계 시트는 자기 체크 변경 뒤 시트가 저장하는 칸(이름·목표일·완료일)이 그대로면 새 버전을 받아들여 스스로 충돌하지 않는다. 체크 문구 수정은 '옛 → 새' 이력을 남기고 완료한 단계에서는 거절한다.
@@ -80,7 +84,7 @@ Location (ParentId, Level 1 법인 → 2 제품군 → 3 라인 → 4 층; 법�
 Category(Kind: General/Automation/Container) ─< StageTemplate(Kind: Normal/Inspection/Inbound, DefaultWorkDays?) ─< TemplateCheckItem
 EquipmentType (ParentId: AGV·AMR → ANT/Belt/Roller/상차형)   ContainerType   Vendor   Holiday
 
-Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Description, BaselineAt, Version)
+Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Description, BaselineAt, Version, DeletedAt?, DeletedBy?, DeleteReason?)
   ├─< Stage(Name, Kind, SortOrder, TargetDate, CompletedDate, BaselineDate, Version)
   │     ├─< CheckItem(Text, SortOrder, IsDone, DoneBy, DoneAt)
   │     └─< WorkItem(Title, Owner, CoOwner, Progress, PlanStart/End, ActualStart/End, BaselineStart/End, Note, Version)
@@ -92,10 +96,14 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
   │     ├─< ActivityMention(User)                 ← 댓글에서 알릴 사람으로 고른 사용자
   │     └─< Notification(User, ProjectId, Kind, Text, Key, CreatedAt, ReadAt?, EmailedAt?)   ← 화면 내 알림 (4.1)
   ├─< ProjectVisit(User, LastSeenAt)              ← 사용자별 마지막으로 상세를 연 시각 ((사용자, 과제) 유일)
-  └─< ProjectWatch(User, CreatedAt)               ← 관심 과제 ((사용자, 과제) 유일)
+  ├─< ProjectWatch(User, CreatedAt)               ← 관심 과제 ((사용자, 과제) 유일)
+  └─< Baseline(No, At, User, Reason)              ← 기준선 차수 ((과제, No) 유일, 규칙 12)
+        └─< BaselineItem(StageId?, WorkItemId?, Start?, End?)   ← 그 차수의 단계 목표일·작업 목표 일정 (느슨한 참조)
+DeletedProjectLog(ProjectId, Title, DeletedBy, DeletedAt, Reason, PurgedAt, PurgedBy)   ← 영구 삭제 기록 (FK 없음, 5장 휴지통)
 ```
 
 - `StageLink(PredecessorStage, SuccessorStage, LagDays, CreatedAt)` 는 서로 다른 과제의 단계를 잇는다(규칙 11). 두 FK 모두 Restrict 이고 (선행, 후행) 쌍은 하나만 둔다(고유 색인). 단계·과제를 지울 때 서비스가 먼저 지운다.
+- 휴지통(5장): `Project.DeletedAt` 이 있으면 휴지통에 있는 과제다. 지운 사람(`DeletedById`)은 Restrict, 정리 대상 고르기를 위해 `DeletedAt` 색인을 둔다. `Baseline` 은 과제 cascade·사용자 Restrict, `BaselineItem` 은 차수 cascade 한 길이다(단계·작업으로 가는 FK 없음).
 - 과제의 `CorporationId` 는 `LocationId` 의 최상위(법인)를 미리 풀어 둔 값이다. 법인별 집계를 간단히 하기 위해서다.
 - `Activity.StageId / WorkItemId` 는 FK 가 아닌 느슨한 참조다. 단계·작업을 지워도 이력은 남는다.
 - 협력사는 과제에 문자열로 저장한다. 관리 화면의 협력사 목록은 자동완성 후보로만 쓴다(목록에 없는 이름도 입력 가능).
@@ -170,6 +178,9 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
 - **IP 형식**: 관리 화면의 IP 연결, admin 명령의 `--ip`, 허용 대역, `--remoteip` 는 IPv4 를 앞자리 0 없는 십진수 네 마디로만 받는다. `IPAddress.TryParse` 는 `10` 을 0.0.0.10 으로, 앞자리 0 을 8진수(`192.168.001.010` → 192.168.1.8)로 읽어 엉뚱한 PC 를 관리자에 연결하거나 엉뚱한 대역을 열 수 있기 때문이다(`AccessOptions.TryParseIp`).
 - **IP 관리**: 관리 > 사용자에서 사용자별 접속 IP 와 마지막 접속일을 보고, IP 를 직접 연결·해제한다. 지금 쓰고 있는 기기의 IP 는 해제할 수 없다(스스로 잠기지 않게).
 - **담당자 이름**: 목록에 없는 이름은 IP 없는 담당자로 만든다(나중에 그 이름으로 등록하면 연결). 저장에 실패하면(동시 수정·사유 누락 등) 만들지 않는다 — 새 사용자를 요청의 마지막 저장에서 함께 저장한다. 사용 중지된 이름은 새로 지정할 수 없다(이미 지정된 것은 그대로 둘 수 있다). 화면은 목록에 없는 이름을 입력하면 "새 담당자로 등록됩니다"라고 알린다.
+- **과제 삭제 = 휴지통**: 과제를 지우면(담당자·등록자·관리자, 화면이 본 과제 버전 확인) 행을 지우지 않고 `DeletedAt`·지운 사람·사유(선택)만 적고 '과제 삭제' 활동(`ProjectDeleted`)을 남긴다. 단계·작업·첨부 파일·활동·방문·관심·알림·과제 간 연결은 그대로 둔다(복원하면 그대로 돌아온다). 지운 과제는 **모든 조회에서 뺀다** — 전역 필터(HasQueryFilter)는 섀도 빌드의 가짜 EF 에 없어 `AppDb.LiveProjects`·`LiveActivities` 한 곳을 거친다: 과제 그래프(Graph·AllAsync·RequireAsync·LoadInfo·Stamp·미리보기), 목록·대시보드, 내 할 일, 주간 보고·리드타임·변경 이력, 첨부 내려받기·올리기, 복제 원본, 새 소식·새 활동 수·관심 과제, 알림(목록·읽지 않은 수·메일 요약 — `ProjectId` 가 FK 가 아니라 EXISTS 로 거른다), 과제 간 연결(연결은 남기되 화면·위반 계산에서 빼고 새로 잇지 않는다), 연결 상대 검색, 관리의 공휴일 영향·리드타임 힌트. 휴지통·영구 삭제·기준선 이전만 `Projects` 를 그대로 읽는다. 앞으로 과제·활동을 읽는 새 조회(스냅샷 등)도 이 둘을 거친다.
+- **관리 > 휴지통**(관리자만): 지운 과제 목록(지운 사람·시각·사유·자동 영구 삭제 예정일), 복원(`ProjectRestored` 활동 — 서비스는 지울 권한이 있는 사람에게 허락하지만 화면은 관리 화면에만 둔다), 바로 영구 삭제(되돌릴 수 없어 관리자만), 최근 영구 삭제 기록. 영구 삭제는 예전 과제 삭제 그대로 의존 관계·과제 간 연결(상대 과제에 '(과제 삭제)' 기록)을 먼저 지우고 나머지는 DB cascade 에 맡긴 뒤 첨부 폴더를 지운다(못 지우면 경고 로그 — 고아 파일 정리가 치운다). 활동까지 사라지므로 `DeletedProjectLog` 한 줄과 파일 로그 경고 한 줄을 남긴다.
+- **자동 정리**(`TrashWorker`): 서버가 뜬 뒤 5분, 그 뒤 하루마다 `Trash:KeepDays`(기본 30)일이 지난 과제를 영구 삭제한다. 0 이하면 끈다. 배경 작업에는 현재 사용자가 없어 과제마다 범위를 새로 만들고 **그 과제를 지운 사람**을 행위자로 둔다(상대 과제에 남는 연결 해제 기록의 주인). 정리 기록의 영구 삭제자는 '자동 정리(보관 기간 경과)'. 한 과제가 실패해도 나머지는 계속하고 다음 날 다시 시도한다.
 - 기준 정보 변경은 관리자만, 과제 삭제는 담당자·등록자·관리자만, 첨부 삭제는 올린 사람·과제 담당자·관리자만, 댓글 고치기·지우기는 작성자만(정한 시간 안), 메일 요약 받는 주소는 관리자만 정한다(관리 화면에서만 보인다). 그 외 편집은 등록한 사용자 누구나. 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서버가 같은 판정(`Rules.CanDeleteProject`·`CanDeleteAttachment`)으로 `ProjectView.CanDelete`·`AttachmentView.CanDelete` 를 채운다.
 - 리버스 프록시 뒤에 둘 때는 `TrustForwardedHeaders: true` 로 실제 접속 IP(X-Forwarded-For)를 쓴다. 이 값은 같은 서버(루프백)의 프록시가 보낸 것만 믿는다. 같은 서버의 프록시를 이 설정 없이 쓰면 모든 요청이 루프백으로 보여 식별·허용 대역·첫 관리자 규칙이 모두 무력해진다.
 - 모든 응답에 `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: same-origin` 을 붙인다. 첨부 미리보기는 같은 출처의 틀(iframe)이라 그대로 된다.
@@ -194,7 +205,7 @@ Project(Category, Corporation, Location, Owner, State, StartDate, Vendor, Descri
 - **DB 로 옮기는 조건은 두 DB 에서 똑같이 번역되는 단순한 것만**: 상태·유형·법인 같음, 기간 안 활동 존재(`Any`), 사용자 Id, 활동 유형 같음(`Reporting.KindIs` — 종류를 `KindOf` 로 유형 전부에 대해 역매핑해 `유형 = A OR 유형 = B …` 식을 만든다. 목록 매개 변수(`IN`·`OPENJSON`)는 SQL Server 호환 수준에 따라 번역이 달라 쓰지 않는다). 판정 규칙(지연·임박 등)과 글자 검색(SQLite 는 대소문자 구분, SQL Server 는 정렬 규칙 — 결과가 다르다)은 필요한 열만 읽은 뒤 메모리에서 한다. 그룹 집계·요약 컬럼 저장은 하지 않는다(계산 값을 저장하지 않는 원칙, 2장 3).
   - 목록: 상태 탭·유형·법인은 DB 에서(지연 탭은 진행 과제만 읽고 지연은 메모리에서). 내 할 일: 진행 과제만. 리드타임: 작업 없이 단계만, 중단 과제 제외. 주간 보고: 진행 과제 + 그 주에 활동이 있는 과제(보고에 오르는 과제가 그것뿐이다).
   - 변경 이력: 기간·과제·사용자·종류 조건과 건수·정렬(`At`, `Id` 내림차순)·쪽 나누기를 DB 에서, 열은 과제명만 투영한다. 글자 검색이 있으면 조건에 맞는 행을 투영해 메모리에서 거르고 나눈다. 사용자가 크기를 정하는 조회라 여러 과제의 기간은 1년(`InsightService.HistoryMaxYears`)까지로 맞추고 안내한다. 과제 하나(`projectId`)는 행 수가 그 과제의 활동으로 묶이므로 상한이 없고, 기간을 비우면 그 과제의 첫 활동부터 본다.
-- **변경은 필요한 그래프만 추적해 읽는다**(`ProjectService.LoadForChangeAsync`): 단계 → 작업·체크리스트, 의존 관계. 과제 정보 수정·복제만 유형·기기·용기 내역을 더 읽는다. 활동은 읽지 않은 컬렉션에 더해도 저장할 때 INSERT 된다. 댓글은 과제 행만 읽는다. 과제 삭제는 과제 행과 의존 관계만 읽어 의존 관계를 먼저 지우고(같은 SaveChanges 안에서 과제 행보다 앞서 — SQL Server 는 한 문장 안의 cascade 와 NO ACTION 검사 순서가 얽힐 수 있다) 나머지(단계·작업·체크·첨부·활동)는 DB cascade 에 맡긴다. 과제 간 단계 연결(`StageLink`, Restrict)이 걸린 단계가 있으면 그 단계만 작업과 함께 추적해 읽는다 — EF 는 추적하는 행 사이의 FK 로만 지우는 순서를 정하므로, 단계를 모르면 과제 행을 연결보다 먼저 지워 DB cascade 가 Restrict 에 걸린다(연결 → 작업 → 단계 → 과제 순서가 되게).
+- **변경은 필요한 그래프만 추적해 읽는다**(`ProjectService.LoadForChangeAsync`): 단계 → 작업·체크리스트, 의존 관계. 과제 정보 수정·복제만 유형·기기·용기 내역을 더 읽는다. 활동은 읽지 않은 컬렉션에 더해도 저장할 때 INSERT 된다. 댓글은 과제 행만 읽는다. 과제 영구 삭제(휴지통 — 5장)는 과제 행과 의존 관계만 읽어 의존 관계를 먼저 지우고(같은 SaveChanges 안에서 과제 행보다 앞서 — SQL Server 는 한 문장 안의 cascade 와 NO ACTION 검사 순서가 얽힐 수 있다) 나머지(단계·작업·체크·첨부·활동)는 DB cascade 에 맡긴다. 과제 간 단계 연결(`StageLink`, Restrict)이 걸린 단계가 있으면 그 단계만 작업과 함께 추적해 읽는다 — EF 는 추적하는 행 사이의 FK 로만 지우는 순서를 정하므로, 단계를 모르면 과제 행을 연결보다 먼저 지워 DB cascade 가 Restrict 에 걸린다(연결 → 작업 → 단계 → 과제 순서가 되게).
 - **화면 데이터는 추적하지 않고 새로 읽는다**: 상세(`ViewAsync`)는 변경 응답에서도 `AsNoTracking` 으로 다시 읽어 저장된 값을 보인다. 활동은 그래프에 싣지 않고 건수·목표일 변경 횟수는 `COUNT`, 최근 활동은 필요한 열만 읽는다. 과제 하나의 활동을 최근 순으로 자르는 조회(상세·'더 보기'·과제 조건 변경 이력)를 위해 활동에 `(ProjectId, At)` 인덱스를 둔다(과제 FK 인덱스를 대신한다. SQL Server 에서는 클러스터 키 `Id` 가 붙어 `At`·`Id` 커서까지 인덱스로 찾는다). Excel 은 전체 활동(`ViewAsync(id, activityLimit: null)`). 수정 화면은 기본 정보·내역만(`LoadInfoAsync`).
 - **협업 조회**(4.1): 새 활동 수는 그룹 쿼리 하나, 새 소식은 EXISTS 조건, 활동 쪽의 멘션은 Id 범위로 읽어 메모리에서 거른다(목록 매개 변수 없이). 알림은 활동과 같은 SaveChanges 로 저장한다(`AppDb` 저장 훅 — 저장 직전 `ChangeTracker.DetectChanges` 로 활동의 과제를 맞춘 뒤 과제 담당·관심자 한 번, 작업 담당 한 번 읽는다). 상세 GET 은 방문 기록 읽기·저장과 관심 여부, 멘션 조회가 더해진다.
 - **요청 안에서 기준 정보는 한 번만**: `ProjectService` 가 위치·공휴일을 요청 동안 기억한다(달력 계산과 화면의 공휴일 목록이 같은 행을 쓴다). 요청 사이에는 기억하지 않는다 — 표가 작아 얻는 것이 적고 관리 화면 변경의 무효화를 엮는 비용이 더 크다. 담당자 이름 목록은 이름 열만 읽는다.
