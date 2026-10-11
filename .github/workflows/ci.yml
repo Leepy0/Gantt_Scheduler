@@ -35,9 +35,9 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
           # 패키지 캐시 (잠금 파일이 바뀔 때만 새로 받는다)
