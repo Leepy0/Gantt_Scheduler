@@ -537,19 +537,24 @@ public class MasterService
             case "location":
             {
                 var e = await _db.Locations.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("location", e.Id, LocationLevels[e.Level - 1], e.Name, was, e.IsActive);
                 break;
             }
             case "category" when r.Level == 1:
             {
                 var e = await _db.Categories.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("category", e.Id, "유형", e.Name, was, e.IsActive);
                 break;
             }
             case "category" when r.Level == 3:
             {
                 var e = await _db.TemplateCheckItems.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 _db.TemplateCheckItems.Remove(e);
+                LogToggle("check", e.Id, "체크 항목", e.Text, null, null);
                 break;
             }
             case "category" when r.Level == 4:
@@ -559,6 +564,7 @@ public class MasterService
                 foreach (var next in await _db.TemplateWorks.Where(x => x.PredecessorTemplateWorkId == e.Id).ToListAsync())
                     next.PredecessorTemplateWorkId = null;
                 _db.TemplateWorks.Remove(e);
+                LogToggle("templateWork", e.Id, "작업 템플릿", e.Title, null, null);
                 break;
             }
             case "category":
@@ -568,36 +574,47 @@ public class MasterService
                 foreach (var w in e.Works) w.PredecessorTemplateWorkId = null;
                 _db.TemplateWorks.RemoveRange(e.Works);
                 _db.StageTemplates.Remove(e);
+                LogToggle("stage", e.Id, "단계 템플릿", e.Name, null, null);
                 break;
             }
             case "org":
             {
                 var e = await _db.OrgUnits.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("org", e.Id, e.Level == 1 ? "그룹" : "파트", e.Name, was, e.IsActive);
                 break;
             }
             case "equipment":
             {
                 var e = await _db.EquipmentTypes.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("equipment", e.Id, e.ParentId == null ? "기기 대분류" : "기기 하위 타입", e.Name, was, e.IsActive);
                 break;
             }
             case "container":
             {
                 var e = await _db.ContainerTypes.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("container", e.Id, "용기", e.Name, was, e.IsActive);
                 break;
             }
             case "vendor":
             {
                 var e = await _db.Vendors.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("vendor", e.Id, "협력사", e.Name, was, e.IsActive);
                 break;
             }
             case "reason":
             {
                 var e = await _db.DelayReasons.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var was = e.IsActive;
                 e.IsActive = Wanted();
+                LogToggle("reason", e.Id, "지연 사유", e.Name, was, e.IsActive);
                 break;
             }
             case "holiday":
@@ -605,6 +622,7 @@ public class MasterService
                 var e = await _db.Holidays.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var before = await HolidayDatesAsync();
                 _db.Holidays.Remove(e);
+                LogToggle("holiday", e.Id, "공휴일", $"{e.Date:yyyy-MM-dd} {e.Name}", null, null);
                 await _db.SaveChangesAsync();
                 Notice = "공휴일을 삭제했습니다. " + await HolidayImpactAsync(before, before.Where(d => d != e.Date).ToList(), new[] { e.Date });
                 return;
@@ -614,6 +632,7 @@ public class MasterService
                 var e = await _db.Users.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var wanted = Wanted();
                 if (e.Id == _me.Id && !wanted) throw new RuleException("자기 자신은 사용 중지할 수 없습니다.");
+                LogToggle("user", e.Id, "사용자", e.Name, e.IsActive, wanted);
                 e.IsActive = wanted;
                 break;
             }
@@ -658,6 +677,10 @@ public class MasterService
         var existing = before.ToHashSet();
         var added = parsed.Where(x => !existing.Contains(x.Date)).ToList();
         foreach (var (date, name) in added) _db.Holidays.Add(new Holiday { Date = date, Name = name });
+        // 붙여넣기는 한 줄로 남긴다(줄마다 남기면 이력이 수백 줄이 된다). 넣은 날짜는 새 값에 모은다
+        if (added.Count > 0)
+            _changes.Add("holiday", (int?)null, $"공휴일 붙여넣기: {added.Count}건 추가",
+                null, string.Join(", ", added.OrderBy(x => x.Date).Select(x => $"{x.Date:yyyy-MM-dd} {x.Name}")));
         await _db.SaveChangesAsync();
         var skipped = parsed.Count - added.Count;
         Notice = $"공휴일 {added.Count}건을 추가했습니다" + (skipped > 0 ? $"(이미 있는 날짜 {skipped}건은 건너뜀)" : "") + ". "
@@ -708,7 +731,11 @@ public class MasterService
         var addr = await _db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.Ip == ip);
         if (addr != null && addr.UserId != user.Id)
             throw new RuleException($"이 IP 는 '{addr.User?.Name}' 님에 연결돼 있습니다. 먼저 그 연결을 해제해 주세요.", "ip");
-        if (addr == null) _db.UserAddresses.Add(new UserAddress { Ip = ip, UserId = user.Id, LastSeenAt = _clock.UtcNow });
+        if (addr == null)
+        {
+            _db.UserAddresses.Add(new UserAddress { Ip = ip, UserId = user.Id, LastSeenAt = _clock.UtcNow });
+            _changes.Add("ip", user.Id, $"IP 연결: {user.Name} — {ip}", null, ip);
+        }
         else addr.LastSeenAt = _clock.UtcNow;
         await _db.SaveChangesAsync();
     }
@@ -717,10 +744,11 @@ public class MasterService
     public async Task RemoveAddressAsync(MasterIp input)
     {
         RequireAdmin();
-        var addr = await _db.UserAddresses.FirstOrDefaultAsync(a => a.UserId == input.UserId && a.Ip == input.Ip) ?? throw NotFound();
+        var addr = await _db.UserAddresses.Include(a => a.User).FirstOrDefaultAsync(a => a.UserId == input.UserId && a.Ip == input.Ip) ?? throw NotFound();
         // 자기 기기의 연결을 끊으면 관리자 이름으로 다시 연결할 수 없어 스스로 잠긴다
         if (addr.Ip == _me.Ip) throw new RuleException("지금 쓰고 있는 기기의 IP 는 해제할 수 없습니다.", "ip");
         _db.UserAddresses.Remove(addr);
+        _changes.Add("ip", addr.UserId, $"IP 연결 해제: {addr.User?.Name} — {addr.Ip}", addr.Ip, null);
         await _db.SaveChangesAsync();
     }
 
@@ -734,70 +762,70 @@ public class MasterService
             {
                 var e = await _db.Locations.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.Locations.Where(x => x.ParentId == e.ParentId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("location", e.Id, LocationLevels[e.Level - 1], e.Name, r.Dir);
                 break;
             }
             case "category" when r.Level == 1:
             {
                 var all = await _db.Categories.ToListAsync();
                 var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
-                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("category", e.Id, "유형", e.Name, r.Dir);
                 break;
             }
             case "category" when r.Level == 3:
             {
                 var e = await _db.TemplateCheckItems.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.TemplateCheckItems.Where(x => x.StageTemplateId == e.StageTemplateId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("check", e.Id, "체크 항목", e.Text, r.Dir);
                 break;
             }
             case "category" when r.Level == 4:
             {
                 var e = await _db.TemplateWorks.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.TemplateWorks.Where(x => x.StageTemplateId == e.StageTemplateId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("templateWork", e.Id, "작업 템플릿", e.Title, r.Dir);
                 break;
             }
             case "category":
             {
                 var e = await _db.StageTemplates.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.StageTemplates.Where(x => x.CategoryId == e.CategoryId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("stage", e.Id, "단계 템플릿", e.Name, r.Dir);
                 break;
             }
             case "org":
             {
                 var e = await _db.OrgUnits.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.OrgUnits.Where(x => x.ParentId == e.ParentId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("org", e.Id, e.Level == 1 ? "그룹" : "파트", e.Name, r.Dir);
                 break;
             }
             case "equipment":
             {
                 var e = await _db.EquipmentTypes.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 var siblings = await _db.EquipmentTypes.Where(x => x.ParentId == e.ParentId).ToListAsync();
-                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("equipment", e.Id, e.ParentId == null ? "기기 대분류" : "기기 하위 타입", e.Name, r.Dir);
                 break;
             }
             case "container":
             {
                 var all = await _db.ContainerTypes.ToListAsync();
                 var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
-                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("container", e.Id, "용기", e.Name, r.Dir);
                 break;
             }
             case "vendor":
             {
                 var all = await _db.Vendors.ToListAsync();
                 var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
-                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("vendor", e.Id, "협력사", e.Name, r.Dir);
                 break;
             }
             case "reason":
             {
                 var all = await _db.DelayReasons.ToListAsync();
                 var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
-                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                if (Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v)) LogMove("reason", e.Id, "지연 사유", e.Name, r.Dir);
                 break;
             }
             default:
@@ -806,13 +834,15 @@ public class MasterService
         await _db.SaveChangesAsync();
     }
 
-    private static void Swap<T>(List<T> ordered, T item, int dir, Action<T, int> setSort) where T : class
+    // 자리를 바꿨으면 true (맨 위·맨 아래에서 더 못 가면 false — 이력을 남기지 않는다)
+    private static bool Swap<T>(List<T> ordered, T item, int dir, Action<T, int> setSort) where T : class
     {
         var i = ordered.FindIndex(x => ReferenceEquals(x, item));
         var j = i + (dir < 0 ? -1 : 1);
-        if (i < 0 || j < 0 || j >= ordered.Count) return;
+        if (i < 0 || j < 0 || j >= ordered.Count) return false;
         (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
         for (var k = 0; k < ordered.Count; k++) setSort(ordered[k], k + 1);
+        return true;
     }
 
     // 단계 템플릿 아래 작업 템플릿 추가·수정. 선행은 같은 단계 템플릿의 다른 작업만 — 순환은 막는다
@@ -899,6 +929,10 @@ public class MasterService
         }
         _diff.Clear();
     }
+
+    // 순서 이동 한 줄 — 단계 템플릿 순서는 새 과제의 단계 순서가 된다
+    private void LogMove(string kind, int id, string what, string name, int dir) =>
+        _changes.Add(kind, id, $"{what} 순서 {(dir < 0 ? "위로" : "아래로")}: {name}");
 
     // 사용 중지·다시 사용·삭제 한 줄
     private void LogToggle(string kind, int id, string what, string name, bool? wasActive, bool? nowActive)

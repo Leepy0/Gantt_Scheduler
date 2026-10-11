@@ -87,6 +87,8 @@
             <span class="hint">이미지·PDF·Office·한글·zip 파일, @(Model.UploadMaxMB)MB 이하</span>
             <div class="form-actions"><button type="submit" class="btn primary" id="upload-btn"><svg class="ic"><use href="#i-upload" /></svg>올리기</button></div>
         </form>
+        @* 과제 첨부 합계(와 정했으면 상한 Storage:ProjectMaxMB) — 목록 위 한 줄 *@
+        <p class="files-total muted" id="files-total" hidden></p>
         <div class="card flush"><ul class="files" id="files"></ul></div>
     </section>
 

@@ -81,6 +81,9 @@ public sealed class MasterLog : ISaveHook
     public MasterChange Add(string kind, int? entityId, string text, string? oldValue = null, string? newValue = null, AppUser? actor = null) =>
         Add(kind, () => entityId, text, oldValue, newValue, actor);
 
+    // 변경 없이 이력만 남길 때(업데이트·백업 — DB 밖 변경)
+    public Task SaveAsync() => _db.SaveChangesAsync();
+
     private static string? Cut(string? s, int max) => s == null ? null : s.Length > max ? s[..max] : s;
 
     public Task BeforeSaveAsync(CancellationToken ct)
