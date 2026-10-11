@@ -45,35 +45,40 @@ public partial class HttpTests
         var openedBase = Hidden(html, "Form.Base");
         Assert.Contains("\"title\"", openedBase);
 
-        FormUrlEncodedContent Form(string title, string version, string bas) => new(new Dictionary<string, string>
+        FormUrlEncodedContent Form(string title, string description, string version, string bas) => new(new Dictionary<string, string>
         {
             ["Form.Title"] = title, ["Form.CategoryId"] = Hidden(html, "Form.CategoryId"), ["Form.LocationId"] = Hidden(html, "Form.LocationId"),
-            ["Form.Owner"] = "테스터", ["Form.StartDate"] = "2026-10-01", ["Form.Vendor"] = "", ["Form.Description"] = "",
+            ["Form.Owner"] = "테스터", ["Form.StartDate"] = "2026-10-01", ["Form.Vendor"] = "", ["Form.Description"] = description,
             ["Form.Version"] = version, ["Form.Base"] = bas, ["__RequestVerificationToken"] = token,
         });
 
-        // 다른 사용자가 같은 화면에서 먼저 저장했다
-        var first = await client.PostAsync(url, Form("다른 사람이 바꾼 이름", opened, openedBase));
+        // 다른 사용자가 같은 화면에서 먼저 저장했다 (과제명·설명을 바꿈)
+        var first = await client.PostAsync(url, Form("다른 사람이 바꾼 이름", "다른 사람이 쓴 설명", opened, openedBase));
         Assert.Equal(HttpStatusCode.Redirect, first.StatusCode);
 
-        // 옛 버전으로 저장하면 같은 화면을 다시 그린다: 사실대로 알리고, 그 사람이 바꾼 값을 보이고, 내 입력은 그대로, 버전은 최신
-        var conflict = await client.PostAsync(url, Form("내가 바꾼 이름", opened, openedBase));
+        // 옛 버전으로 저장하면 같은 화면을 다시 그린다: 사실대로 알리고, 그 사람이 바꾼 값을 보이고, 버전은 최신.
+        // 나도 바꾼 과제명은 내 입력을 두고, 내가 손대지 않은 설명은 그 사람 값으로 맞춘다(그대로 저장하면 되돌려지므로)
+        var conflict = await client.PostAsync(url, Form("내가 바꾼 이름", "", opened, openedBase));
         var body = await conflict.Content.ReadAsStringAsync();
         var text = WebUtility.HtmlDecode(body);      // 화면 글자는 HTML 인코딩되어 나온다
         Assert.Equal(HttpStatusCode.OK, conflict.StatusCode);
         Assert.Contains("다른 사용자가 이 과제를 먼저 수정했습니다", text);
         Assert.Contains("다른 사용자가 바꾼 값: 다른 사람이 바꾼 이름", text);
+        Assert.DoesNotContain("다른 사람이 바꾼 이름 — 그 값으로", text);
+        Assert.Contains("다른 사용자가 바꾼 값: 다른 사람이 쓴 설명 — 그 값으로 바꿨습니다", text);
         Assert.Equal("내가 바꾼 이름", Hidden(body, "Form.Title"));
+        Assert.Matches(">\\s*다른 사람이 쓴 설명</textarea>", text);
         var latest = Hidden(body, "Form.Version");
         Assert.NotEqual(opened, latest);
-        // 바꾸지 않은 항목(착수일 등)은 바뀐 값으로 표시하지 않는다
-        Assert.Single(Regex.Matches(body, "data-conflict-note"));
+        // 아무도 바꾸지 않은 항목(착수일 등)은 표시하지 않는다
+        Assert.Equal(2, Regex.Matches(body, "data-conflict-note").Count);
 
         // 같은 화면에서 다시 저장하면 통한다 (예전에는 같은 옛 버전으로 다시 그려 계속 거절됐다)
-        var again = await client.PostAsync(url, Form("내가 바꾼 이름", latest, Hidden(body, "Form.Base")));
+        var again = await client.PostAsync(url, Form("내가 바꾼 이름", "다른 사람이 쓴 설명", latest, Hidden(body, "Form.Base")));
         Assert.Equal(HttpStatusCode.Redirect, again.StatusCode);
         var data = await client.GetFromJsonAsync<JsonElement>($"/Projects/Detail?handler=Data&id={id}");
         Assert.Equal("내가 바꾼 이름", data.GetProperty("project").GetProperty("title").GetString());
+        Assert.Equal("다른 사람이 쓴 설명", data.GetProperty("project").GetProperty("description").GetString());
     }
 
     [Fact]

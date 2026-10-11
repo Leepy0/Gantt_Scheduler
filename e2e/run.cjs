@@ -454,6 +454,8 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await other.locator('#stepper .step', { hasText: '설치' }).click();
         await other.waitForSelector(SHEET);
         await other.fill(SHEET + ' input[name=name]', '설치·시운전');
+        await other.fill(SHEET + ' input[name=targetDate]', kstToday(40));
+        await other.fill(SHEET + ' textarea[name=reason]', '설치 일정 조정');
         await submitSheet(other);
         await other.close();
 
@@ -463,13 +465,18 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         const note = await page.locator(SHEET + ' [data-field=name] [data-conflict-note]').innerText();
         assert(note.includes('다른 사용자가 바꾼 값') && note.includes('설치·시운전'), '바뀐 값 안내가 없음: ' + note);
         assert((await page.inputValue(SHEET + ' input[name=name]')) === '현장 설치', '입력한 값이 사라짐');
+        // 내가 손대지 않은 목표일은 그 사람이 바꾼 값으로 맞춘다 (그대로 저장하면 옛 값으로 되돌리므로)
+        assert((await page.inputValue(SHEET + ' input[name=targetDate]')) === kstToday(40), '손대지 않은 목표일이 최신 값으로 바뀌지 않음');
+        assert((await page.locator(SHEET + ' [data-field=targetDate] [data-conflict-note]').innerText()).includes('그 값으로 바꿨습니다'), '맞춘 값 안내가 없음');
         await shot(page, 'd12-conflict', false);
         const names = await page.locator('#stepper .step-name').allInnerTexts();
         assert(names.some((n) => n.includes('설치·시운전')), '화면이 최신 내용으로 바뀌지 않음: ' + names.join(','));
         // 같은 시트에서 다시 저장하면 최신 버전으로 저장된다 (예전에는 몇 번을 눌러도 거절됐다)
         await submitSheet(page);
-        const after = await page.locator('#stepper .step-name').allInnerTexts();
-        assert(after.some((n) => n.includes('현장 설치')), '다시 저장되지 않음: ' + after.join(','));
+        const after = await page.locator('#stepper .step').allInnerTexts();
+        const installed = after.find((n) => n.includes('현장 설치')) || '';
+        assert(installed, '다시 저장되지 않음: ' + after.join(','));
+        assert(installed.includes(kstToday(40).slice(5)), '다른 사람이 바꾼 목표일이 되돌려짐: ' + installed);
     });
 
     await step('다른 사용자가 이 과제를 바꾸면 띠로 알리고 새로 고침하면 반영, 내 저장은 띠 없음, 날짜가 바뀌면 다시 읽음', async () => {
@@ -763,6 +770,34 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForSelector('#summary .summary-meta');
         await page.click('.tabs [data-tab=info]');
         assert((await page.locator('#tab-info').innerText()).includes('한성로보틱스'), '협력사가 저장되지 않음');
+    });
+
+    await step('과제 수정 화면 — 동시 수정 뒤 손대지 않은 항목은 최신 값으로 맞추고 같은 화면에서 다시 저장', async () => {
+        const id = new URL(page.url()).searchParams.get('id');
+        await page.goto(BASE + '/Projects/Edit?id=' + id);
+        await page.waitForSelector('#edit-form');
+        const other = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await other.goto(BASE + '/Projects/Edit?id=' + id);
+        await other.fill('textarea[name="Form.Description"]', '다른 화면에서 쓴 설명');
+        await other.click('#edit-form button[type=submit]');
+        await other.waitForSelector('#summary .summary-meta');
+        await other.close();
+
+        await page.fill('input[name="Form.Vendor"]', '대성물류');
+        await page.click('#edit-form button[type=submit]');
+        await page.waitForSelector('#edit-form .form-error');
+        assert((await page.locator('#edit-form .form-error').innerText()).includes('다른 사용자가 이 과제를 먼저 수정했습니다'), '충돌 안내가 아님');
+        const note = await page.locator('#edit-form [data-field=description] [data-conflict-note]').innerText();
+        assert(note.includes('다른 화면에서 쓴 설명') && note.includes('그 값으로 바꿨습니다'), '바뀐 값 안내가 아님: ' + note);
+        assert((await page.inputValue('textarea[name="Form.Description"]')) === '다른 화면에서 쓴 설명', '손대지 않은 설명이 최신 값이 아님');
+        assert((await page.inputValue('input[name="Form.Vendor"]')) === '대성물류', '입력한 협력사가 사라짐');
+        await shot(page, 'd42-edit-conflict');
+        await page.click('#edit-form button[type=submit]');
+        await page.waitForSelector('#summary .summary-meta');
+        await page.click('.tabs [data-tab=info]');
+        const info = await page.locator('#tab-info').innerText();
+        assert(info.includes('대성물류') && info.includes('다른 화면에서 쓴 설명'), '다시 저장한 내용이 아님');
     });
 
     await step('내 할 일', async () => {

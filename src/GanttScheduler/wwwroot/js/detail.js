@@ -74,7 +74,25 @@
     }
 
     // 동시 수정 안내 (시트의 onConflict 가 돌려주는 문구)
-    var CONFLICT = '다른 사용자가 먼저 수정했습니다. 바뀐 값을 항목 옆에 표시했습니다. 입력한 내용은 그대로 있으니 확인한 뒤 다시 저장하면 지금 내용으로 저장됩니다.';
+    var CONFLICT = '다른 사용자가 먼저 수정했습니다. 손대지 않은 항목은 그 사람이 바꾼 값으로 맞췄고, 둘 다 바꾼 항목은 지금 입력한 값을 두고 ' +
+        '그 사람의 값을 옆에 표시했습니다. 확인한 뒤 다시 저장해 주세요.';
+
+    // 동시 수정 뒤 한 칸 맞추기 (세 갈래 비교): 시트를 연 때의 값(base)·최신 값(latest)·지금 입력 값.
+    // 내가 손대지 않은 칸은 최신 값으로 바꿔 넣는다 — 그대로 다시 저장하면 다른 사람이 바꾼 값을 옛 값으로 되돌리기 때문이다.
+    // 둘 다 바꾼 칸은 내 입력을 두고 상대 값을 옆에 보인다
+    function mergeField(sheet, input, field, base, latest, shown) {
+        base = base == null ? '' : String(base);
+        latest = latest == null ? '' : String(latest);
+        if (base === latest) return;
+        var text = shown != null ? shown : (latest || '(비어 있음)');
+        if (input && input.value === base) {
+            input.value = latest;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            sheet.conflictNote(field, text, true);
+        } else {
+            sheet.conflictNote(field, text, false);
+        }
+    }
     function userToday() { return App.userToday(); }
 
     // ── 표시용 조각 ─────────────────────────────────────────────────
@@ -143,7 +161,8 @@
             '<button type="button" class="btn small" id="btn-baseline">' + icon('pin') + (P.baselineAt ? '기준선 다시 확정' : '기준선 확정') + '</button>' +
             '<a class="btn small" href="' + detailUrl('Excel') + '&id=' + P.id + '">' + icon('download') + 'Excel</a>' +
             '<a class="btn small" href="' + detailUrl('Pdf') + '&id=' + P.id + '">' + icon('download') + 'PDF</a>' +
-            '<button type="button" class="btn small" data-print>' + icon('print') + '인쇄</button>' +
+            // 인쇄는 데스크톱에서 쓴다 — 모바일에서는 단추 줄만 늘리므로 숨긴다
+            '<button type="button" class="btn small hide-sm" data-print>' + icon('print') + '인쇄</button>' +
             (P.state === 'done' ? '' : '<button type="button" class="btn small" id="btn-state">' + icon('flag') + '상태 변경</button>') +
             '</div></div>' +
             '<div class="summary-meta">' +
@@ -570,9 +589,10 @@
                 var cur = stageById(sid);
                 if (!cur) return '다른 사용자가 이 단계를 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
                 sheet.clearConflictNotes();
-                if (cur.name !== s.name) sheet.conflictNote('name', cur.name);
-                if (cur.targetDate !== s.targetDate) sheet.conflictNote('targetDate', cur.targetDate || '미정');
-                if (cur.completedDate !== s.completedDate) sheet.conflictNote('completedDate', cur.completedDate ? '완료 ' + cur.completedDate : '완료 취소');
+                var f = form.elements;
+                mergeField(sheet, f.name, 'name', s.name, cur.name);
+                mergeField(sheet, f.targetDate, 'targetDate', s.targetDate, cur.targetDate, cur.targetDate || '미정');
+                mergeField(sheet, f.completedDate, 'completedDate', s.completedDate, cur.completedDate, cur.completedDate ? '완료 ' + cur.completedDate : '완료 취소');
                 s = cur;
                 version = cur.version;
                 refreshUi();
@@ -866,16 +886,26 @@
                 var cur = workById(w.id);
                 if (!cur) return '다른 사용자가 이 작업을 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
                 sheet.clearConflictNotes();
-                if (cur.title !== w.title) sheet.conflictNote('title', cur.title);
-                if (cur.stageId !== w.stageId) sheet.conflictNote('stageId', (stageById(cur.stageId) || {}).name || '');
-                if ((cur.owner || '') !== (w.owner || '')) sheet.conflictNote('owner', cur.owner || '없음');
-                if ((cur.coOwner || '') !== (w.coOwner || '')) sheet.conflictNote('coOwner', cur.coOwner || '없음');
-                if (cur.planStart !== w.planStart || cur.planEnd !== w.planEnd) sheet.conflictNote('planEnd', cur.planStart + ' ~ ' + cur.planEnd);
-                if (cur.actualStart !== w.actualStart) sheet.conflictNote('actualStart', cur.actualStart || '없음');
-                if (cur.actualEnd !== w.actualEnd) sheet.conflictNote('actualEnd', cur.actualEnd || '없음');
-                if (cur.progress !== w.progress) sheet.conflictNote('progress', cur.progress + '%');
-                if ((cur.note || '') !== (w.note || '')) sheet.conflictNote('note', cur.note || '(비어 있음)');
-                if (titlesOf(cur.predecessors) !== titlesOf(w.predecessors)) sheet.conflictNote('predecessors', titlesOf(cur.predecessors));
+                var f = form.elements;
+                mergeField(sheet, f.title, 'title', w.title, cur.title);
+                mergeField(sheet, f.stageId, 'stageId', w.stageId, cur.stageId, (stageById(cur.stageId) || {}).name || '');
+                mergeField(sheet, f.owner, 'owner', w.owner, cur.owner, cur.owner || '없음');
+                mergeField(sheet, f.coOwner, 'coOwner', w.coOwner, cur.coOwner, cur.coOwner || '없음');
+                mergeField(sheet, f.planStart, 'planStart', w.planStart, cur.planStart);
+                mergeField(sheet, f.planEnd, 'planEnd', w.planEnd, cur.planEnd);
+                mergeField(sheet, f.actualStart, 'actualStart', w.actualStart, cur.actualStart, cur.actualStart || '없음');
+                mergeField(sheet, f.actualEnd, 'actualEnd', w.actualEnd, cur.actualEnd, cur.actualEnd || '없음');
+                mergeField(sheet, f.progress, 'progress', w.progress, cur.progress, cur.progress + '%');
+                mergeField(sheet, f.note, 'note', w.note, cur.note);
+                // 선행 작업(체크 상자 묶음)도 같은 방법: 내가 고르지 않았으면 최신 선행으로 맞춘다
+                var picks = Array.prototype.slice.call(form.querySelectorAll('input[name=pre]'));
+                var key = function (ids) { return (ids || []).slice().sort(function (a, b) { return a - b; }).join(','); };
+                var chosen = key(picks.filter(function (x) { return x.checked; }).map(function (x) { return +x.value; }));
+                if (key(w.predecessors) !== key(cur.predecessors)) {
+                    var untouched = chosen === key(w.predecessors);
+                    if (untouched) picks.forEach(function (x) { x.checked = cur.predecessors.indexOf(+x.value) >= 0; });
+                    sheet.conflictNote('predecessors', titlesOf(cur.predecessors), untouched);
+                }
                 w = cur;
                 refreshUi();
                 return CONFLICT;

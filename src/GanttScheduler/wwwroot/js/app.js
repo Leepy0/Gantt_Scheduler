@@ -323,8 +323,9 @@
                     errorEl.scrollIntoView({ block: 'nearest' });
                 }
             },
-            // 동시 수정 뒤 '다른 사용자가 바꾼 값' 안내. field 가 없으면 본문 맨 위에, text 가 비면 지운다
-            conflictNote: function (field, text) {
+            // 동시 수정 뒤 '다른 사용자가 바꾼 값' 안내. field 가 없으면 본문 맨 위에, text 가 비면 지운다.
+            // applied: 내가 손대지 않은 칸이라 그 값으로 바꿔 넣었다는 뜻
+            conflictNote: function (field, text, applied) {
                 var host = field ? form.querySelector('[data-field="' + field + '"]') : body;
                 if (!host) host = body;
                 var key = field || '_';
@@ -336,7 +337,7 @@
                     note.setAttribute('data-conflict-note', key);
                     if (field) host.appendChild(note); else errorEl.insertAdjacentElement('afterend', note);
                 }
-                note.innerHTML = App.icon('alert') + '<span>다른 사용자가 바꾼 값: ' + App.esc(text) + '</span>';
+                note.innerHTML = App.icon('alert') + '<span>다른 사용자가 바꾼 값: ' + App.esc(text) + (applied ? ' — 그 값으로 바꿨습니다' : '') + '</span>';
             },
             clearConflictNotes: function () {
                 form.querySelectorAll('[data-conflict-note]').forEach(function (n) { n.remove(); });

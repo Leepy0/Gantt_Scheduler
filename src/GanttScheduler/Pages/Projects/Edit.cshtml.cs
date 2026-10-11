@@ -56,7 +56,7 @@ public class EditModel : PageModel
     public List<string> UserNames { get; private set; } = new();
     public List<string> VendorNames { get; private set; } = new();
     public string MetaJson { get; private set; } = "{}";
-    // 동시 수정 충돌 뒤: 다른 사용자가 바꾼 항목 → 그 값(표시용). 입력칸 옆에 보여 준다
+    // 동시 수정 충돌 뒤: 다른 사용자가 바꾼 항목 → 안내 글(그 값). 입력칸 옆에 보여 준다
     public Dictionary<string, string> Changed { get; } = new();
 
     public async Task<IActionResult> OnGetAsync()
@@ -142,6 +142,7 @@ public class EditModel : PageModel
             .Include(x => x.Owner)
             .Include(x => x.Equipments).ThenInclude(e => e.EquipmentType).ThenInclude(t => t!.Parent)
             .Include(x => x.Containers).ThenInclude(c => c.ContainerType)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(x => x.Id == id);
         if (latest == null)
         {
@@ -149,18 +150,25 @@ public class EditModel : PageModel
             return;
         }
 
+        // 세 갈래 비교: 화면을 연 때의 값(before)·최신 값(now)·지금 입력 값(mine).
+        // 내가 손대지 않은 항목은 최신 값으로 바꿔 넣는다 — 그대로 다시 저장하면 다른 사람이 바꾼 값을 옛 값으로 되돌리기 때문이다.
+        // 둘 다 바꾼 항목은 내 입력을 두고 상대 값을 옆에 보인다
         var before = ParseBase(Form.Base);
         var now = Snapshot(latest);
+        var mine = Posted(latest.Category?.Kind ?? CategoryKind.General);
         var locations = await _projects.LocationsAsync();
         foreach (var (key, value) in now)
         {
             if (before != null && before.TryGetValue(key, out var old) && old == value) continue;
-            Changed[key] = key switch
+            var shown = key switch
             {
                 "locationId" => string.Join(" · ", locations.Chain(latest.LocationId).Select(l => l.Name)),
                 "items" => ItemsText(latest),
                 _ => value.Length == 0 ? "(비어 있음)" : value,
             };
+            var untouched = before != null && before.TryGetValue(key, out var opened) && mine.TryGetValue(key, out var mineValue) && mineValue == opened;
+            if (untouched) Adopt(key, latest);
+            Changed[key] = untouched ? shown + " — 그 값으로 바꿨습니다" : shown;
         }
 
         // 다시 저장할 때는 지금 버전으로 보낸다. 모델 상태에 남은 옛 값이 숨은 입력에 다시 그려지지 않게 지운다
@@ -169,8 +177,48 @@ public class EditModel : PageModel
         ModelState.Remove("Form.Version");
         ModelState.Remove("Form.Base");
         Error = Changed.Count > 0
-            ? "다른 사용자가 이 과제를 먼저 수정했습니다. 그 사람이 바꾼 값을 항목 옆에 표시했습니다. 입력한 내용은 그대로 있으니 확인한 뒤 다시 저장하면 지금 화면의 내용으로 저장됩니다."
+            ? "다른 사용자가 이 과제를 먼저 수정했습니다. 손대지 않은 항목은 그 사람이 바꾼 값으로 맞췄고, 둘 다 바꾼 항목은 지금 입력한 값을 두고 그 사람의 값을 옆에 표시했습니다. 확인한 뒤 다시 저장해 주세요."
             : "다른 사용자가 이 과제를 먼저 수정했습니다(이 화면에 없는 항목). 입력한 내용은 그대로 있으니 다시 저장하면 지금 화면의 내용으로 저장됩니다.";
+    }
+
+    // 지금 입력한 값 — Snapshot 과 같은 모양으로 (서비스가 저장할 때처럼 앞뒤 공백을 지우고 빈 행은 뺀다)
+    private Dictionary<string, string> Posted(CategoryKind kind)
+    {
+        static string T(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
+        var rows = Form.Items.Where(i => !(i.TypeId == 0 && i.Quantity == 0)).Select(i => $"{i.TypeId}:{i.Quantity}:{T(i.Note)}").ToList();
+        var items = kind == CategoryKind.Automation ? string.Join("|", rows.Select(r => "E" + r)) + "/"
+            : kind == CategoryKind.Container ? "/" + string.Join("|", rows.Select(r => "C" + r))
+            : "/";
+        return new()
+        {
+            ["title"] = T(Form.Title),
+            ["locationId"] = Form.LocationId.ToString(),
+            ["owner"] = T(Form.Owner),
+            ["startDate"] = Form.StartDate?.ToString("yyyy-MM-dd") ?? "",
+            ["vendor"] = T(Form.Vendor),
+            ["description"] = T(Form.Description),
+            ["items"] = items,
+        };
+    }
+
+    // 내가 손대지 않은 항목을 최신 값으로 바꿔 넣는다 (입력칸이 모델 상태의 옛 값으로 다시 그려지지 않게 지운다)
+    private void Adopt(string key, Project latest)
+    {
+        switch (key)
+        {
+            case "title": Form.Title = latest.Title; ModelState.Remove("Form.Title"); break;
+            case "locationId": Form.LocationId = latest.LocationId; ModelState.Remove("Form.LocationId"); break;
+            case "owner": Form.Owner = latest.Owner?.Name; ModelState.Remove("Form.Owner"); break;
+            case "startDate": Form.StartDate = latest.StartDate; ModelState.Remove("Form.StartDate"); break;
+            case "vendor": Form.Vendor = latest.Vendor; ModelState.Remove("Form.Vendor"); break;
+            case "description": Form.Description = latest.Description; ModelState.Remove("Form.Description"); break;
+            case "items":
+                Form.Items = (latest.Category?.Kind == CategoryKind.Container
+                    ? latest.Containers.OrderBy(c => c.Id).Select(c => new ItemRow { TypeId = c.ContainerTypeId, Quantity = c.Quantity, Note = c.Note })
+                    : latest.Equipments.OrderBy(e => e.Id).Select(e => new ItemRow { TypeId = e.EquipmentTypeId, Quantity = e.Quantity, Note = e.Note })).ToList();
+                foreach (var k in ModelState.Keys.Where(k => k.StartsWith("Form.Items", StringComparison.Ordinal)).ToList()) ModelState.Remove(k);
+                break;
+        }
     }
 
     // 충돌 비교용 값 (표시 문자열이 아니라 비교할 수 있는 원래 값)
