@@ -592,6 +592,14 @@ public static class Rules
 
     public static bool IsSoon(int daysLeft) => daysLeft >= 0 && daysLeft <= SoonDays;
 
+    // 과제를 끝낸 날: 모든 단계를 완료했으면 가장 늦은 단계 완료일 (대시보드 '올해 완료'와 목록의 완료 연도 조건이 같은 판정을 쓴다)
+    public static DateOnly? CompletedOn(Project p) =>
+        AllStagesDone(p) ? p.Stages.Max(s => s.CompletedDate!.Value) : null;
+
+    // 미완료 단계 중 목표일이 오늘부터 days 일 안(오늘 포함)인 것이 있는가 (대시보드 'n일 내 목표'·다가오는 일정과 목록의 조건)
+    public static bool HasStageDueWithin(Project p, DateOnly today, int days) =>
+        p.Stages.Any(s => s.CompletedDate == null && s.TargetDate != null && DaysLeft(s.TargetDate.Value, today) is var d && d >= 0 && d <= days);
+
     // 미완료 단계의 목표일이 지남
     public static bool IsLate(Stage s, DateOnly today) => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value < today;
 
@@ -624,6 +632,9 @@ public static class Rules
 
     public static bool CanDeleteAttachment(Attachment a, int? projectOwnerId, int? userId, bool isAdmin) =>
         isAdmin || (userId != null && (a.UploadedById == userId || projectOwnerId == userId));
+
+    // 기준선 다시 확정: 기준선 대비 밀린 기록을 0 으로 되돌리므로 과제 담당자·관리자만 (처음 확정은 누구나)
+    public static bool CanRebaseline(Project p, int? userId, bool isAdmin) => isAdmin || (userId != null && p.OwnerId == userId);
 
     // ── 단계 일정 계획: 목표일 초안·근무일 간격 ─────────────────────────
     // 기본 기간(StageTemplate.DefaultWorkDays)·초안·간격·리드타임 힌트가 모두 같은 거리를 쓴다:
@@ -689,4 +700,91 @@ public static class Rules
     public static bool StageLinkViolated(StageLink link, Stage predecessor, Stage successor, WorkCalendar cal) =>
         successor.CompletedDate == null && successor.TargetDate != null
         && StageLinkEarliest(link, predecessor, cal) is { } earliest && successor.TargetDate.Value < earliest;
+
+    // ── 협업: 새 활동·댓글 수정 ──────────────────────────────────────────
+    // 목록의 '새 활동 n', 상세의 '여기부터 새 활동' 구분선, 내 할 일의 '새 소식'이 모두 같은 기준을 쓴다
+
+    // 새 활동을 세는 기간의 상한(일). 오래 안 본 과제가 수백 건으로 보이지 않게, 처음 보는 과제는 이 기간만 센다
+    public const int NewActivityDays = 7;
+
+    // 이 시각보다 뒤에 남은 활동이 '새 활동'이다: 마지막으로 본 시각, 그것이 없거나 상한보다 오래됐으면 상한
+    public static DateTime NewSince(DateTime? lastSeen, DateTime utcNow)
+    {
+        var floor = utcNow.AddDays(-NewActivityDays);
+        return lastSeen is { } seen && seen > floor ? seen : floor;
+    }
+
+    // 다른 사람이 since 뒤에 남긴 활동 (내가 남긴 것은 새 소식이 아니다). 댓글 수정·삭제 기록은 그 댓글로 보이므로 따로 세지 않는다.
+    // 지운 댓글도 새 활동이 아니다 — 볼 내용이 없는데 '새'로 부르면 목록·상세·내 할 일이 서로 달라진다(세 곳이 이 기준을 같이 쓴다)
+    public static bool IsNewActivity(ActivityType type, int authorId, DateTime at, int userId, DateTime since, bool deleted) =>
+        type != ActivityType.CommentChanged && !deleted && authorId != userId && at > since;
+
+    // 댓글은 작성자만, 남긴 뒤 editHours 시간 안에, 지우지 않은 것만 고치거나 지울 수 있다(0 이면 막는다)
+    public static bool CanEditComment(int authorId, DateTime at, DateTime? deletedAt, int userId, DateTime utcNow, int editHours) =>
+        authorId == userId && deletedAt == null && editHours > 0 && utcNow - at <= TimeSpan.FromHours(editHours);
+
+    // ── 보고 기준일(asOf) 판정 — 지난 주 보고 ─────────────────────────
+    // 지난 주 보고를 다시 열면 그 주 마지막 날(asOf) 기준으로 지연을 센다. asOf 뒤에 기록된 실적(단계 완료일·작업 실적 종료)은
+    // 그때 아직 없던 것으로 본다. 목표일은 지금 값이다 — 목표일 변경 이력을 거슬러 계산하지 않는다(근본 해결은 일별 스냅샷).
+    // asOf 가 오늘 이후면 지금 판정(DelayDays·IsLate)과 같다
+
+    // asOf 에 이미 끝나 있던 실적인가 (오늘 기준이면 기록된 실적은 모두 끝난 것)
+    public static bool DoneBy(DateOnly? date, DateOnly asOf, DateOnly today) => date != null && (asOf >= today || date.Value <= asOf);
+
+    // asOf 에 진행 중이던 과제: 지금 진행 중이거나, 지금은 완료지만 asOf 뒤에 마지막 단계를 끝낸 과제. 보류·중단은 언제 바뀌었는지 몰라 지금 상태로 본다
+    public static bool ActiveAsOf(Project p, DateOnly asOf, DateOnly today) =>
+        p.State == ProjectState.Active
+        || (p.State == ProjectState.Done && p.Stages.Any(s => !DoneBy(s.CompletedDate, asOf, today)));
+
+    // asOf 기준 단계 지연 일수 (지연이 아니면 0)
+    public static int StageLateDaysAsOf(Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(s.CompletedDate, asOf, today) && s.TargetDate != null && s.TargetDate.Value < asOf ? asOf.DayNumber - s.TargetDate.Value.DayNumber : 0;
+
+    // asOf 기준 작업 지연 일수. 그때 단계가 이미 완료돼 있었으면 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static int WorkLateDaysAsOf(WorkItem w, Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(w.ActualEnd, asOf, today) && !DoneBy(s.CompletedDate, asOf, today) && w.PlanEnd < asOf ? asOf.DayNumber - w.PlanEnd.DayNumber : 0;
+
+    // asOf 기준 과제 지연 일수 (DelayDays 와 같은 규칙 — 가장 오래 밀린 미완료 단계)
+    public static int DelayDaysAsOf(Project p, DateOnly asOf, DateOnly today)
+    {
+        if (!ActiveAsOf(p, asOf, today)) return 0;
+        var max = 0;
+        foreach (var s in p.Stages) max = Math.Max(max, StageLateDaysAsOf(s, asOf, today));
+        return max;
+    }
+
+    // ── 공휴일 변경 영향 ────────────────────────────────────────────────
+    // 공휴일을 더하거나 빼면 근무일 기간·지연 일수가 바뀌고, 선행 종료 다음 날을 공휴일로 넣으면 후행이 곧바로 선행 관계를 어긴다.
+    // 관리 화면이 저장 응답으로 알리도록 과제 하나의 영향을 센다(자동으로 밀지는 않는다 — 규칙 11).
+    // Touched: 바뀐 날이 미완료 단계 목표일이거나 열린 작업의 목표 기간 안에 있다. NewViolations: before 달력에서는 지키던 선행 관계를
+    // after 달력에서 어기게 되는 밀기 대상 작업 수(작업마다 한 번)
+    public static (bool Touched, int NewViolations) HolidayImpact(Project p, IReadOnlyCollection<DateOnly> changed, WorkCalendar before, WorkCalendar after)
+    {
+        var touched = p.Stages.Any(s => s.CompletedDate == null
+            && ((s.TargetDate is { } t && changed.Contains(t))
+                || s.Works.Any(w => IsOpen(w, s) && changed.Any(d => d >= w.PlanStart && d <= w.PlanEnd))));
+        var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) byId[w.Id] = (w, s);
+        var violated = new HashSet<int>();
+        foreach (var l in p.Links)
+        {
+            if (!byId.TryGetValue(l.PredecessorId, out var pred) || !byId.TryGetValue(l.SuccessorId, out var succ)) continue;
+            if (!IsMovable(succ.Work, succ.Stage)) continue;
+            if (Violates(l, pred.Work, succ.Work, after) && !Violates(l, pred.Work, succ.Work, before)) violated.Add(succ.Work.Id);
+        }
+        return (touched, violated.Count);
+    }
+
+    // ── 일정 변경 횟수 ──────────────────────────────────────────────────
+    // 일정 변경은 '결정' 단위로 센다. 연쇄 이동·선행 연동은 한 번의 결정으로 여러 행(같은 BatchId)을 남기므로
+    // 행 수로 세면 부풀려진다 — 묶음 없는 행은 하나씩, 묶음은 하나로 센다 (주간 보고·상세·Excel·PDF 공용)
+    public static int DecisionCount(IEnumerable<Guid?> batchIds)
+    {
+        var count = 0;
+        var seen = new HashSet<Guid>();
+        foreach (var b in batchIds)
+            if (b == null || seen.Add(b.Value)) count++;
+        return count;
+    }
 }

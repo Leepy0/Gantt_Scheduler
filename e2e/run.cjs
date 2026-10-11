@@ -260,6 +260,40 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         assert((await page.locator('.ptable-row').count()) === 2, '검색 결과가 2건이 아님');
     });
 
+    await step('대시보드 숫자·막대 — 누르면 같은 판정의 목록(7일 내 목표·올해 완료·유형), 조건 안내와 해제', async () => {
+        await page.goto(BASE + '/');
+        const due = +(await page.locator('[data-kpi=due] .kpi-value').innerText());
+        await page.click('[data-kpi=due]');
+        await page.waitForURL(/state=active&due=7/);
+        assert((await page.locator('[data-special-note]').innerText()).includes('단계 목표일 7일 안'), '대시보드 조건 안내가 없음');
+        const rows = await page.locator('.ptable-row').count();
+        assert(rows === due, `7일 내 목표 ${due}건인데 목록 ${rows}건`);
+        await shot(page, 'd02b-projects-due');
+        // 상태 탭을 바꾸면 대시보드 조건은 풀린다
+        await page.locator('.state-tab', { hasText: '전체' }).click();
+        await page.waitForURL((u) => /state=all/.test(u.toString()) && !/due=/.test(u.toString()));
+        assert((await page.locator('[data-special-note]').count()) === 0, '상태를 바꿨는데 대시보드 조건이 남음');
+
+        await page.goto(BASE + '/');
+        const done = +(await page.locator('[data-kpi=done] .kpi-value').innerText());
+        await page.click('[data-kpi=done]');
+        await page.waitForURL(/state=done&doneYear=\d{4}/);
+        assert((await page.locator('.ptable-row').count()) === done, '올해 완료 KPI 와 목록 건수가 다름');
+
+        await page.goto(BASE + '/');
+        const bar = page.locator('[data-bar-category]').first();
+        const total = +(await bar.locator('.bar-num').innerText());
+        await bar.click();
+        await page.waitForURL(/state=all&category=\d+/);
+        assert((await page.locator('.ptable-row').count()) === total, '유형 막대 건수와 목록 건수가 다름');
+        await page.goto(BASE + '/');
+        const corp = page.locator('[data-bar-corp]').first();
+        const corpTotal = +(await corp.locator('.bar-num').innerText());
+        await corp.click();
+        await page.waitForURL(/state=all&corp=\d+/);
+        assert((await page.locator('.ptable-row').count()) === corpTotal, '법인 막대 건수와 목록 건수가 다름');
+    });
+
     await step('과제 상세 간트 — 기준선·의존선 표시', async () => {
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
         assert((await page.locator('#gantt .g-row.stage').count()) === 8, '단계 행이 8개가 아님');
@@ -298,6 +332,14 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.fill(SHEET + ' [data-new-check]', '현장 사진 첨부');
         await page.click(SHEET + ' [data-add-check]');
         await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/4');
+        // 문구 고치기: 그 줄이 입력칸이 되고 Enter 로 저장 ('옛 → 새' 이력)
+        await page.locator(SHEET + ' [data-checks] li', { hasText: '현장 사진 첨부' }).locator('[data-edit-check]').click();
+        await page.fill(SHEET + ' [data-edit-text]', '현장 사진 첨부(전·후)');
+        await shot(page, 'd04b-check-edit', false);
+        await page.press(SHEET + ' [data-edit-text]', 'Enter');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-checks]').innerText.includes('현장 사진 첨부(전·후)'));
+        assert(await page.locator(SHEET + ' .sheet-body > .form-error').isHidden(), '체크 문구 수정이 오류');
+        assert((await projectData(page)).activities.some((a) => a.text.includes('체크 항목 수정: 현장 사진 첨부 → 현장 사진 첨부(전·후)')), '체크 문구 수정 이력이 없음');
         await page.locator(SHEET + ' [data-checks] li', { hasText: '현장 사진 첨부' }).locator('[data-del-check]').click();
         await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-check-count]').textContent === '3/3');
         await closeSheet(page);
@@ -536,11 +578,18 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
     });
 
-    await step('기준선 다시 확정', async () => {
+    await step('기준선 다시 확정 — 사유를 받고 직전·새 목표 종료를 이력에 남김', async () => {
         await page.click('#btn-baseline');
-        await page.waitForSelector(SHEET + ' [data-yes]');
-        await page.click(SHEET + ' [data-yes]');
+        await page.waitForSelector(SHEET + ' [data-baseline-ends]');
+        assert((await page.locator(SHEET + ' [data-baseline-ends]').innerText()).includes('기준선 목표 종료'), '직전·새 목표 종료 안내가 없음');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('사유'), '사유 없이 다시 확정됨');
+        await page.fill(SHEET + ' textarea[name=reason]', '계약 범위 변경');
+        await shot(page, 'd08g-rebaseline', false);
+        await submitSheet(page);
         await page.waitForFunction(() => document.querySelector('#summary .summary-chips').innerText.includes('기준선 유지'));
+        const act = (await projectData(page)).activities.find((a) => a.type === 'baselineSet');
+        assert(act && act.text.includes('기준선 다시 확정 (목표 종료') && act.reason === '계약 범위 변경', '기준선 다시 확정 이력이 이상함: ' + JSON.stringify(act));
     });
 
     await step('목록 보기·정보·활동 탭', async () => {
@@ -1162,14 +1211,31 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
     await step('분석 — 리드타임·주간 보고·변경 이력', async () => {
         await page.goto(BASE + '/Insights/LeadTime');
         assert((await page.locator('.lead-table tbody tr').count()) >= 8, '리드타임 행이 부족함');
+        const head = await page.locator('.lead-table thead').first().innerText();
+        assert(['평균(근무일)', '0일 표본', '처음 목표 대비', '기준선 대비'].every((x) => head.includes(x)), '리드타임 새 열이 없음: ' + head);
         await shot(page, 'd15-insights-leadtime');
+        await page.click('[data-zero-exclude]');
+        await page.waitForURL(/zero=exclude/);
+        assert((await page.locator('[data-zero-exclude].on').count()) === 1, '0일 표본 제외가 선택되지 않음');
+        await shot(page, 'd15b-leadtime-zero');
 
         await page.locator('.tabs a', { hasText: '주간 보고' }).click();
         await page.waitForSelector('.weekly');
         const weekly = await page.locator('main').innerText();
         assert(weekly.includes('주행 시험 재실시로 일주일 순연'), '이번 주 일정 변경 사유가 없음');
         assert(weekly.includes('재협의 완료'), '이번 주 진행 내용이 없음');
+        // 일정 변경은 결정 단위, 대상 수를 함께 보이고 상태·기준선·과제 완료는 따로 센다
+        assert((await page.locator('[data-kpi=changes] .kpi-sub').innerText()).startsWith('대상'), '일정 변경 대상 수가 없음');
+        assert((await page.locator('[data-kpi=states]').count()) === 1 && (await page.locator('[data-kpi=completed]').count()) === 1, '상태·기준선/과제 완료 KPI 가 없음');
+        // 지연 과제는 변동이 없어도 카드, 밀린 항목(D+n)
+        assert((await page.locator('.weekly .weekly-late li').count()) > 0, '밀린 항목이 없음');
+        assert((await page.locator('[data-weekly-asof]').count()) === 0, '이번 주인데 기준일 안내가 있음');
         await shot(page, 'd16-insights-weekly');
+        // 지난 주: 그 주 마지막 날 기준 안내
+        await page.click('a[aria-label="이전 주"]');
+        await page.waitForSelector('[data-weekly-asof]');
+        assert((await page.locator('[data-weekly-asof]').innerText()).includes('진행률·현재 단계는 지금 기준'), '지난 주 기준일 안내가 없음');
+        await shot(page, 'd16b-weekly-past');
 
         await page.locator('.tabs a', { hasText: '변경 이력' }).click();
         await page.waitForSelector('.history li');
@@ -1352,6 +1418,162 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         }
     });
 
+    // ── 협업: 관심 과제·알림·멘션·활동 조건·댓글 고치기 ──
+    // 다른 사용자는 X-Forwarded-For 로 다른 PC 를 흉내 낸다(개발 환경은 같은 서버의 프록시 머리글을 믿는다 — appsettings.Development.json).
+    // 이 단계들은 '광주 2공장 물류 동선 Simulation' 에 댓글을 남기고, 평영이 그 과제를 관심 과제로 둔다
+    const COLLAB = '광주 2공장 물류 동선 Simulation';
+
+    await step('관심 과제 — 상세·목록의 별을 누르면 눌린 상태로 바뀌고 내 할 일에 관심 과제로 보임', async () => {
+        await openProject(page, COLLAB);
+        const star = page.locator('#watch-btn');
+        assert((await star.getAttribute('aria-pressed')) === 'false', '처음부터 관심 과제로 표시됨');
+        await star.click();
+        await page.waitForFunction(() => document.getElementById('watch-btn').getAttribute('aria-pressed') === 'true');
+        assert((await star.getAttribute('aria-label')).includes('빼기'), '별의 이름이 바뀌지 않음');
+        await page.goto(BASE + '/Projects?state=all');
+        const row = page.locator('.prow', { hasText: COLLAB });
+        assert((await row.locator('[data-watch]').getAttribute('aria-pressed')) === 'true', '목록의 별이 눌려 있지 않음');
+        // 목록에서 다른 과제의 별을 눌러도 행(상세)으로 넘어가지 않는다
+        const other = page.locator('.prow', { hasText: '멕시코 에어컨 용기 표준화' }).locator('[data-watch]');
+        await other.click();
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'true'));
+        assert(new URL(page.url()).pathname === '/Projects', '별을 누르니 상세로 넘어감: ' + page.url());
+        await shot(page, 'd48-watch-list', false);
+        await other.click();
+        await page.waitForFunction(() => [...document.querySelectorAll('.prow')].some((r) => r.innerText.includes('멕시코 에어컨 용기 표준화') && r.querySelector('[data-watch]').getAttribute('aria-pressed') === 'false'));
+        await page.goto(BASE + '/My');
+        const watched = await page.locator('#watched').innerText();
+        assert(watched.includes(COLLAB) && !watched.includes('멕시코 에어컨 용기 표준화'), '내 할 일의 관심 과제가 다름: ' + watched);
+    });
+
+    await step('알림 — 다른 사람이 나를 알릴 사람으로 고르면 종에 읽지 않은 수, 새 소식·새 활동 표시, 알림을 누르면 그 활동을 강조', async () => {
+        const otherPc = await browser.newContext({
+            viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul', extraHTTPHeaders: { 'X-Forwarded-For': '10.77.0.21' },
+        });
+        const c = await otherPc.newPage();
+        watch(c, 'colleague');
+        c.setDefaultTimeout(10000);
+        active = c;
+        await c.goto(BASE + '/');
+        await c.waitForURL(/\/Welcome/);
+        await c.fill('input[name=Name]', '동료');
+        await c.click('button[type=submit]');
+        await c.waitForSelector('.kpis');
+        await openProject(c, COLLAB);
+        await c.click('.tabs [data-tab=activity]');
+        // 본문에서 '@' 를 치면 이름 칸으로 옮겨 목록에서 고른다(이름에 공백이 있을 수 있어 본문을 파싱하지 않는다)
+        await c.fill('#comment-text', '모델 검증 결과 공유합니다 ');
+        await c.focus('#comment-text');
+        await c.keyboard.press('End');
+        await c.keyboard.type('@');
+        await c.waitForFunction(() => document.activeElement && document.activeElement.matches('[data-mention-input]'));
+        await c.keyboard.type('없는사람');
+        await c.keyboard.press('Enter');
+        assert((await c.locator('#comment-mentions [data-mention-hint]').innerText()).includes('목록에 없습니다'), '목록에 없는 이름을 받음');
+        await c.fill('#comment-mentions [data-mention-input]', '평영');
+        await c.keyboard.press('Enter');
+        assert((await c.locator('#comment-mentions .mention-chip').allInnerTexts()).join() === '@평영', '고른 사람 칩이 없음');
+        assert((await c.inputValue('#comment-text')).includes('@평영'), '본문에 @이름이 들어가지 않음');
+        await shot(c, 'd49-mention-pick', false);
+        await c.click('#comment-btn');
+        await c.waitForSelector('#feed > li .mention-chip');
+        assert((await c.locator('#comment-mentions .mention-chip').count()) === 0, '등록 뒤 알릴 사람이 남음');
+        await c.fill('#comment-text', '2차 시뮬레이션은 다음 주에 돌립니다');
+        await c.click('#comment-btn');
+        await c.waitForFunction(() => document.querySelector('#feed > li .feed-text').textContent.includes('2차 시뮬레이션'));
+        await otherPc.close();
+        active = page;
+
+        // 평영: 종에 읽지 않은 수(멘션 1 + 관심 과제 1), 목록의 새 활동, 내 할 일의 새 소식
+        await page.goto(BASE + '/Projects?state=all');
+        await page.waitForFunction(() => !document.getElementById('bell-count').hidden && document.getElementById('bell-count').textContent === '2');
+        assert((await page.getAttribute('#bell', 'aria-label')).includes('읽지 않은 2건'), '종의 이름에 읽지 않은 수가 없음');
+        assert((await page.locator('.prow', { hasText: COLLAB }).innerText()).includes('새 활동 2'), '목록에 새 활동 수가 없음');
+        await shot(page, 'd50-bell-new-count', false);
+        await page.goto(BASE + '/My');
+        const news = await page.locator('#news').innerText();
+        assert(news.includes('모델 검증 결과') && news.includes('멘션') && news.includes('2차 시뮬레이션') && news.includes('관심 과제'), '새 소식이 다름: ' + news);
+        await shot(page, 'd50b-my-news', false);
+
+        await page.click('#bell');
+        await page.waitForURL(/\/My\/Notifications/);
+        assert((await page.locator('.note-list > li.unread').count()) === 2, '읽지 않은 알림이 2건이 아님');
+        await shot(page, 'd51-notifications', false);
+        await page.locator('.note-list > li', { hasText: '모델 검증 결과' }).locator('.note-link').click();
+        await page.waitForURL(/\/Projects\/Detail\?id=\d+#a\d+$/);
+        await page.waitForSelector('#feed > li.hit');
+        const hit = await page.locator('#feed > li.hit').innerText();
+        assert(hit.includes('모델 검증 결과') && hit.includes('@평영'), '강조한 활동이 다름: ' + hit);
+        assert((await page.locator('#feed .feed-divider').innerText()).includes('여기부터'), '새 활동 구분선이 없음');
+        assert((await page.locator('#activity-new').innerText()).trim() === '새 2', '활동 탭에 새 활동 수가 없음');
+        await shot(page, 'd52-activity-deeplink', false);
+        // 누른 알림은 읽음 — 남은 하나는 '모두 읽음'
+        await page.goto(BASE + '/My/Notifications');
+        assert((await page.locator('.note-list > li.unread').count()) === 1, '누른 알림이 읽음이 되지 않음');
+        await page.click('#read-all');
+        await page.waitForFunction(() => document.querySelectorAll('.note-list > li.unread').length === 0 && document.getElementById('bell-count').hidden);
+        assert(await page.locator('#read-all').isDisabled(), '모두 읽은 뒤에도 단추가 켜져 있음');
+    });
+
+    await step('활동 조건·댓글 고치기 — 종류 칩·단계·검색으로 거르고 조건대로 더 보기, 내 댓글은 고치고 지움', async () => {
+        await openProject(page, COLLAB);
+        await page.click('.tabs [data-tab=activity]');
+        await page.fill('#comment-text', 'e2e 확인용 첫 글');
+        await page.click('#comment-btn');
+        await page.waitForSelector('#feed > li:has-text("e2e 확인용 첫 글") [data-edit-comment]');
+        // 고치기: 원문은 기록으로 남고 '(수정됨)'
+        await page.locator('#feed > li', { hasText: 'e2e 확인용 첫 글' }).locator('[data-edit-comment]').click();
+        await page.waitForSelector(SHEET + ' textarea[name=text]');
+        await page.fill(SHEET + ' textarea[name=text]', 'e2e 확인용 고친 글');
+        await submitSheet(page);
+        await page.waitForSelector('#feed > li:has-text("e2e 확인용 고친 글") .edited');
+        assert((await page.locator('#feed').innerText()).includes('댓글 수정'), '수정 기록이 없음');
+        // '해당 댓글 보기' 는 그 댓글을 강조한다
+        await page.locator('#feed > li', { hasText: '댓글 수정' }).first().locator('[data-goto]').click();
+        await page.waitForSelector('#feed > li.hit:has-text("e2e 확인용 고친 글")');
+
+        // 종류 칩: 댓글만
+        await page.click('#feed-filters [data-kind=comment]');
+        await page.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        const comments = await page.locator('#feed').innerText();
+        assert(comments.includes('e2e 확인용 고친 글') && !comments.includes('과제 등록'), '댓글 조건이 맞지 않음');
+        // 검색까지 겹치면 둘 다 맞는 것만
+        await page.fill('#feed-q', '고친 글');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length === 1 && document.querySelector('#feed > li').innerText.includes('고친 글'));
+        await shot(page, 'd53-activity-filter', false);
+        // 단계 조건: 그 단계의 활동만
+        // 검색어는 입력을 멈춘 뒤(0.3초) 조회한다 — 지운 결과가 그려진 다음에 조건을 바꾼다
+        await page.fill('#feed-q', '');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length > 1);
+        await page.click('#feed-filters [data-kind=""]');
+        await page.selectOption('#feed-stage', { label: '모델링' });
+        await page.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        const metas = await page.locator('#feed > li .feed-meta').allInnerTexts();
+        assert(metas.length > 0 && metas.every((t) => t.includes('모델링')), '단계 조건이 맞지 않음: ' + metas.join(' / '));
+        await page.selectOption('#feed-stage', '');
+        await page.waitForFunction(() => !document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+
+        // 지우기: 자리 표시만 남는다
+        await page.locator('#feed > li', { hasText: 'e2e 확인용 고친 글' }).locator('[data-delete-comment]').click();
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForSelector('#feed > li:has-text("삭제된 댓글")');
+        assert((await page.locator('#feed').innerText()).includes('댓글 삭제'), '삭제 기록이 없음');
+        assert(!(await page.locator('#feed').innerText()).includes('e2e 확인용 고친 글'), '지운 글이 남음');
+        await shot(page, 'd54-comment-deleted', false);
+
+        // 조건을 건 채로 더 보기: 체크를 켜고 끈 활동이 많은 과제에서 '진행' 만
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await page.click('.tabs [data-tab=activity]');
+        await page.click('#feed-filters [data-kind=progress]');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length === 50 && !document.getElementById('feed-more').hidden);
+        await page.click('#feed-more');
+        await page.waitForFunction(() => document.querySelectorAll('#feed > li').length > 50);
+        // 이 과제에는 '더 보기' 단계가 남긴 메모(댓글)가 있다 — 진행 조건에서는 빠진다
+        const texts = await page.locator('#feed > li .feed-text').allInnerTexts();
+        assert(!texts.some((t) => t.includes('메모')), '진행이 아닌 활동(댓글)이 섞임');
+        assert(texts.some((t) => t.includes('체크')), '체크 활동이 없음');
+    });
+
     await step('대시보드 간트 — 과제가 많아도 페이지가 늘지 않고 간트 안에서 스크롤, 머리글은 붙어 있음', async () => {
         // 진행 과제를 잠시 늘린다(복제) — 끝나면 지운다
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
@@ -1512,6 +1734,71 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await page.waitForSelector('#draft .sched-row');
         await page.waitForFunction(() => document.querySelector('#draft').innerText.includes('기본 12근무일'));
         assert((await page.locator('#draft .sched-row').nth(2).locator('.sched-gap').innerText()).includes('+12근무일'), '바꾼 기본 기간이 초안에 쓰이지 않음');
+    });
+
+    await step('관리 — 사용자 메일 주소(관리자만 정함), 메일 서버가 없으면 시험 메일은 이유를 알림', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#admin-tabs [data-kind=user]');
+        await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('김물류'));
+        await page.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' input[name=email]');
+        await page.fill(SHEET + ' input[name=email]', '주소아님');
+        await page.click(SHEET + ' button[type=submit]');
+        assert((await sheetError(page)).includes('메일 주소'), '잘못된 메일 주소를 받음');
+        await page.fill(SHEET + ' input[name=email]', 'kim@example.com');
+        await page.click(SHEET + ' [data-test-mail]');
+        await page.waitForFunction(() => {
+            const el = document.querySelector('dialog.sheet[open] .sheet-body > .form-error');
+            return el && !el.hidden && el.innerText.includes('Notify:Smtp');
+        });
+        await shot(page, 'd20c-admin-user-email', false);
+        await submitSheet(page);
+        await page.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' input[name=email]');
+        assert((await page.inputValue(SHEET + ' input[name=email]')) === 'kim@example.com', '메일 주소가 저장되지 않음');
+        await closeSheet(page);
+    });
+
+    await step('관리 — 공휴일 연도 칩·여러 줄 붙여넣기·저장/삭제 때 일정 영향 안내', async () => {
+        const year = +kstToday().slice(0, 4);
+        await page.goto(BASE + '/Admin#holiday');
+        await page.waitForSelector('.year-chips [data-year]');
+        assert((await page.locator(`.year-chip[data-year="${year}"][aria-pressed=true]`).count()) === 1, '올해 칩이 선택되지 않음');
+        assert((await page.locator(`.year-chip[data-year="${year + 1}"]`).count()) === 1, '내년 칩이 없음');
+        await page.click(`.year-chip[data-year="${year + 1}"]`);
+        const dates = await page.locator('.columns .node-extra').allInnerTexts();
+        assert(dates.length > 0 && dates.every((d) => d.startsWith(String(year + 1))), '연도 칩이 그 해만 보이지 않음: ' + dates.join(','));
+        await shot(page, 'd18c-admin-holiday-years');
+
+        // 여러 줄 붙여넣기: 읽지 못하는 줄은 줄 번호와 함께 알리고 아무것도 넣지 않는다
+        const y = year + 3;
+        await page.click('[data-paste]');
+        await page.fill(SHEET + ' textarea[name=text]', `${y}-01-01\t신정\n${y}.3.1 삼일절\n잘못된 줄`);
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).startsWith('3번째 줄'), '잘못된 줄 안내가 없음');
+        await page.fill(SHEET + ' textarea[name=text]', `${y}-01-01\t신정\n${y}.3.1 삼일절`);
+        await shot(page, 'd18d-admin-holiday-paste', false);
+        await submitSheet(page);
+        await page.waitForSelector('[data-holiday-notice]');
+        assert((await page.locator('[data-holiday-notice]').innerText()).includes('2건을 추가했습니다'), '붙여넣기 결과 안내가 없음');
+        assert((await page.locator(`.year-chip[data-year="${y}"][aria-pressed=true]`).count()) === 1, '붙여 넣은 해로 바뀌지 않음');
+        assert((await page.locator('.columns').innerText()).includes('삼일절'), '붙여 넣은 공휴일이 목록에 없음');
+
+        // 진행 과제 일정 안의 날을 저장하면 영향 안내, 지우면 다시 안내 (일정은 원래대로)
+        const day = kstToday(3);
+        const form = page.locator('form[data-add="1"]');
+        await form.locator('input[name=date]').fill(day);
+        await form.locator('input[name=name]').fill('e2e 임시 공휴일');
+        await form.locator('button[type=submit]').click();
+        await page.waitForFunction(() => (document.querySelector('[data-holiday-notice]') || {}).innerText?.includes('공휴일을 저장했습니다'));
+        const saved = await page.locator('[data-holiday-notice]').innerText();
+        assert(saved.includes('진행 과제'), '일정 영향 안내가 없음: ' + saved);
+        await page.locator('.node', { hasText: 'e2e 임시 공휴일' }).locator('.node-main').click();
+        await page.click(SHEET + ' [data-danger]');
+        await page.locator('dialog[open] [data-yes]').click();
+        await page.waitForSelector(SHEET, { state: 'detached' });
+        await page.waitForFunction(() => (document.querySelector('[data-holiday-notice]') || {}).innerText?.includes('공휴일을 삭제했습니다'));
+        assert(!(await page.locator('.columns').innerText()).includes('e2e 임시 공휴일'), '지운 공휴일이 남음');
     });
 
     await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
@@ -1893,6 +2180,12 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
         await shot(m, 'm11-admin');
+        await m.goto(BASE + '/Admin#holiday');
+        await m.waitForSelector('.year-chips [data-year]');
+        await noOverflow('관리 공휴일');
+        const chip = await m.locator('.year-chip').first().boundingBox();
+        assert(chip && chip.height >= 40, '모바일 연도 칩이 너무 작음: ' + JSON.stringify(chip));
+        await shot(m, 'm11f-admin-holiday');
         await m.goto(BASE + '/Admin/Update');
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
@@ -1915,6 +2208,32 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForSelector('#history-project');
         await noOverflow('과제 전체 이력');
         await shot(m, 'm13b-history-project', false);
+    });
+
+    await step('모바일 알림·활동 조건·알릴 사람 고르기 — 하단 탭 화면에서 넘치지 않고 입력은 터치 크기', async () => {
+        await m.goto(BASE + '/My/Notifications');
+        await m.waitForSelector('.page-head h1');
+        assert(await m.locator('#bell').isVisible(), '모바일 상단에 알림 종이 없음');
+        await noOverflow('알림 목록');
+        await shot(m, 'm14-notifications');
+        await m.goto(BASE + '/Projects?state=all');
+        await m.locator('.ptable-row', { hasText: '광주 2공장 물류 동선 Simulation' }).first().click();
+        await m.waitForSelector('#summary .summary-meta');
+        await m.click('.tabs [data-tab=activity]');
+        await m.waitForSelector('#feed > li');
+        const box = await m.locator('#comment-mentions [data-mention-input]').boundingBox();
+        assert(box && box.height >= 48, '이름 칸이 터치 크기(48px)보다 작음: ' + (box && box.height));
+        await m.click('#feed-filters [data-kind=comment]');
+        await m.waitForFunction(() => document.getElementById('feed-status').textContent.includes('조건에 맞는'));
+        await noOverflow('활동 조건');
+        await m.locator('#feed-filters').scrollIntoViewIfNeeded();
+        await shot(m, 'm15-activity-filter', false);
+        await m.evaluate(() => window.scrollTo(0, 0));
+        await m.locator('#comment-form').scrollIntoViewIfNeeded();
+        await shot(m, 'm15b-mention-box', false);
+        await m.goto(BASE + '/My');
+        await m.waitForSelector('#watched');
+        await noOverflow('내 할 일 관심 과제');
     });
 
     await step('모바일 업데이트 — 시작되지 않아 되돌린 버전 안내', async () => {

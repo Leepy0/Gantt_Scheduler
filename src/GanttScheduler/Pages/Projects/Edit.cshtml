@@ -23,7 +23,7 @@
 
     <label class="field" data-field="title">
         <span class="label">과제명</span>
-        <input asp-for="Form.Title" maxlength="200" required autocomplete="off" />
+        <input asp-for="Form.Title" maxlength="@Limits.ProjectTitle" required autocomplete="off" />
         <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("title") ?? "")" />
     </label>
 
@@ -64,7 +64,7 @@
     <div class="field-row">
         <label class="field" data-field="owner">
             <span class="label">담당자</span>
-            <input asp-for="Form.Owner" maxlength="50" list="user-names" autocomplete="off" />
+            <input asp-for="Form.Owner" maxlength="@Limits.UserName" list="user-names" autocomplete="off" />
             <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("owner") ?? "")" />
         </label>
         <label class="field" data-field="startDate">
@@ -76,7 +76,7 @@
 
     <label class="field" data-field="vendor">
         <span class="label">협력사 <span class="opt">선택</span></span>
-        <input asp-for="Form.Vendor" maxlength="100" list="vendor-names" autocomplete="off" />
+        <input asp-for="Form.Vendor" maxlength="@Limits.VendorName" list="vendor-names" autocomplete="off" />
         <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("vendor") ?? "")" />
     </label>
 
@@ -89,7 +89,7 @@
 
     <label class="field" data-field="description">
         <span class="label">설명 <span class="opt">선택</span></span>
-        <textarea asp-for="Form.Description" rows="4" maxlength="2000"></textarea>
+        <textarea asp-for="Form.Description" rows="4" maxlength="@Limits.Description"></textarea>
         <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("description") ?? "")" />
     </label>
 

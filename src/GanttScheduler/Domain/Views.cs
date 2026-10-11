@@ -78,7 +78,21 @@ public record CrossLinkView(int Id, string Role, int ProjectId, string ProjectTi
     DateOnly? StageDate, bool StageDone, int Lag, DateOnly? Earliest, bool Violated);
 
 public record ActivityView(
-    int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId);
+    int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId)
+{
+    // 아래는 상세 활동 탭(ProjectService 가 지금 사용자 기준으로 채운다)
+    public string Kind { get; init; } = "";             // 종류 칩 (Reporting.KindOf — 변경 이력 화면과 같은 분류)
+    public int UserId { get; init; }
+    public bool Mine { get; init; }                     // 내가 남긴 활동
+    public bool New { get; init; }                      // 마지막으로 본 뒤 다른 사람이 남김 (Rules.IsNewActivity)
+    public DateTime? EditedAt { get; init; }            // 댓글을 고친 시각 ('(수정됨)')
+    public bool Deleted { get; init; }                  // 지운 댓글 (본문은 자리 표시)
+    public bool CanEdit { get; init; }                  // 지금 사용자가 고치거나 지울 수 있음 (Rules.CanEditComment)
+    public int? Ref { get; init; }                      // 댓글 수정·삭제 기록이 가리키는 댓글의 활동 Id
+    public List<MentionView>? Mentions { get; init; }   // 댓글에서 알릴 사람으로 고른 사용자
+}
+
+public record MentionView(int Id, string Name);
 
 public record ItemView(int TypeId, string Name, int Quantity, string? Note);
 
@@ -136,7 +150,7 @@ public record ProjectView
     public List<ItemView>? Containers { get; init; }
     public List<ActivityView>? Activities { get; init; }
     public List<AttachmentView>? Attachments { get; init; }
-    public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수
+    public int TargetChanges { get; init; }             // 단계 목표일 변경 횟수 (결정 단위 — 연쇄 이동 묶음은 1회, Rules.DecisionCount)
     public int ActivityTotal { get; init; }             // 활동 전체 건수 (Activities 는 최근 일부만 — ProjectService.ViewAsync)
     public string? CreatedBy { get; init; }
     public DateTime? CreatedAt { get; init; }
@@ -145,6 +159,7 @@ public record ProjectView
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (지연이면 '지연 D+n')
     public string StateLabel { get; init; } = "";       // 표 글자 (지연이면 '지연', 아니면 진행·보류·중단·완료)
     public bool CanDelete { get; init; }                // 지금 사용자가 과제를 지울 수 있는지 (상세 화면에서만 채운다)
+    public bool CanRebaseline { get; init; }            // 지금 사용자가 기준선을 다시 확정할 수 있는지 (담당자·관리자, 상세 화면에서만)
     public int ReplanCount { get; init; }               // 예측과 목표가 다른 미착수 작업 수 (Rules.ReplanMoves — 상세의 '재계획')
     // 위반한 과제 간 단계 연결 수. 연결을 읽은 경로(상세 — ProjectService.ViewAsync)에서만 센다. 대시보드·목록은 연결을 읽지 않으므로
     // null(모름)이다 — 0(위반 없음)과 구별해, 그 경로의 위험 판정에 쓰려면 연결을 읽어 Views.Project 에 넘겨야 함을 드러낸다
@@ -390,7 +405,7 @@ public static class Views
             Attachments = detail ? p.Attachments.OrderByDescending(a => a.UploadedAt).ThenByDescending(a => a.Id)
                 .Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Size, a.UploadedBy?.Name ?? "", a.UploadedAt, a.StageId,
                     PreviewTypes.Contains(a.ContentType))).ToList() : null,
-            TargetChanges = detail ? p.Activities.Count(a => a.Type == ActivityType.TargetChanged) : 0,
+            TargetChanges = detail ? Rules.DecisionCount(p.Activities.Where(a => a.Type == ActivityType.TargetChanged).Select(a => a.BatchId)) : 0,
             CreatedBy = detail ? p.CreatedBy?.Name : null,
             CreatedAt = detail ? p.CreatedAt : null,
             UpdatedAt = detail ? p.UpdatedAt : null,

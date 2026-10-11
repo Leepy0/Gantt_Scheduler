@@ -427,7 +427,10 @@ public class DataAccessTests : IClassFixture<TestDb>
 
         // 내 할 일·리드타임
         Assert.Equal(JsonSerializer.Serialize(Reporting.My(all, _db.Me.Id, Today)), JsonSerializer.Serialize(await c.Insights.MyAsync()));
-        Assert.Equal(JsonSerializer.Serialize(Reporting.LeadTimes(all)), JsonSerializer.Serialize(await c.Insights.LeadTimesAsync()));
+        var cal = await c.Projects.CalendarAsync();
+        var firsts = await c.Insights.FirstTargetsAsync();
+        foreach (var excludeZero in new[] { false, true })
+            Assert.Equal(JsonSerializer.Serialize(Reporting.LeadTimes(all, cal, firsts, excludeZero)), JsonSerializer.Serialize(await c.Insights.LeadTimesAsync(excludeZero)));
     }
 
     [Fact]

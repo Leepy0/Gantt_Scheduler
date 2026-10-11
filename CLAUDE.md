@@ -11,7 +11,7 @@
 - 화면에는 이모지를 쓰지 않는다. 아이콘은 `Pages/Shared/_Icons.cshtml` 의 SVG 스프라이트.
 - 색·간격·글자 크기는 `wwwroot/css/site.css` 맨 위 토큰만 쓴다. 빨강은 지연, 노랑은 임박·초과 완료 전용.
 - 계산 규칙(상태·진행률·예상 종료·여유/임계)은 `Domain/Rules.cs`, 근무일 계산은 `Domain/WorkCalendar.cs` 에만 둔다. JS 에서 다시 계산하지 않는다.
-- 변경은 `Services/ProjectService.cs` 를 거치고, 반드시 활동 이력(Activity)을 남긴다. 규칙 위반은 `RuleException` 으로 던진다(화면에 메시지 그대로 표시).
+- 변경은 `Services/ProjectService.cs` 를 거치고, 반드시 활동 이력(Activity)을 남긴다. 활동은 `NewActivity`(→ `ActivityLog`)로만 만든다 — 직접 `new Activity` 하면 알림이 빠진다. 규칙 위반은 `RuleException` 으로 던진다(화면에 메시지 그대로 표시).
 - 과제·단계·작업을 고칠 때는 화면이 보낸 `Version` 을 확인하고(`CheckVersion`) 바꾼 엔티티의 `Version` 을 올린다. 어긋나면 `ConflictException` → 409.
 
 ## 구조
@@ -20,16 +20,17 @@
 src/GanttScheduler/
   Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
   Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
-  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결), Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
+  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정), Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
                MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
                Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateKey(배포 파일 서명 확인),
                UpdateApplier(파일 교체 도우미 모드 — 새 버전 시작 확인·자동 되돌리기 포함),
                ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅),
                BackupService(DB 백업·파일 묶음·야간 백업), OpsChecks(서버 점검·첫 설정·첨부 대조·관리자 알림 OpsAlerts),
-               FileLog(파일 로그·최근 경고), RequestDiagnostics(느린 요청·오류 번호), PdfFonts(PDF 글꼴 탐색)
-  Pages/       Index(대시보드), My/Index, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
+               FileLog(파일 로그·최근 경고), RequestDiagnostics(느린 요청·오류 번호), PdfFonts(PDF 글꼴 탐색),
+               Notifications(ActivityLog — 활동 기록과 알림 계산, 저장 훅), Notify(메일 요약 NotifyWorker·SMTP)
+  Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
                Admin/{Index,Update,Status}, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,edit,stage-draft,admin,org,update,status}.js
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,edit,stage-draft,admin,org,update,status}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)

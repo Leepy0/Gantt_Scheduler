@@ -87,6 +87,9 @@ namespace Microsoft.EntityFrameworkCore
 
         public DatabaseFacade Database { get; }
 
+        // 진짜 EF 는 DetectChanges 로 컬렉션에 더한 엔티티의 FK 를 채운다. 가짜는 저장할 때 채우므로 아무 일도 하지 않는다
+        public ChangeTracking.ChangeTracker ChangeTracker { get; } = new();
+
         public DbSet<T> Set<T>() where T : class => new(this);
 
         internal void TrackAdd(object e) => _added.Add(e);
@@ -95,7 +98,7 @@ namespace Microsoft.EntityFrameworkCore
         protected virtual void OnModelCreating(ModelBuilder modelBuilder) { }
         protected virtual void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) { }
 
-        public Task<int> SaveChangesAsync(CancellationToken ct = default) => Task.FromResult(SaveChanges());
+        public virtual Task<int> SaveChangesAsync(CancellationToken ct = default) => Task.FromResult(SaveChanges());
 
         public int SaveChanges()
         {
@@ -376,6 +379,15 @@ namespace Microsoft.EntityFrameworkCore
                 if (coll.GetValue(e) is IEnumerable children)
                     foreach (var c in children.Cast<object>().ToList()) RemoveCascade(c, gone);
         }
+    }
+}
+
+namespace Microsoft.EntityFrameworkCore.ChangeTracking
+{
+    public class ChangeTracker
+    {
+        public void DetectChanges() { }
+        public void Clear() { }
     }
 }
 

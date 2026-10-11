@@ -54,7 +54,7 @@ public class AdminCommandTests
         using (var s = db.NewScope())
         {
             kimId = (await s.Users.RegisterAsync("10.77.0.1", "김물류", null)).Id;
-            await s.Masters.ToggleAsync(new MasterRef("user", 1, kimId, 0));    // 사용 중지
+            await s.Masters.ToggleAsync(new MasterRef("user", 1, kimId, 0, Active: false));    // 사용 중지
         }
 
         // 없는 이름: 새로 만든다

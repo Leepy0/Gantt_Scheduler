@@ -55,6 +55,14 @@ builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<MasterService>();
 builder.Services.AddScoped<AttachmentService>();
 builder.Services.AddScoped<InsightService>();
+// 협업·알림: 활동 기록(알림 계산 포함)은 요청 하나에 하나 — 과제·첨부 서비스가 같은 것을 쓴다 (Services/Notifications.cs, Notify.cs)
+builder.Services.AddScoped<ActivityLog>();
+builder.Services.AddScoped<NotificationService>();
+builder.Services.AddSingleton(_ => CommentOptions.From(config));
+builder.Services.AddSingleton(_ => NotifyOptions.From(config));
+builder.Services.AddSingleton<INotifyChannel>(sp => new SmtpChannel(sp.GetRequiredService<NotifyOptions>()));
+builder.Services.AddSingleton(_ => new NotifyState(AppPaths.Notify(config, builder.Environment.ContentRootPath)));
+builder.Services.AddScoped<DigestService>();
 builder.Services.AddSingleton<ExcelExporter>();
 builder.Services.AddSingleton<PdfExporter>();
 
@@ -79,6 +87,8 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<OpsAlerts>();
 builder.Services.AddScoped<OpsChecks>();
 builder.Services.AddHostedService<BackupWorker>();
+// 하루 한 번 메일 요약 (Notify:Enabled 일 때만)
+builder.Services.AddHostedService<NotifyWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);
@@ -174,6 +184,8 @@ app.MapGet("/health/ready", async (HttpContext ctx, OpsChecks ops) =>
     return Results.Json(new { status = ok ? "ok" : "fail", checks = checks.Select(c => new { name = c.Key, level = c.Level }) },
         statusCode: ok ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });
+// 헤더 종의 읽지 않은 알림 수 (보이는 화면이 1분마다 묻는다 — Services/Notifications.cs)
+app.MapNotificationApi();
 // 열려 있는 화면이 서버가 새 버전으로 바뀌었는지 확인하는 주소
 // today: 한국 날짜. 오래 열어 둔 화면이 날짜가 바뀐 것을 알아채고 다시 그린다(DB 를 읽지 않는다)
 app.MapGet("/version", (HttpContext ctx, IClock clock) =>

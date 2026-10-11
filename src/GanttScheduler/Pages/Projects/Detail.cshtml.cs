@@ -26,28 +26,48 @@ public class DetailModel : PageModel
         _clock = clock;
     }
 
-    public record IdInput(int Id);
-    public record MoveInput(int Id, int Dir);
+    // Version: 화면이 본 버전 (단계·작업 삭제는 그 항목, 체크 항목은 그 단계의 버전). 없으면 확인하지 않는다(예전 화면 호환)
+    public record IdInput(int Id, int? Version = null);
+    // OtherId·OtherVersion: 화면이 본 맞바꿀 이웃 단계와 그 버전
+    public record MoveInput(int Id, int Dir, int? Version = null, int? OtherId = null, int? OtherVersion = null);
     public record StateInput(int ProjectId, string? State, string? Reason, int? Version);
-    public record ToggleInput(int Id, bool Done);
+    public record ToggleInput(int Id, bool Done, int? Version = null);
+    // 기준선 확정·다시 확정 (다시 확정은 사유 필수, 담당자·관리자만)
+    public record BaselineInput(int Id, string? Reason = null, int? Version = null);
     public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
+    public record WatchInput(int ProjectId, bool On);
 
     public ProjectView Project { get; private set; } = null!;
+    public int UploadMaxMB => _files.MaxMB;
     public string DataJson { get; private set; } = "{}";
+    public bool Watched { get; private set; }
 
     public async Task<IActionResult> OnGetAsync(int id)
     {
-        var view = await _projects.ViewAsync(id);
-        if (view == null) return NotFound();
+        // 상세를 열면 마지막으로 본 시각이 바뀐다 — 그 전 시각(since) 뒤의 남의 활동을 '새 활동'으로 표시한다
+        var opened = await _projects.OpenAsync(id);
+        if (opened is not var (view, since, watched)) return NotFound();
         Project = view;
+        Watched = watched;
+        // 담당자 자동완성(이름)과 알릴 사람 고르기(Id·이름)는 같은 목록이다 — 한 번만 읽는다
+        var people = await _projects.PeopleAsync();
         DataJson = AppJson.Serialize(new
         {
             project = view,
             today = _clock.Today,
             holidays = await _projects.HolidaysAsync(),
-            users = await _projects.UserNamesAsync(),
-            me = new { name = _me.Name, isAdmin = _me.IsAdmin },
-            upload = new { maxBytes = AttachmentService.MaxBytes, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
+            users = people.Select(u => u.Name),
+            people,
+            me = new { id = _me.Id, name = _me.Name, isAdmin = _me.IsAdmin },
+            seen = new { since, count = view.Activities?.Count(a => a.New) ?? 0 },
+            kinds = Reporting.Kinds.Select(k => new { key = k.Key, label = k.Label }),
+            // 입력칸 maxlength — 서버 검사·DB 열 길이와 같은 값(Limits)을 화면에 숫자로 따로 적지 않는다
+            limits = new
+            {
+                stageName = Limits.StageName, checkText = Limits.CheckText, workTitle = Limits.WorkTitle, workNote = Limits.WorkNote,
+                userName = Limits.UserName, reason = Limits.Reason, text = Limits.ActivityText, projectTitle = Limits.ProjectTitle,
+            },
+            upload = new { maxBytes = _files.MaxBytes, maxMB = _files.MaxMB, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
         });
         return Page();
     }
@@ -60,9 +80,12 @@ public class DetailModel : PageModel
 
     // 활동 나눠 받기: 활동 탭의 '더 보기'(beforeId = 화면의 마지막 활동)와 작업 시트의 진행 내용(workId).
     // 응답 { ok, activities, more } — more 면 마지막 항목의 id 로 다음 쪽을 묻는다
-    public async Task<IActionResult> OnGetActivitiesAsync(int id, int? beforeId, int? workId, int take = ProjectService.ActivityPageSize)
+    // 활동 탭의 조건(kind·stageId·q)이 있으면 그 조건으로 나눠 받는다. since: 화면을 연 때의 '새 활동' 기준(표시용)
+    public async Task<IActionResult> OnGetActivitiesAsync(int id, int? beforeId, int? workId, int take = ProjectService.ActivityPageSize,
+                                                          string? kind = null, int? stageId = null, string? q = null, DateTime? since = null)
     {
-        var page = await _projects.ActivitiesAsync(id, beforeId, workId, take);
+        var filter = kind == null && stageId == null && string.IsNullOrWhiteSpace(q) ? null : new ActivityFilter(kind, stageId, q);
+        var page = await _projects.ActivitiesAsync(id, beforeId, workId, take, filter, since?.ToUniversalTime());
         return page == null ? Missing() : new JsonResult(new { ok = true, activities = page.Items, more = page.More });
     }
 
@@ -183,19 +206,39 @@ public class DetailModel : PageModel
         Run(input.ProjectId, () => _projects.RemoveStageLinkAsync(input));
 
     public Task<IActionResult> OnPostMoveStageAsync([FromBody] MoveInput input) =>
-        Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir));
+        Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir, input.Version, input.OtherId, input.OtherVersion));
 
     public Task<IActionResult> OnPostDeleteStageAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteStageAsync(input.Id));
+        Run(null, () => _projects.DeleteStageAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostSaveWorkAsync([FromBody] WorkInput input) =>
         Run(null, () => _projects.SaveWorkAsync(input));
 
     public Task<IActionResult> OnPostDeleteWorkAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteWorkAsync(input.Id));
+        Run(null, () => _projects.DeleteWorkAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostCommentAsync([FromBody] CommentInput input) =>
         Run(input.ProjectId, async () => { await _projects.CommentAsync(input); return input.ProjectId; });
+
+    // 댓글 고치기·지우기 (작성자만, Comments:EditHours 안에 — 서비스가 검사한다)
+    public Task<IActionResult> OnPostEditCommentAsync([FromBody] CommentEditInput input) =>
+        Run(null, () => _projects.EditCommentAsync(input));
+
+    public Task<IActionResult> OnPostDeleteCommentAsync([FromBody] IdInput input) =>
+        Run(null, () => _projects.DeleteCommentAsync(input.Id));
+
+    // 관심 과제 별 (상세·목록·내 할 일 공용). 개인 설정이라 과제를 다시 보내지 않는다
+    public async Task<IActionResult> OnPostWatchAsync([FromBody] WatchInput input)
+    {
+        try
+        {
+            return new JsonResult(new { ok = true, watched = await _projects.WatchAsync(input.ProjectId, input.On) });
+        }
+        catch (RuleException ex)
+        {
+            return Fail(ex);
+        }
+    }
 
     public Task<IActionResult> OnPostStateAsync([FromBody] StateInput input) =>
         Run(input.ProjectId, async () =>
@@ -206,17 +249,17 @@ public class DetailModel : PageModel
             return input.ProjectId;
         });
 
-    public Task<IActionResult> OnPostBaselineAsync([FromBody] IdInput input) =>
-        Run(input.Id, async () => { await _projects.SetBaselineAsync(input.Id); return input.Id; });
+    public Task<IActionResult> OnPostBaselineAsync([FromBody] BaselineInput input) =>
+        Run(input.Id, async () => { await _projects.SetBaselineAsync(input.Id, input.Reason, input.Version); return input.Id; });
 
     public Task<IActionResult> OnPostSaveCheckAsync([FromBody] CheckInput input) =>
         Run(null, () => _projects.SaveCheckAsync(input));
 
     public Task<IActionResult> OnPostToggleCheckAsync([FromBody] ToggleInput input) =>
-        Run(null, () => _projects.ToggleCheckAsync(input.Id, input.Done));
+        Run(null, () => _projects.ToggleCheckAsync(input.Id, input.Done, input.Version));
 
     public Task<IActionResult> OnPostDeleteCheckAsync([FromBody] IdInput input) =>
-        Run(null, () => _projects.DeleteCheckAsync(input.Id));
+        Run(null, () => _projects.DeleteCheckAsync(input.Id, input.Version));
 
     public Task<IActionResult> OnPostDeleteFileAsync([FromBody] IdInput input) =>
         Run(null, () => _files.DeleteAsync(input.Id));
@@ -239,7 +282,7 @@ public class DetailModel : PageModel
         try
         {
             await _projects.DeleteAsync(input.Id);
-            _files.RemoveProjectFiles(input.Id);
+            _files.RemoveProjectFiles(input.Id);     // 실패해도 예외 없이 경고만 남긴다 (과제 삭제는 이미 커밋됨)
             return new JsonResult(new { ok = true, redirect = Url.Page("/Projects/Index") });
         }
         catch (RuleException ex)

@@ -2,21 +2,27 @@ using GanttScheduler.Domain;
 
 namespace GanttScheduler.Services;
 
+// DueThisWeek: 'n일 내 목표' — 그 기간에 목표일이 있는 미완료 단계를 가진 진행 과제 수. 누르면 가는 목록(과제)과 숫자가 같도록 과제로 센다
 public record Kpi(int Active, int Delayed, int DueThisWeek, int DoneThisYear, int Hold);
-public record GroupStat(string Name, int OnTrack, int Delayed, int Done, int Paused, int Total);
+// Id: 유형(CategoryId) 또는 법인(CorporationId) — 막대를 누르면 그 조건의 목록으로 간다. 같은 이름의 유형도 따로 센다
+public record GroupStat(int Id, string Name, int OnTrack, int Delayed, int Done, int Paused, int Total);
 public record DueItem(int ProjectId, string Project, string Stage, DateOnly Date, int DDay)
 {
     public bool Soon => Rules.IsSoon(DDay);                    // 임박 (Rules.SoonDays)
     public ChipView Chip => Views.DueChip(DDay, late: false);
 }
 
-// Timeline: 간트용 가벼운 행(TimelineView) — 페이지에 JSON 으로 심으므로 쓰는 값만 싣는다
+// Timeline: 간트용 가벼운 행(TimelineView) — 페이지에 JSON 으로 심으므로 쓰는 값만 싣는다.
+// UpcomingTotal: 다가오는 일정(UpcomingDays 안)의 전체 단계 수 — 화면은 앞의 몇 건만 보이고 나머지가 있으면 목록으로 잇는다.
+// UpcomingProjects: 그 단계들이 걸린 과제 수 — 이어지는 목록은 과제를 보이므로 링크에는 이 수를 적는다
 public record DashboardView(
     DateOnly Today, Kpi Kpi,
     List<GroupStat> ByCategory, List<GroupStat> ByCorporation,
-    List<ProjectView> Delayed, List<DueItem> Upcoming, List<TimelineView> Timeline);
+    List<ProjectView> Delayed, List<DueItem> Upcoming, List<TimelineView> Timeline, int UpcomingTotal = 0, int UpcomingProjects = 0);
 
-public record ProjectFilter(string? Q, int? CategoryId, int? CorporationId, string? State, bool Mine);
+// DoneYear: 그 해에 끝난 완료 과제(Rules.CompletedOn — 대시보드 '올해 완료'와 같은 판정).
+// DueDays: 미완료 단계 목표일이 오늘부터 그 일수 안에 있는 진행 과제('n일 내 목표'·다가오는 일정과 같은 판정)
+public record ProjectFilter(string? Q, int? CategoryId, int? CorporationId, string? State, bool Mine, int? DoneYear = null, int? DueDays = null);
 
 public class DashboardService
 {
@@ -57,6 +63,8 @@ public class DashboardService
 public static class Dashboard
 {
     public const int UpcomingDays = 14;
+    public const int UpcomingShown = 8;        // 대시보드 카드에 보이는 다가오는 일정 수
+    public const int MaxDueDays = 90;          // 목록의 '목표일 n일 안' 조건으로 받는 가장 긴 기간
 
     // 목록 상태 탭이 DB 에서 거를 과제 상태 ('delayed' 는 진행 과제 중 지연, 'all'·모르는 값은 null = 거르지 않음)
     public static ProjectState? StateOf(string? tab) => tab switch
@@ -84,32 +92,32 @@ public static class Dashboard
             .OrderBy(d => d.Date).ThenBy(d => d.Project)
             .ToList();
 
-        var doneThisYear = all.Count(p => p.State == ProjectState.Done
-            && p.Stages.Where(s => s.CompletedDate != null).Select(s => s.CompletedDate!.Value).DefaultIfEmpty().Max().Year == today.Year);
+        var doneThisYear = all.Count(p => p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == today.Year);
 
         var kpi = new Kpi(
             active.Count, delayed.Count,
-            due.Count(d => d.Soon),
+            due.Where(d => d.Soon).Select(d => d.ProjectId).Distinct().Count(),
             doneThisYear,
             all.Count(p => p.State == ProjectState.Hold));
 
-        GroupStat Stat(string name, IEnumerable<Project> group)
+        GroupStat Stat(int id, string name, IEnumerable<Project> group)
         {
             var list = group.ToList();
             var late = list.Count(p => Rules.DelayDays(p, today) > 0);
             var act = list.Count(p => p.State == ProjectState.Active);
-            return new GroupStat(name, act - late, late,
+            return new GroupStat(id, name, act - late, late,
                 list.Count(p => p.State == ProjectState.Done),
                 list.Count(p => p.State is ProjectState.Hold or ProjectState.Dropped),
                 list.Count);
         }
 
-        var byCategory = all.GroupBy(p => p.Category?.Name ?? "")
-            .Select(g => (Sort: g.First().Category?.SortOrder ?? 0, Stat: Stat(g.Key, g)))
-            .OrderBy(x => x.Sort).Select(x => x.Stat).ToList();
+        // 이름이 아니라 Id 로 묶는다 — 막대가 목록 조건(유형·법인 Id)과 같은 묶음이어야 숫자가 맞는다
+        var byCategory = all.GroupBy(p => p.CategoryId)
+            .Select(g => (Sort: g.First().Category?.SortOrder ?? 0, Stat: Stat(g.Key, g.First().Category?.Name ?? "", g)))
+            .OrderBy(x => x.Sort).ThenBy(x => x.Stat.Id).Select(x => x.Stat).ToList();
 
         var byCorp = all.GroupBy(p => p.CorporationId)
-            .Select(g => Stat(locations.Get(g.Key)?.Name ?? "", g))
+            .Select(g => Stat(g.Key, locations.Get(g.Key)?.Name ?? "", g))
             .OrderByDescending(s => s.Total).ThenBy(s => s.Name).ToList();
 
         // 간트: 진행 과제를 지연 큰 순 → 목표 종료 빠른 순으로
@@ -122,8 +130,10 @@ public static class Dashboard
 
         var delayedViews = views.Where(v => v.DelayDays > 0).ToList();
 
+        var upcoming = due.Where(d => d.DDay <= UpcomingDays).ToList();
         return new DashboardView(today, kpi, byCategory, byCorp, delayedViews,
-            due.Where(d => d.DDay <= UpcomingDays).Take(8).ToList(), views.Select(TimelineView.From).ToList());
+            upcoming.Take(UpcomingShown).ToList(), views.Select(TimelineView.From).ToList(), upcoming.Count,
+            upcoming.Select(d => d.ProjectId).Distinct().Count());
     }
 
     public static List<ProjectView> Filter(List<Project> all, LocationIndex locations, DateOnly today, ProjectFilter f, int userId)
@@ -132,6 +142,9 @@ public static class Dashboard
         if (f.Mine) q = q.Where(p => IsMine(p, userId));
         if (f.CategoryId != null) q = q.Where(p => p.CategoryId == f.CategoryId.Value);
         if (f.CorporationId != null) q = q.Where(p => p.CorporationId == f.CorporationId.Value);
+        // 대시보드 숫자에서 온 조건: 그 숫자와 같은 판정으로 거른다
+        if (f.DoneYear is int year) q = q.Where(p => p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == year);
+        if (f.DueDays is int days) q = q.Where(p => p.State == ProjectState.Active && Rules.HasStageDueWithin(p, today, Math.Clamp(days, 0, MaxDueDays)));
 
         q = (f.State ?? "") switch
         {

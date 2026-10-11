@@ -27,22 +27,31 @@
     <a class="btn small" asp-page="/Insights/Weekly" asp-page-handler="Pdf" asp-route-day="@day" asp-route-mine="@mine"><svg class="ic"><use href="#i-download" /></svg>PDF</a>
 </div>
 
-<section class="kpis">
+<section class="kpis wide" aria-label="이번 주 요약">
     <div class="kpi"><span class="kpi-label">진행 과제</span><span class="kpi-value">@r.Active</span></div>
     <div class="kpi @(r.Delayed > 0 ? "alarm" : "")"><span class="kpi-label">@if (r.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span><span class="kpi-value">@r.Delayed</span></div>
-    <div class="kpi"><span class="kpi-label">이번 주 완료</span><span class="kpi-value">@r.DoneCount</span></div>
-    <div class="kpi"><span class="kpi-label">일정 변경</span><span class="kpi-value">@r.ChangeCount</span></div>
+    <div class="kpi"><span class="kpi-label">이번 주 완료</span><span class="kpi-value">@r.DoneCount</span><span class="kpi-sub">단계·작업 실적</span></div>
+    @* 일정 변경은 결정 단위(연쇄 이동·선행 연동 묶음은 1건)로 세고, 그 결정이 옮긴 대상 수를 함께 보인다 *@
+    <div class="kpi" data-kpi="changes"><span class="kpi-label">일정 변경</span><span class="kpi-value">@r.ChangeCount</span><span class="kpi-sub">대상 @(r.ChangeTargets)건</span></div>
+    <div class="kpi" data-kpi="states"><span class="kpi-label">상태·기준선</span><span class="kpi-value">@r.StateCount</span><span class="kpi-sub">보류·중단·재개·기준선 확정</span></div>
+    <div class="kpi" data-kpi="completed"><span class="kpi-label">과제 완료</span><span class="kpi-value">@r.Completed</span><span class="kpi-sub">모든 단계 완료</span></div>
 </section>
+
+@if (r.Past && r.AsOf != null)
+{
+    <p class="form-note" data-weekly-asof><svg class="ic"><use href="#i-clock" /></svg><span>지연·밀린 항목은 @(r.AsOf.Value.ToString("yyyy-MM-dd"))(그 주 마지막 날) 기준입니다. 진행률·현재 단계는 지금 기준입니다.</span></p>
+}
 
 @if (r.Projects.Count == 0)
 {
     <section class="card"><p class="empty">이 기간에 해당하는 과제가 없습니다.</p></section>
 }
 
-@foreach (var p in r.Projects)
+@foreach (var p in r.Cards())
 {
-    var quiet = p.Done.Count + p.Changes.Count + p.Comments.Count + p.Next.Count == 0;
-    <section class="card weekly">
+    var states = p.States ?? new();
+    var overdue = p.Overdue ?? new();
+    <section class="card weekly" data-weekly-card="@p.Id">
         <header class="card-head">
             <h2><a asp-page="/Projects/Detail" asp-route-id="@p.Id">@p.Title</a></h2>
             @if (p.Chip != null)
@@ -52,34 +61,94 @@
             <span class="spacer"></span>
             <span class="muted">@p.Category · @p.Corporation · @p.Owner · 진행률 @p.Progress%@(p.CurrentStage == null ? "" : " · " + p.CurrentStage + (p.CurrentTarget == null ? "" : " 목표 " + p.CurrentTarget.Value.ToString("MM-dd")))</span>
         </header>
-        @if (quiet)
+        @if (p.Quiet)
         {
             <p class="muted">이번 주 기록된 변동이 없습니다.</p>
         }
-        else
-        {
-            <dl class="dl weekly-dl">
-                @if (p.Done.Count > 0)
-                {
-                    <dt>이번 주 실적</dt>
-                    <dd><ul class="bullets">@foreach (var x in p.Done) {<li>@x.Text <span class="muted num">@x.Date.ToString("MM-dd")</span></li>}</ul></dd>
-                }
-                @if (p.Changes.Count > 0)
-                {
-                    <dt>일정·상태 변경</dt>
-                    <dd><ul class="bullets">@foreach (var x in p.Changes) {<li>@x.Text <span class="muted">@x.User</span>@if (x.Reason != null) {<div class="feed-reason">@x.Reason</div>}</li>}</ul></dd>
-                }
-                @if (p.Comments.Count > 0)
-                {
-                    <dt>진행 내용</dt>
-                    <dd><ul class="bullets">@foreach (var x in p.Comments) {<li>@x.Text <span class="muted">@x.User · <span class="num">@x.Date.ToString("MM-dd")</span></span></li>}</ul></dd>
-                }
-                @if (p.Next.Count > 0)
-                {
-                    <dt>다음 주 계획</dt>
-                    <dd><ul class="bullets">@foreach (var x in p.Next) {<li>@x</li>}</ul></dd>
-                }
-            </dl>
-        }
+        <dl class="dl weekly-dl">
+            @if (p.Done.Count > 0)
+            {
+                <dt>이번 주 실적</dt>
+                <dd><ul class="bullets">@foreach (var x in p.Done) {<li>@x.Text <span class="muted">@(x.User.Length > 0 ? x.User + " · " : "")<span class="num">@x.Date.ToString("MM-dd")</span></span></li>}</ul></dd>
+            }
+            @if (p.Changes.Count > 0)
+            {
+                <dt>일정 변경 <span class="weekly-count">@(p.Changes.Count)건@(p.ChangeTargets > p.Changes.Count ? $"(대상 {p.ChangeTargets}건)" : "")</span></dt>
+                <dd>
+                    <ul class="bullets">
+                        @foreach (var x in p.Changes)
+                        {
+                            <li>
+                                @x.Text <span class="muted">@x.User</span>
+                                @if (x.Reason != null) {<div class="feed-reason">@x.Reason</div>}
+                                @if (x.More != null)
+                                {
+                                    <details class="weekly-fold">
+                                        <summary>함께 옮겨진 @(x.More.Count)건</summary>
+                                        <ul class="bullets">@foreach (var m in x.More) {<li>@m</li>}</ul>
+                                    </details>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </dd>
+            }
+            @if (states.Count > 0)
+            {
+                <dt>상태·기준선</dt>
+                <dd><ul class="bullets">@foreach (var x in states) {<li>@x.Text <span class="muted">@x.User</span>@if (x.Reason != null) {<div class="feed-reason">@x.Reason</div>}</li>}</ul></dd>
+            }
+            @if (p.Comments.Count > 0)
+            {
+                <dt>진행 내용</dt>
+                <dd><ul class="bullets">@foreach (var x in p.Comments) {<li>@x.Text <span class="muted">@x.User · <span class="num">@x.Date.ToString("MM-dd")</span></span></li>}</ul></dd>
+            }
+            @if (overdue.Count > 0)
+            {
+                <dt>밀린 항목</dt>
+                <dd>
+                    <ul class="weekly-late">
+                        @foreach (var x in overdue)
+                        {
+                            <li><partial name="_StatusChip" model="x.Chip" /><span class="muted">@x.Kind</span> <span>@x.Title</span> <span class="muted">@(x.Owner ?? "담당 없음") · 목표 <span class="num">@x.Due.ToString("MM-dd")</span></span></li>
+                        }
+                    </ul>
+                </dd>
+            }
+            @if (p.Next.Count > 0)
+            {
+                <dt>다음 주 계획</dt>
+                <dd><ul class="bullets">@foreach (var x in p.Next) {<li>@x</li>}</ul></dd>
+            }
+        </dl>
+    </section>
+}
+
+@{
+    var folded = r.Folded();
+}
+@if (folded.Count > 0)
+{
+    @* 지연도 밀린 항목도 없고 이번 주 변동도 없는 과제는 카드 대신 표 한 장으로 접는다 *@
+    <section class="card" data-weekly-quiet>
+        <header class="card-head"><h2>변동 없는 과제</h2><span class="count">@folded.Count</span></header>
+        <div class="table-scroll">
+            <table class="simple-table weekly-quiet">
+                <thead><tr><th>과제</th><th>담당</th><th>상태</th><th class="r">진행률</th><th>현재 단계</th><th>다음 주 계획</th></tr></thead>
+                <tbody>
+                    @foreach (var p in folded)
+                    {
+                        <tr>
+                            <td><a asp-page="/Projects/Detail" asp-route-id="@p.Id">@p.Title</a><div class="muted">@p.Category · @p.Corporation</div></td>
+                            <td>@p.Owner</td>
+                            <td>@if (p.Chip != null) {<partial name="_StatusChip" model="p.Chip" />}</td>
+                            <td class="r">@p.Progress%</td>
+                            <td>@(p.CurrentStage ?? "-")@if (p.CurrentTarget != null) {<span class="muted num"> @p.CurrentTarget.Value.ToString("MM-dd")</span>}</td>
+                            <td>@if (p.Next.Count == 0) {<span class="muted">-</span>} else {<ul class="bullets">@foreach (var x in p.Next) {<li>@x</li>}</ul>}</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     </section>
 }

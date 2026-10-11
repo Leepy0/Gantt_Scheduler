@@ -79,13 +79,17 @@ public static class AppPaths
     public static string Updates(IConfiguration cfg, string contentRoot) =>
         Resolve(cfg["Update:Path"] ?? "App_Data/updates", contentRoot);
 
+    // 메일 요약의 마지막 실행 기록 (하루 한 번만 보내기 위해)
+    public static string Notify(IConfiguration cfg, string contentRoot) =>
+        Resolve(cfg["Notify:StatePath"] ?? "App_Data/notify.json", contentRoot);
+
     private static string Resolve(string path, string contentRoot) =>
         Path.IsPathRooted(path) ? path : Path.Combine(contentRoot, path);
 }
 
 public static class Seeder
 {
-    // 기준 정보 기본값 — 테이블이 비어 있을 때만 넣는다
+    // 기준 정보 기본값 — 테이블이 비어 있을 때만 넣는다 (공휴일은 해마다: 그 해 공휴일이 하나도 없을 때)
     public static async Task SeedMastersAsync(AppDb db)
     {
         if (!await db.Categories.AnyAsync())
@@ -134,11 +138,12 @@ public static class Seeder
                 db.ContainerTypes.Add(new ContainerType { Name = name, SortOrder = ++order });
         }
 
-        if (!await db.Holidays.AnyAsync())
-        {
-            foreach (var (date, name) in KoreanHolidays())
-                db.Holidays.Add(new Holiday { Date = date, Name = name });
-        }
+        // 공휴일은 해마다 따로 본다: 내장 목록의 해 중 그 해 공휴일이 하나도 없는 해만 채운다. 서버는 시작할 때마다 이 일을 하므로
+        // 새 릴리스가 다음 해 공휴일을 실어 보내면 운영 중인 서버에도 들어간다(예전에는 표가 비어 있을 때만 넣어 다음 해가 조용히 빠졌다).
+        // 관리자가 일부를 지운 해는 다른 날이 남아 있으므로 다시 채우지 않는다. 내장 목록에 없는 해는 관리자 알림(OpsAlerts)이 10월부터 알린다
+        var years = (await db.Holidays.AsNoTracking().Select(h => h.Date).ToListAsync()).Select(d => d.Year).ToHashSet();
+        foreach (var (date, name) in KoreanHolidays().Where(h => !years.Contains(h.Date.Year)))
+            db.Holidays.Add(new Holiday { Date = date, Name = name });
 
         await db.SaveChangesAsync();
     }
@@ -166,8 +171,10 @@ public static class Seeder
         return c;
     }
 
-    // 2026~2027 공휴일 (대체공휴일 포함). 이후 연도와 임시공휴일은 관리 화면에서 추가한다
-    private static IEnumerable<(DateOnly, string)> KoreanHolidays()
+    // 내장 공휴일: 정부가 확정 발표한 해(월력요항)만 넣는다 — 2026~2027 (대체공휴일 포함).
+    // 2028년 이후는 대체·임시 공휴일이 아직 정해지지 않아 넣지 않는다(틀린 날이 들어가면 조용히 근무일이 틀린다). 그 해는 관리 화면에서
+    // 여러 줄 붙여넣기로 넣거나, 발표 뒤의 릴리스가 여기에 더하면 다음 시작 때 채워진다. 기준 정보 시드 외에 시험에서도 쓴다
+    internal static IEnumerable<(DateOnly Date, string Name)> KoreanHolidays()
     {
         (int y, int m, int d, string n)[] rows =
         {

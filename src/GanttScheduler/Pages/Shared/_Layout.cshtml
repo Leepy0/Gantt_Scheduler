@@ -42,6 +42,10 @@
                     <svg class="ic"><use href="#i-@(top.Level == "warn" ? "alert" : "download")" /></svg><span>@top.Text@more</span>
                 </a>
             }
+            @* 알림 종: 읽지 않은 수는 화면이 따로 묻는다(/api/unread — collab.js). 모든 화면 요청에 알림 조회를 붙이지 않기 위해서다 *@
+            <a class="bell" id="bell" asp-page="/My/Notifications" aria-label="알림" title="알림">
+                <svg class="ic"><use href="#i-bell" /></svg><span class="bell-count" id="bell-count" hidden></span>
+            </a>
             @* 내 이름을 누르면 이 기기의 사용자를 바꾼다 (IP 가 다른 사람에게 넘어왔거나 공용 PC 인 경우) *@
             <a class="me" asp-page="/Welcome" asp-route-switch="1" asp-route-returnUrl="@(Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString)"
                title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip · 눌러서 사용자 바꾸기" aria-label="@Me.Name — 사용자 바꾸기">
@@ -67,6 +71,7 @@
     @Html.AntiForgeryToken()
     <script>window.APP_BASE = '@Url.Content("~/")';</script>
     <script src="~/js/app.js" asp-append-version="true"></script>
+    <script src="~/js/collab.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

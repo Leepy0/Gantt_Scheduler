@@ -9,6 +9,8 @@
     if (Model.Category != null) excelRoute["category"] = Model.Category.Value.ToString();
     if (Model.Corp != null) excelRoute["corp"] = Model.Corp.Value.ToString();
     if (Model.Mine) excelRoute["mine"] = "true";
+    if (Model.DoneYear != null) excelRoute["doneYear"] = Model.DoneYear.Value.ToString();
+    if (Model.Due != null) excelRoute["due"] = Model.Due.Value.ToString();
 }
 
 <div class="page-head">
@@ -52,6 +54,16 @@
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
         <button type="submit" class="btn">조회</button>
     </div>
+    @if (Model.SpecialText != null)
+    {
+        @* 대시보드 숫자에서 온 조건 — 유형·법인·검색을 바꿔도 유지하고, 상태 탭을 바꾸거나 '조건 해제'를 누르면 푼다 *@
+        if (Model.DoneYear != null) { <input type="hidden" name="doneYear" value="@Model.DoneYear" data-special /> }
+        if (Model.Due != null) { <input type="hidden" name="due" value="@Model.Due" data-special /> }
+        <p class="form-note filter-note" data-special-note>
+            <svg class="ic"><use href="#i-dash" /></svg><span>대시보드 조건: <b>@Model.SpecialText</b></span>
+            <a asp-page="/Projects/Index" asp-route-state="@Model.StateKey" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-q="@Model.Q" asp-route-mine="@(Model.Mine ? "true" : null)">조건 해제</a>
+        </p>
+    }
 </form>
 
 @if (Model.Rows.Count == 0)
@@ -66,7 +78,7 @@
 else
 {
     <section class="card flush">
-        <div class="ptable" role="table" aria-label="과제 목록">
+        <div class="ptable watchable" role="table" aria-label="과제 목록">
             <div class="ptable-head" role="row">
                 <span role="columnheader">과제</span>
                 <span role="columnheader">위치</span>
@@ -78,10 +90,16 @@ else
             </div>
             @foreach (var p in Model.Rows)
             {
+                var fresh = Model.NewCounts.GetValueOrDefault(p.Id);
+                var watched = Model.Watched.Contains(p.Id);
+                @* 관심 과제 별은 행 링크 밖에 둔다(링크 안의 단추는 쓸 수 없다) — collab.js 가 누름을 처리한다 *@
+                <div class="prow">
+                <button type="button" class="btn icon small watch" data-watch="@p.Id" data-title="@p.Title" aria-pressed="@(watched ? "true" : "false")"
+                        aria-label="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기") — @p.Title" title="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기")"><svg class="ic"><use href="#i-star" /></svg></button>
                 <a class="ptable-row" role="row" asp-page="/Projects/Detail" asp-route-id="@p.Id">
                     <span class="c-title" role="cell">
                         <span class="row-title">@p.Title</span>
-                        <span class="row-sub">@p.Category</span>
+                        <span class="row-sub">@p.Category@if (fresh > 0) {<text> · </text><span class="new-count" title="마지막으로 본 뒤 다른 사람이 남긴 활동">새 활동 @fresh</span>}</span>
                     </span>
                     <span class="c-loc" role="cell">
                         <span>@p.Corporation</span>
@@ -106,6 +124,7 @@ else
                     <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
                     <span class="c-state" role="cell"><partial name="_StatusChip" model="p.Chip" /></span>
                 </a>
+                </div>
             }
         </div>
     </section>
@@ -113,8 +132,13 @@ else
 
 @section Scripts {
     <script>
-        // 상태 탭·선택 상자는 바꾸는 즉시 조회
+        // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)은 푼다
         document.querySelectorAll('#filters input[type=radio], #filters select, #filters input[type=checkbox]')
-            .forEach(function (el) { el.addEventListener('change', function () { document.getElementById('filters').submit(); }); });
+            .forEach(function (el) {
+                el.addEventListener('change', function () {
+                    if (el.type === 'radio') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });
+                    document.getElementById('filters').submit();
+                });
+            });
     </script>
 }

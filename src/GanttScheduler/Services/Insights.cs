@@ -5,21 +5,63 @@ using Microsoft.EntityFrameworkCore;
 namespace GanttScheduler.Services;
 
 // ── 리드타임 통계 ────────────────────────────────────────────────────────
-// 단계 소요일 = 직전 완료 단계의 완료일(첫 단계는 착수일)부터 이 단계 완료일까지
-public record LeadRow(string Stage, int Count, double AvgDays, int MinDays, int MaxDays, double? AvgOver, int LateCount);
+// 단계 소요일 = 앞 단계 완료일(첫 단계는 착수일 — 지금까지 가장 늦은 완료일)부터 이 단계 완료일까지 (Reporting.LeadSamples).
+// Count·AvgDays·Min·Max·AvgWorkDays 는 소요일 표본(0일 표본 제외를 고르면 뺀 뒤), ZeroCount 는 근무일 0 이하 표본 수(같은 날·순서를 거슬러 몰아 완료).
+// 목표 대비(완료일 − 목표일, 달력일 — 기준선 대비 일수와 같은 단위)는 소요일과 관계없이 완료한 단계 모두로 센다:
+//  AvgOver/LateCount/OverCount: 지금 목표일 대비(여러 번 미룬 단계일수록 지킨 것처럼 보인다), AvgOverFirst/FirstCount: 처음 정한 목표일 대비,
+//  AvgOverBaseline/BaselineCount: 기준선 대비(기준선이 있는 단계만)
+public record LeadRow(string Stage, int Count, double AvgDays, int MinDays, int MaxDays, double? AvgOver, int LateCount,
+    double AvgWorkDays = 0, int ZeroCount = 0, double? AvgOverFirst = null, int FirstCount = 0, double? AvgOverBaseline = null, int BaselineCount = 0,
+    int OverCount = 0);
 
-public record LeadGroup(int CategoryId, string Category, int Projects, int DoneProjects, double? AvgTotalDays, int ScaleMax, List<LeadRow> Rows);
+public record LeadGroup(int CategoryId, string Category, int Projects, int DoneProjects, double? AvgTotalDays, int ScaleMax, List<LeadRow> Rows,
+    double? AvgTotalWorkDays = null);
+
+// 단계 리드타임 표본 하나 (Days: 달력일, 음수는 0 / WorkDays: 근무일 거리 WorkCalendar.Distance). Zero: 근무일 0 이하
+public record LeadSample(Stage Stage, int Days, int WorkDays)
+{
+    public bool Zero => WorkDays <= 0;
+}
 
 // ── 주간 보고 ────────────────────────────────────────────────────────────
-public record WeeklyItem(string Text, string? Reason, string User, DateOnly Date);
+// 보고 한 줄. More: 같은 결정(BatchId)으로 함께 바뀐 다른 대상(연쇄 이동·선행 연동) — 화면은 접어서 보이고 결정은 1건으로 센다
+public record WeeklyItem(string Text, string? Reason, string User, DateOnly Date, List<string>? More = null)
+{
+    public int Targets => 1 + (More?.Count ?? 0);
+}
 
+// 밀린 항목: 보고 기준일에 목표일(작업은 목표 종료일)이 지났는데 끝나지 않은 단계·작업. Owner: 단계는 과제 담당, 작업은 작업 담당
+public record WeeklyLate(string Kind, string Title, string? Owner, DateOnly Due, int LateDays)
+{
+    public ChipView Chip => Views.DueChip(-LateDays, late: true);
+}
+
+// Changes: 일정 변경 결정(목표일·작업 일정). States: 상태 변경·기준선 확정(자동 완료 포함). Overdue: 밀린 항목
 public record WeeklyProject(
     int Id, string Title, string Category, string Corporation, string Owner, string StateLabel,
     int Progress, int DelayDays, string? CurrentStage, DateOnly? CurrentTarget,
-    List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next, ChipView? Chip = null);
+    List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next, ChipView? Chip = null,
+    List<WeeklyItem>? States = null, List<WeeklyLate>? Overdue = null)
+{
+    // 이번 주 기록된 변동(실적·일정 변경·상태·진행 내용)이 없다
+    public bool Quiet => Done.Count + Changes.Count + (States?.Count ?? 0) + Comments.Count == 0;
+    // 카드로 보일 과제: 변동이 있거나 지연이거나 밀린 항목이 있다. 나머지 무변동 과제는 끝의 표 하나로 접는다(화면·Excel·PDF)
+    public bool Card => !Quiet || DelayDays > 0 || (Overdue?.Count ?? 0) > 0;
+    public int ChangeTargets => Changes.Sum(c => c.Targets);
+}
 
+// ChangeCount: 일정 변경 결정 수(BatchId 묶음은 1건), ChangeTargets: 그 결정이 바꾼 대상(행) 수.
+// StateCount: 사람이 바꾼 상태·기준선 확정 수, Completed: 모든 단계를 끝내 자동으로 완료된 과제 수.
+// AsOf: 지연·밀린 항목을 센 기준일 = min(그 주 마지막 날, 오늘). 진행률·현재 단계는 지금 값이다
 public record WeeklyReport(
-    DateOnly From, DateOnly To, DateOnly Today, int Active, int Delayed, int DoneCount, int ChangeCount, List<WeeklyProject> Projects);
+    DateOnly From, DateOnly To, DateOnly Today, int Active, int Delayed, int DoneCount, int ChangeCount, List<WeeklyProject> Projects,
+    int ChangeTargets = 0, int StateCount = 0, int Completed = 0, DateOnly? AsOf = null)
+{
+    // 지난 주 보고 — 화면에 '지연은 그 주 기준, 진행률·현재 단계는 지금 기준'을 밝힌다
+    public bool Past => AsOf != null && AsOf.Value < Today;
+    public List<WeeklyProject> Cards() => Projects.Where(p => p.Card).ToList();
+    public List<WeeklyProject> Folded() => Projects.Where(p => !p.Card).ToList();
+}
 
 // ── 변경 이력 ────────────────────────────────────────────────────────────
 // ProjectId: 과제 하나의 이력만 (상세 활동 탭의 '이 과제 전체 이력')
@@ -64,10 +106,28 @@ public class InsightService
         _me = me;
     }
 
-    // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다
-    public async Task<List<LeadGroup>> LeadTimesAsync() =>
+    // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다.
+    // excludeZero: 근무일 0 이하 표본(몰아서 완료 처리한 기록)을 소요일 평균에서 뺀다
+    public async Task<List<LeadGroup>> LeadTimesAsync(bool excludeZero = false) =>
         Reporting.LeadTimes(await _db.Projects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
-            .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync());
+            .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync(),
+            await _projects.CalendarAsync(), await FirstTargetsAsync(), excludeZero);
+
+    // 단계마다 처음 정한 목표일: 첫 목표일 변경(TargetChanged)의 이전 값. 바꾼 적이 없는 단계는 목록에 없다(지금 목표일이 처음 값).
+    // 목표일 변경 행만 열 몇 개로 읽는다
+    public async Task<Dictionary<int, DateOnly>> FirstTargetsAsync()
+    {
+        var rows = await _db.Activities.AsNoTracking()
+            .Where(a => a.Type == ActivityType.TargetChanged && a.StageId != null && a.Project!.State != ProjectState.Dropped)
+            .Select(a => new { a.StageId, a.OldValue, a.At, a.Id }).ToListAsync();
+        var result = new Dictionary<int, DateOnly>();
+        foreach (var g in rows.GroupBy(a => a.StageId!.Value))
+        {
+            var first = g.OrderBy(a => a.At).ThenBy(a => a.Id).First();
+            if (DateOnly.TryParseExact(first.OldValue, "yyyy-MM-dd", out var d)) result[g.Key] = d;
+        }
+        return result;
+    }
 
     // 내 할 일은 진행 과제만 본다(Reporting.My)
     public async Task<MyView> MyAsync() =>
@@ -81,8 +141,13 @@ public class InsightService
         var end = KoreaClock.StartOfDayUtc(to.AddDays(1));
         var activities = await _db.Activities.AsNoTracking().Include(a => a.User)
             .Where(a => a.At >= start && a.At < end).ToListAsync();
-        // 보고에 오르는 과제: 진행 과제와, 그 주에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly). 나머지 완료·중단 과제는 읽지 않는다
-        var all = await _projects.AllAsync(q => q.Where(p => p.State == ProjectState.Active || p.Activities.Any(a => a.At >= start && a.At < end)));
+        // 보고에 오르는 과제: 그 주가 끝나기 전에 등록했고, 진행 중이었거나 그 주에 움직임(활동)이 있던 과제뿐이다(Reporting.Weekly).
+        // 지난 주라면 그 뒤에 마지막 단계를 끝낸 완료 과제도 그때는 진행 중이었다. 나머지 완료·중단 과제는 읽지 않는다
+        var past = to < _clock.Today;
+        var all = await _projects.AllAsync(q => q.Where(p => p.CreatedAt < end
+            && (p.State == ProjectState.Active
+                || (past && p.State == ProjectState.Done && p.Stages.Any(s => s.CompletedDate > to))
+                || p.Activities.Any(a => a.At >= start && a.At < end && a.Type != ActivityType.CommentChanged && a.DeletedAt == null))));
         if (mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
         return Reporting.Weekly(all, activities, await _projects.LocationsAsync(), from, to, _clock.Today);
     }
@@ -182,7 +247,7 @@ public static class Reporting
 
     public static string KindOf(ActivityType t) => t switch
     {
-        ActivityType.Comment => "comment",
+        ActivityType.Comment or ActivityType.CommentChanged => "comment",
         ActivityType.TargetChanged or ActivityType.WorkPlanChanged or ActivityType.BaselineSet => "schedule",
         ActivityType.StageCompleted or ActivityType.StageReopened or ActivityType.WorkEdited or ActivityType.CheckChanged => "progress",
         ActivityType.StateChanged or ActivityType.Created or ActivityType.Cloned => "state",
@@ -211,72 +276,154 @@ public static class Reporting
         return (from, from.AddDays(6));
     }
 
-    public static List<LeadGroup> LeadTimes(List<Project> all)
+    // 단계 리드타임 표본: 완료한 단계마다 앞 단계 완료일(첫 단계는 착수일)부터 이 단계 완료일까지.
+    // 기준점은 지금까지 가장 늦은 완료일이다 — 순서를 거슬러 완료한 단계 뒤의 단계가 길게 잡히지 않게. 리드타임 화면과
+    // 단계 기본 기간 힌트(StageLeadHints)가 같은 표본을 쓴다
+    public static List<LeadSample> LeadSamples(Project p, WorkCalendar cal)
     {
+        var list = new List<LeadSample>();
+        var prev = p.StartDate;
+        foreach (var s in Rules.Ordered(p))
+        {
+            if (s.CompletedDate == null) continue;
+            var done = s.CompletedDate.Value;
+            list.Add(new LeadSample(s, Math.Max(0, done.DayNumber - prev.DayNumber), cal.Distance(prev, done)));
+            if (done > prev) prev = done;
+        }
+        return list;
+    }
+
+    // firstTargets: 단계 Id → 처음 정한 목표일(InsightService.FirstTargetsAsync). 없는 단계는 지금 목표일이 처음 값이다
+    public static List<LeadGroup> LeadTimes(List<Project> all, WorkCalendar? cal = null, IReadOnlyDictionary<int, DateOnly>? firstTargets = null, bool excludeZero = false)
+    {
+        cal ??= WorkCalendar.WeekendsOnly;
         var groups = new List<LeadGroup>();
         foreach (var g in all.Where(p => p.State != ProjectState.Dropped).GroupBy(p => p.CategoryId)
                      .OrderBy(g => g.First().Category?.SortOrder ?? 0))
         {
-            // 단계 이름별 표본: (소요일, 목표 대비 초과일)
-            var samples = new Dictionary<string, (int Order, List<int> Days, List<int> Over)>();
-            var totals = new List<int>();
+            // 단계 이름별 표본
+            var samples = new Dictionary<string, (int Order, List<LeadSample> List)>();
+            var totals = new List<(int Days, int WorkDays)>();
             foreach (var p in g)
             {
-                var prev = p.StartDate;
-                foreach (var s in Rules.Ordered(p))
+                foreach (var x in LeadSamples(p, cal))
                 {
-                    if (s.CompletedDate == null) continue;
-                    if (!samples.TryGetValue(s.Name, out var x)) samples[s.Name] = x = (s.SortOrder, new List<int>(), new List<int>());
-                    x.Days.Add(Math.Max(0, s.CompletedDate.Value.DayNumber - prev.DayNumber));
-                    if (s.TargetDate != null) x.Over.Add(s.CompletedDate.Value.DayNumber - s.TargetDate.Value.DayNumber);
-                    prev = s.CompletedDate.Value;
+                    if (!samples.TryGetValue(x.Stage.Name, out var e)) samples[x.Stage.Name] = e = (x.Stage.SortOrder, new List<LeadSample>());
+                    e.List.Add(x);
                 }
                 if (p.State == ProjectState.Done && Rules.AllStagesDone(p))
-                    totals.Add(p.Stages.Max(s => s.CompletedDate!.Value).DayNumber - p.StartDate.DayNumber);
+                {
+                    var end = p.Stages.Max(s => s.CompletedDate!.Value);
+                    totals.Add((end.DayNumber - p.StartDate.DayNumber, cal.Distance(p.StartDate, end)));
+                }
             }
 
-            var rows = samples.OrderBy(kv => kv.Value.Order)
-                .Select(kv => new LeadRow(kv.Key, kv.Value.Days.Count, Math.Round(kv.Value.Days.Average(), 1),
-                    kv.Value.Days.Min(), kv.Value.Days.Max(),
-                    kv.Value.Over.Count > 0 ? Math.Round(kv.Value.Over.Average(), 1) : null,
-                    kv.Value.Over.Count(o => o > 0)))
-                .ToList();
+            static double? Avg(List<int> v) => v.Count > 0 ? Math.Round(v.Average(), 1) : null;
+            DateOnly? FirstTarget(Stage s) => firstTargets != null && firstTargets.TryGetValue(s.Id, out var f) ? f : s.TargetDate;
+            var rows = new List<LeadRow>();
+            foreach (var (name, (_, list)) in samples.OrderBy(kv => kv.Value.Order))
+            {
+                var used = excludeZero ? list.Where(x => !x.Zero).ToList() : list;
+                var over = list.Where(x => x.Stage.TargetDate != null)
+                    .Select(x => x.Stage.CompletedDate!.Value.DayNumber - x.Stage.TargetDate!.Value.DayNumber).ToList();
+                var overFirst = list.Select(x => (Done: x.Stage.CompletedDate!.Value, First: FirstTarget(x.Stage)))
+                    .Where(t => t.First != null).Select(t => t.Done.DayNumber - t.First!.Value.DayNumber).ToList();
+                var overBase = list.Where(x => x.Stage.BaselineDate != null)
+                    .Select(x => x.Stage.CompletedDate!.Value.DayNumber - x.Stage.BaselineDate!.Value.DayNumber).ToList();
+                rows.Add(new LeadRow(name, used.Count,
+                    used.Count > 0 ? Math.Round(used.Average(x => x.Days), 1) : 0,
+                    used.Count > 0 ? used.Min(x => x.Days) : 0, used.Count > 0 ? used.Max(x => x.Days) : 0,
+                    Avg(over), over.Count(o => o > 0),
+                    used.Count > 0 ? Math.Round(used.Average(x => Math.Max(0, x.WorkDays)), 1) : 0,
+                    list.Count(x => x.Zero),
+                    Avg(overFirst), overFirst.Count, Avg(overBase), overBase.Count, over.Count));
+            }
 
             groups.Add(new LeadGroup(g.Key, g.First().Category?.Name ?? "", g.Count(), totals.Count,
-                totals.Count > 0 ? Math.Round(totals.Average(), 1) : null,
-                rows.Count > 0 ? Math.Max(1, rows.Max(r => r.MaxDays)) : 1, rows));
+                totals.Count > 0 ? Math.Round(totals.Average(t => t.Days), 1) : null,
+                rows.Count > 0 ? Math.Max(1, rows.Max(r => r.MaxDays)) : 1, rows,
+                totals.Count > 0 ? Math.Round(totals.Average(t => t.WorkDays), 1) : null));
         }
         return groups;
     }
 
+    // 활동 하나를 보고 줄로
+    private static WeeklyItem Item(Activity a, List<string>? more = null) =>
+        new(a.Text, a.Reason, a.User?.Name ?? "", KoreaClock.KstDate(a.At), more);
+
+    // 사람이 아니라 단계 완료·완료 취소에 따라 저절로 바뀐 과제 상태 (ProjectService.SyncState)
+    public static bool IsAutoState(Activity a) =>
+        a.Type == ActivityType.StateChanged && (a.Text == ProjectService.AutoDoneText || a.Text == ProjectService.AutoReopenText);
+
+    // 일정 변경 결정: 목표일·작업 일정 변경을 (BatchId ?? Id) 로 묶는다. 묶음의 첫 행(먼저 남긴 — 사람이 직접 바꾼 대상)을 대표로,
+    // 나머지(연쇄 이동·선행 연동으로 함께 옮겨진 대상)는 More 로 접는다
+    public static List<WeeklyItem> Decisions(IEnumerable<Activity> acts) =>
+        acts.Where(a => a.Type is ActivityType.TargetChanged or ActivityType.WorkPlanChanged)
+            .OrderBy(a => a.At).ThenBy(a => a.Id)
+            .GroupBy(a => a.BatchId?.ToString() ?? "#" + a.Id)
+            .Select(g =>
+            {
+                var rows = g.ToList();
+                return Item(rows[0], rows.Count > 1 ? rows.Skip(1).Select(a => a.Text).ToList() : null);
+            })
+            .ToList();
+
+    // 주간 보고. 지연·밀린 항목은 asOf = min(그 주 마지막 날, 오늘) 기준(Rules.DelayDaysAsOf)이라 지난 주를 다시 열어도 그 주의 모습이다.
+    // 그 주가 끝난 뒤 등록한 과제는 넣지 않는다. 진행률·현재 단계는 지금 값이다(스냅샷이 없다 — 화면이 밝힌다).
+    // 실적은 날짜로 본다: 단계는 완료일, 작업은 실적 종료일이 그 주 안이면 그 주 실적이다(활동을 남긴 시각이 아니라)
     public static WeeklyReport Weekly(List<Project> all, List<Activity> activities, LocationIndex locations, DateOnly from, DateOnly to, DateOnly today)
     {
-        var byProject = activities.GroupBy(a => a.ProjectId).ToDictionary(g => g.Key, g => g.OrderBy(a => a.At).ToList());
+        var asOf = to < today ? to : today;
+        var byProject = activities.GroupBy(a => a.ProjectId).ToDictionary(g => g.Key, g => g.OrderBy(a => a.At).ThenBy(a => a.Id).ToList());
         var nextFrom = to.AddDays(1);
         var nextTo = to.AddDays(7);
         var projects = new List<WeeklyProject>();
+        // 그 주가 끝나기 전에 등록한 과제만 (지난 주 보고에 그 뒤 등록한 과제가 끼지 않게)
+        var existing = all.Where(p => KoreaClock.KstDate(p.CreatedAt) <= to).ToList();
+        int stateCount = 0, completed = 0;
 
-        foreach (var p in all)
+        foreach (var p in existing)
         {
             byProject.TryGetValue(p.Id, out var acts);
             acts ??= new List<Activity>();
-            if (p.State != ProjectState.Active && acts.Count == 0) continue;   // 움직임 없는 보류·완료 과제는 뺀다
+            var active = Rules.ActiveAsOf(p, asOf, today);
+            // 움직임 없는 보류·완료·중단 과제는 뺀다. 댓글 수정·삭제 기록과 지운 댓글은 보고에 실을 내용이 없으므로 움직임으로 보지 않는다
+            if (!active && !acts.Any(a => a.Type != ActivityType.CommentChanged && a.DeletedAt == null)) continue;
 
-            WeeklyItem Item(Activity a) => new(a.Text, a.Reason, a.User?.Name ?? "", KoreaClock.KstDate(a.At));
+            // 이번 주 실적: 단계 완료일·작업 실적 종료일이 그 주 안. 단계를 끝낸 사람은 그 주의 완료 활동에서 찾는다
+            var done = Rules.Ordered(p)
+                .Where(s => s.CompletedDate != null && s.CompletedDate.Value >= from && s.CompletedDate.Value <= to)
+                .Select(s => new WeeklyItem($"[{s.Name}] 단계 완료", null,
+                    acts.LastOrDefault(a => a.Type == ActivityType.StageCompleted && a.StageId == s.Id)?.User?.Name ?? "", s.CompletedDate!.Value))
+                .Concat(Rules.AllWorks(p)
+                    .Where(w => w.ActualEnd != null && w.ActualEnd.Value >= from && w.ActualEnd.Value <= to)
+                    .Select(w => new WeeklyItem($"작업 완료: {w.Title}", null, w.Owner?.Name ?? "", w.ActualEnd!.Value)))
+                .OrderBy(x => x.Date)
+                .ToList();
 
-            var done = acts.Where(a => a.Type == ActivityType.StageCompleted).Select(Item).ToList();
-            done.AddRange(Rules.AllWorks(p)
-                .Where(w => w.ActualEnd != null && w.ActualEnd.Value >= from && w.ActualEnd.Value <= to)
-                .OrderBy(w => w.ActualEnd)
-                .Select(w => new WeeklyItem($"작업 완료: {w.Title}", null, w.Owner?.Name ?? "", w.ActualEnd!.Value)));
+            var changes = Decisions(acts);
+            var states = acts.Where(a => a.Type is ActivityType.StateChanged or ActivityType.BaselineSet).Select(a => Item(a)).ToList();
+            stateCount += acts.Count(a => (a.Type is ActivityType.StateChanged or ActivityType.BaselineSet) && !IsAutoState(a));
+            completed += acts.Count(a => a.Type == ActivityType.StateChanged && a.Text == ProjectService.AutoDoneText);
+            var comments = acts.Where(a => a.Type == ActivityType.Comment && a.DeletedAt == null).Select(a => Item(a)).ToList();
 
-            var changes = acts.Where(a => a.Type is ActivityType.TargetChanged or ActivityType.WorkPlanChanged or ActivityType.StateChanged or ActivityType.BaselineSet)
-                .Select(Item).ToList();
-            var comments = acts.Where(a => a.Type == ActivityType.Comment).Select(Item).ToList();
-
+            // 밀린 항목: 기준일에 목표일이 지났는데 끝나지 않은 단계·작업 (다음 주 계획에는 기한이 지난 것이 오르지 않으므로 따로 모은다)
+            var overdue = new List<WeeklyLate>();
             var next = new List<string>();
-            if (p.State == ProjectState.Active)
+            if (active)
             {
+                foreach (var s in Rules.Ordered(p))
+                {
+                    var late = Rules.StageLateDaysAsOf(s, asOf, today);
+                    if (late > 0) overdue.Add(new WeeklyLate("단계", s.Name, p.Owner?.Name, s.TargetDate!.Value, late));
+                    foreach (var w in s.Works)
+                    {
+                        var wl = Rules.WorkLateDaysAsOf(w, s, asOf, today);
+                        if (wl > 0) overdue.Add(new WeeklyLate("작업", w.Title, w.Owner?.Name, w.PlanEnd, wl));
+                    }
+                }
+                overdue = overdue.OrderByDescending(x => x.LateDays).ThenBy(x => x.Kind).ThenBy(x => x.Title).ToList();
+
                 next.AddRange(Rules.Ordered(p)
                     .Where(s => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value >= nextFrom && s.TargetDate.Value <= nextTo)
                     .Select(s => $"[{s.Name}] 단계 목표 {s.TargetDate!.Value:MM-dd}"));
@@ -286,18 +433,22 @@ public static class Reporting
                     .Select(w => $"{w.Title} 종료 목표 {w.PlanEnd:MM-dd}" + (w.Owner != null ? $" ({w.Owner.Name})" : "")));
             }
 
+            // 상태도 기준일로: 그때 진행 중이던 과제(지금은 완료)는 '진행'으로 보인다
+            var state = active ? ProjectState.Active : p.State;
+            var delay = Rules.DelayDaysAsOf(p, asOf, today);
             var current = Rules.CurrentStage(p);
             projects.Add(new WeeklyProject(p.Id, p.Title, p.Category?.Name ?? "", locations.Get(p.CorporationId)?.Name ?? "", p.Owner?.Name ?? "",
-                Views.StateLabel(p.State, Rules.DelayDays(p, today)),
-                Rules.ProjectProgress(p), Rules.DelayDays(p, today), current?.Name, current?.TargetDate,
-                done, changes, comments, next, Views.ProjectChip(p.State, Rules.DelayDays(p, today))));
+                Views.StateLabel(state, delay),
+                Rules.ProjectProgress(p), delay, current?.Name, current?.TargetDate,
+                done, changes, comments, next, Views.ProjectChip(state, delay), states, overdue));
         }
 
         projects = projects.OrderByDescending(x => x.DelayDays).ThenBy(x => x.Title).ToList();
         return new WeeklyReport(from, to, today,
-            all.Count(p => p.State == ProjectState.Active),
-            all.Count(p => Rules.DelayDays(p, today) > 0),
-            projects.Sum(x => x.Done.Count), projects.Sum(x => x.Changes.Count), projects);
+            existing.Count(p => Rules.ActiveAsOf(p, asOf, today)),
+            existing.Count(p => Rules.DelayDaysAsOf(p, asOf, today) > 0),
+            projects.Sum(x => x.Done.Count), projects.Sum(x => x.Changes.Count), projects,
+            projects.Sum(x => x.ChangeTargets), stateCount, completed, asOf);
     }
 
     public static MyView My(List<Project> all, int userId, DateOnly today)
@@ -350,16 +501,13 @@ public static class Reporting
         var samples = new Dictionary<(int, string), List<int>>();
         foreach (var p in projects.Where(p => p.State == ProjectState.Done && Rules.AllStagesDone(p)))
         {
-            var prev = p.StartDate;
+            // 리드타임 화면과 같은 표본(LeadSamples) — 0일 표본은 늘 뺀다
             var seen = new HashSet<string>();
-            foreach (var s in Rules.Ordered(p))
+            foreach (var x in LeadSamples(p, cal))
             {
-                var done = s.CompletedDate!.Value;
-                var days = cal.Distance(prev, done);
-                if (done > prev) prev = done;
-                if (!seen.Add(s.Name) || days <= 0) continue;
-                if (!samples.TryGetValue((p.CategoryId, s.Name), out var list)) samples[(p.CategoryId, s.Name)] = list = new List<int>();
-                list.Add(days);
+                if (!seen.Add(x.Stage.Name) || x.Zero) continue;
+                if (!samples.TryGetValue((p.CategoryId, x.Stage.Name), out var list)) samples[(p.CategoryId, x.Stage.Name)] = list = new List<int>();
+                list.Add(x.WorkDays);
             }
         }
         return samples.Where(kv => kv.Value.Count >= LeadHintMinSamples)

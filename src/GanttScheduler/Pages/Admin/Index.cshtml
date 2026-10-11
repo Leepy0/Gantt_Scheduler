@@ -40,7 +40,7 @@
     <button type="button" role="tab" data-kind="holiday">공휴일</button>
 </div>
 
-<section id="admin-body" class="admin-body" data-admin="@(Model.IsAdmin ? "1" : "0")" aria-live="polite"></section>
+<section id="admin-body" class="admin-body" data-admin="@(Model.IsAdmin ? "1" : "0")" data-limits="@Model.LimitsJson" data-field-limits="@Model.FieldLimitsJson" aria-live="polite"></section>
 
 @section Scripts {
     <script src="~/js/org.js" asp-append-version="true"></script>
