@@ -1,0 +1,24 @@
+<Project>
+  <!-- 패키지 버전은 여기 한곳에서 정확한 값으로 고정한다 (중앙 관리).
+       '10.0.*' 처럼 열어 두면 빌드할 때마다 다른 패치가 들어와, 같은 소스가 다른 결과를 낸다.
+       특히 SQLite 미리보기 DB 는 EF 가 만든 생성 스크립트의 해시로 "모델이 바뀌었는지"를 보므로(Data/Seeder.cs DbInitializer),
+       EF 패치만 바뀌어도 DB 를 새로 만들 수 있다. 버전을 고정하면 이 일이 업그레이드 PR(Dependabot)에서만 생긴다.
+       올릴 때는 이 파일을 고친 뒤 dotnet restore 를 force-evaluate 옵션으로 실행해 packages.lock.json 을 다시 만들어 함께 커밋한다 -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 앱 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
+    <PackageVersion Include="ClosedXML" Version="0.105.1" />
+    <PackageVersion Include="PDFsharp-MigraDoc" Version="6.2.4" />
+    <!-- 테스트 -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
+  </ItemGroup>
+</Project>

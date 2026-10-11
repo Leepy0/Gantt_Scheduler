@@ -14,20 +14,18 @@ if (AdminCommand.IsCommand(args)) return await AdminCommand.RunAsync(args);
 
 // 서비스로 시작되면 SCM 이 "--service <이름>" 을 넘긴다
 var serviceName = ServiceInstaller.ServiceNameFrom(args);
-if (serviceName != null)
+// 서비스는 화면(콘솔)이 없다. 시작하다 죽으면(대개 DB 연결·깨진 설정 파일) 원인을 파일에 남겨 설치 명령과 업데이트 도우미가
+// 보여 줄 수 있게 한다. 업데이트 뒤 새 버전이 뜨지 않아 되돌릴 때 그 이유가 되므로 직접 실행한 서버도 남긴다
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
-    // 서비스는 화면(콘솔)이 없다. 시작하다 죽으면(대개 DB 연결) 원인을 파일에 남겨 설치 명령이 보여 줄 수 있게 한다
-    AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    try
     {
-        try
-        {
-            var dir = Path.Combine(AppContext.BaseDirectory, "App_Data");
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(Path.Combine(dir, ServiceInstaller.StartupErrorFile), $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{e.ExceptionObject}");
-        }
-        catch (Exception) { /* 기록 실패는 무시 */ }
-    };
-}
+        var dir = Path.Combine(AppContext.BaseDirectory, "App_Data");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, ServiceInstaller.StartupErrorFile), $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}{e.ExceptionObject}");
+    }
+    catch (Exception) { /* 기록 실패는 무시 */ }
+};
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -73,7 +71,10 @@ builder.Services.AddHostedService<UpdateWorker>();
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);
 Directory.CreateDirectory(keyDir);
-builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyDir));
+var dataProtection = builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyDir));
+// Windows 서비스면 키 파일을 DPAPI(이 컴퓨터)로 암호화해 둔다. 폴더 사본만으로는 키를 쓸 수 없게 하기 위해서다.
+// 이미 평문으로 저장된 키는 그대로 읽히고, 새로 만드는 키부터 암호화된다
+if (serviceName != null && OperatingSystem.IsWindows()) dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddRazorPages()

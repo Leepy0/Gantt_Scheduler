@@ -1,6 +1,7 @@
 # EF Core 마이그레이션 추가 (SQL Server 기준).
 # 모델(Domain/Entities.cs, Data/AppDb.cs)을 바꾼 뒤 Actions 탭에서 이름을 넣고 실행하면
-# src/GanttScheduler/Data/Migrations 에 마이그레이션을 만들어 main 에 커밋한다.
+# src/GanttScheduler/Data/Migrations 에 마이그레이션을 만들어 main 에 커밋하고, 그 커밋으로 CI 를 돌린다.
+# 적용될 SQL(idempotent 스크립트)은 실행 요약(Summary)에 남는다.
 # PC 에 .NET SDK 가 있으면 직접 실행해도 된다:
 #   dotnet ef migrations add <이름> --project src/GanttScheduler --output-dir Data/Migrations
 name: 마이그레이션 추가
@@ -14,6 +15,11 @@ on:
 
 permissions:
   contents: write
+  actions: write   # 커밋한 뒤 CI 실행 (GITHUB_TOKEN 으로 push 한 커밋은 CI 를 자동으로 띄우지 않는다)
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
 jobs:
   add:
@@ -25,18 +31,36 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: 마이그레이션 생성
         env:
           NAME: ${{ inputs.name }}
         run: |
           case "$NAME" in *[!A-Za-z0-9_]*|"") echo "이름은 영문·숫자·밑줄만 사용합니다."; exit 1;; esac
-          dotnet restore src/GanttScheduler
-          dotnet tool install --global dotnet-ef --version "10.0.*"
+          dotnet restore src/GanttScheduler --locked-mode
+          # 도구 버전은 앱이 쓰는 EF Core 와 같게 고정한다 (Directory.Packages.props)
+          EF=$(sed -n 's:.*Include="Microsoft.EntityFrameworkCore.Design" Version="\([^"]*\)".*:\1:p' Directory.Packages.props)
+          [ -n "$EF" ] || { echo "::error::Directory.Packages.props 에서 EF Core 버전을 찾지 못했습니다."; exit 1; }
+          dotnet tool install --global dotnet-ef --version "$EF"
           export PATH="$PATH:$HOME/.dotnet/tools"
+          last() { ls src/GanttScheduler/Data/Migrations 2>/dev/null | grep -E '^[0-9]{14}_.+\.cs$' | grep -v '\.Designer\.cs$' | sort | tail -1 | sed 's/\.cs$//'; }
+          PREV=$(last)
           dotnet ef migrations add "$NAME" --project src/GanttScheduler --output-dir Data/Migrations
-          # 적용될 SQL 을 로그로 남긴다
-          dotnet ef migrations script --project src/GanttScheduler --idempotent | tail -n 200
+          NEW=$(last)
+          # 이번에 추가된 부분만 적용될 SQL 로 남긴다 (여러 번 실행해도 안전한 형태)
+          dotnet ef migrations script "${PREV:-0}" "$NEW" --project src/GanttScheduler --idempotent -o migration.sql
+          {
+            echo "## 마이그레이션 $NEW"
+            echo
+            echo "이전: \`${PREV:-없음}\`"
+            echo
+            echo '```sql'
+            head -c 900000 migration.sql
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: main 에 커밋
         env:
@@ -47,3 +71,11 @@ jobs:
           git add src/GanttScheduler/Data/Migrations
           git commit -m "마이그레이션 추가: $NAME"
           git push
+
+      # GITHUB_TOKEN 의 push 는 다른 워크플로를 띄우지 않으므로 CI 를 직접 실행한다 (workflow_dispatch 는 예외적으로 실행된다)
+      - name: CI 실행
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          echo "CI 를 실행했습니다: https://github.com/$GITHUB_REPOSITORY/actions/workflows/ci.yml" >> "$GITHUB_STEP_SUMMARY"

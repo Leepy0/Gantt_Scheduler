@@ -21,13 +21,25 @@ public static class DbInitializer
         }
         else
         {
-            // SQLite 는 마이그레이션이 없으므로, 모델이 바뀌었으면 DB 를 버리고 새로 만든다(담긴 것은 샘플 데이터뿐이라는 전제)
-            var marker = AppPaths.Sqlite(cfg, env.ContentRootPath) + ".schema";
+            // SQLite 는 마이그레이션이 없으므로, 모델이 바뀌었으면 DB 를 새로 만든다(담긴 것은 샘플 데이터뿐이라는 전제).
+            // 구조 판정은 EF 가 만든 생성 스크립트의 해시라 EF 패치 버전이 바뀌어도 달라질 수 있다 — 패키지 버전을
+            // Directory.Packages.props 에 고정해 그런 일이 업그레이드 때만 생기게 했다
+            var path = AppPaths.Sqlite(cfg, env.ContentRootPath);
+            var marker = path + ".schema";
             var schema = SchemaHash(db.Database.GenerateCreateScript());
             if (File.Exists(marker) && await File.ReadAllTextAsync(marker) != schema)
             {
-                log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다 (기존 미리보기 데이터는 지워집니다).");
-                await db.Database.EnsureDeletedAsync();
+                if (env.IsDevelopment())
+                {
+                    log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다 (기존 미리보기 데이터는 지워집니다).");
+                    await db.Database.EnsureDeletedAsync();
+                }
+                else
+                {
+                    // 개발 환경이 아니면 누군가 실제로 쓰던 데이터일 수 있어 지우지 않고 옆에 남겨 둔다
+                    var backup = SetAside(path, clock.UtcNow);
+                    log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다. 기존 DB 는 {Backup} 로 옮겨 두었습니다.", backup);
+                }
             }
             await db.Database.EnsureCreatedAsync();
             await File.WriteAllTextAsync(marker, schema);
@@ -39,6 +51,17 @@ public static class DbInitializer
 
     public static string SchemaHash(string script) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(script)));
+
+    // SQLite 파일(그리고 WAL 보조 파일)을 gantt.db.<시각>.bak 으로 옮긴다. 옮긴 이름을 돌려준다.
+    // 옮기지 못하면(다른 프로그램이 잡고 있음) 지우지 않고 시작을 멈춘다 — 데이터를 잃는 것보다 낫다
+    internal static string SetAside(string path, DateTime utcNow)
+    {
+        var backup = $"{path}.{utcNow:yyyyMMddHHmmss}.bak";
+        if (File.Exists(path)) File.Move(path, backup);
+        foreach (var suffix in new[] { "-wal", "-shm" })
+            if (File.Exists(path + suffix)) File.Move(path + suffix, backup + suffix);
+        return backup;
+    }
 }
 
 // 설정에서 파일 경로를 푼다 (상대 경로는 앱 폴더 기준)

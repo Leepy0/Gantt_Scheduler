@@ -13,8 +13,10 @@ public static class DbSetup
     {
         if (UseSqlServer(config))
         {
+            // 일시적인 연결 끊김(장애 조치, 네트워크 순단)은 몇 번 다시 시도한다. 코드에서 트랜잭션을 직접 열지 않으므로
+            // (SaveChanges 한 번 = 트랜잭션 하나) 재시도 전략과 충돌하지 않는다. 직접 트랜잭션을 열려면 실행 전략 안에서 열어야 한다
             options.UseSqlServer(config.GetConnectionString("SqlServer"),
-                sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema));
+                sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema).EnableRetryOnFailure());
         }
         else
         {

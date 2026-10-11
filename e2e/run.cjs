@@ -3,6 +3,10 @@
 //   OUT_DIR   결과 폴더 (기본 e2e/out) — screens/*.png, exports/*(내보낸 Excel·PDF), report.md
 //   PW_CHANNEL=chrome  설치된 Chrome 사용 (CI). 지정하지 않으면 Playwright 의 Chromium
 //   FAKE_EXPORT=1      내보내기 파일의 형식 검사를 건너뛴다 (가짜 내보내기를 쓰는 로컬 섀도 빌드용)
+//   ONLY=<문자열>      이름에 이 문자열이 든 단계만 돈다 ('|' 로 여러 개). 등록 단계는 다른 단계의 전제라 항상 돈다.
+//                      단계끼리 상태를 이어 쓰므로(샘플 과제를 고친 결과 등) 앞 단계를 건너뛰면 실패할 수 있다
+//   APP_LOG=<파일>     앱 로그. 경고·오류 줄을 모아 보고서(report.md)에 요약한다 (CI)
+// 단계가 실패하면 그때의 화면(screens/fail-NN.png), 주소, 화면에 보인 오류 문구를 보고서에 남긴다
 const fs = require('fs');
 const path = require('path');
 
@@ -16,24 +20,65 @@ const EXPORTS = path.join(OUT, 'exports');
 fs.mkdirSync(SHOTS, { recursive: true });
 fs.mkdirSync(EXPORTS, { recursive: true });
 
-const results = [];      // { name, ok, error }
+const results = [];      // { name, ok, error, skipped, url, screen, texts }
 const problems = [];     // 콘솔 오류·실패한 요청
 // 일부러 404 를 받는 요청 (없는 과제 화면, 삭제된 과제의 변경 확인)
 const expected404 = ['/Projects/Detail?id=999999', 'handler=Stamp'];
+const ONLY = (process.env.ONLY || '').split('|').map((x) => x.trim()).filter(Boolean);
+// ONLY 와 관계없이 도는 단계 (이름 앞부분). 이름 등록이 없으면 다른 화면이 열리지 않는다
+const SETUP = ['처음 접속하면', '이름·소속'];
+let active = null;       // 지금 단계가 쓰는 화면 (실패 캡처용)
 
 function kstToday(offset = 0) {
     return new Date(Date.now() + 9 * 3600e3 + offset * 86400e3).toISOString().slice(0, 10);
 }
 
 async function step(name, fn) {
+    if (ONLY.length && !SETUP.some((x) => name.startsWith(x)) && !ONLY.some((x) => name.includes(x))) {
+        results.push({ name, skipped: true });
+        console.log('  skip ' + name);
+        return;
+    }
     try {
         await fn();
         results.push({ name, ok: true });
         console.log('  ok   ' + name);
     } catch (err) {
-        results.push({ name, ok: false, error: String(err && err.message || err).split('\n')[0] });
-        console.log('  FAIL ' + name + ' — ' + String(err && err.message || err).split('\n')[0]);
+        const r = { name, ok: false, error: String(err && err.message || err).split('\n')[0] };
+        await capture(r);
+        results.push(r);
+        console.log('  FAIL ' + name + ' — ' + r.error + (r.url ? ' (' + r.url + ')' : ''));
     }
+}
+
+// 실패한 단계의 화면·주소·화면에 보인 오류 문구 (원인을 다시 돌리지 않고 보고서에서 볼 수 있게)
+async function capture(r) {
+    if (!active) return;
+    const n = String(results.length + 1).padStart(2, '0');
+    try { r.url = active.url(); } catch (e) { /* 닫힌 화면 */ }
+    try {
+        r.texts = await active.evaluate(() => Array.from(document.querySelectorAll(
+            '.form-error:not([hidden]), .form-warn:not([hidden]), .toast, .notice, .field.invalid .hint'))
+            .map((el) => el.innerText.trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 5));
+    } catch (e) { /* 이동 중 */ }
+    try {
+        await active.screenshot({ path: path.join(SHOTS, 'fail-' + n + '.png') });
+        r.screen = 'screens/fail-' + n + '.png';
+    } catch (e) { /* 캡처 실패는 무시 */ }
+}
+
+// 앱 로그의 경고·오류를 종류별로 센다. ASP.NET 콘솔 로그는 "warn: 범주[번호]" 다음 줄에 내용이 온다
+function appLogSummary(file) {
+    let lines;
+    try { lines = fs.readFileSync(file, 'utf8').split(/\r?\n/); } catch (e) { return ['- 앱 로그를 읽지 못했습니다: ' + file]; }
+    const counts = new Map();
+    for (let i = 0; i < lines.length; i++) {
+        const m = /^(warn|fail|crit): ([^\[]+)\[\d+\]/.exec(lines[i]);
+        if (!m) continue;
+        const key = m[1] + ' ' + m[2] + ' — ' + (lines[i + 1] || '').trim().slice(0, 160);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts].map(([k, n]) => '- ' + n + '× `' + k.replace(/`/g, "'") + '`');
 }
 
 function watch(page, label) {
@@ -108,6 +153,24 @@ async function sheetError(page) {
     return (await page.locator(SHEET + ' .sheet-body > .form-error').innerText()).trim();
 }
 
+// 업데이트 화면: '지금 확인' 응답에 "적용한 새 버전이 시작되지 않아 되돌린" 상태를 덧붙인다.
+// 실제로 서버를 죽였다 살리는 흐름은 tools/release/selftest.sh 가 확인하고, 여기서는 그 상태의 화면만 본다
+async function mockStartFailure(p) {
+    await p.route('**/Admin/Update?handler=Check', async (route) => {
+        const res = await route.fetch();
+        const body = await res.json();
+        const at = new Date().toISOString();
+        body.status.staged = { version: '99.0.1', at, origin: 'download', by: '자동', sha256: 'a'.repeat(64), notes: '', schemaChange: false };
+        body.status.skipAuto = '99.0.1';
+        body.status.startFailure = {
+            version: '99.0.1', from: body.status.version, rolledBack: true, at, retry: 'apply',
+            error: '새 버전(v99.0.1)이 시작되지 않아(시작하다 멈춤) 이전 버전(v' + body.status.version + ')으로 자동으로 되돌렸습니다.',
+            detail: '2026-10-11 02:10:00\nSystem.IO.InvalidDataException: Failed to load configuration from file \'C:\\GanttScheduler\\appsettings.json\'.\n ---> System.FormatException: Could not parse the JSON file.',
+        };
+        await route.fulfill({ response: res, json: body });
+    });
+}
+
 const stageRow = (page, name) => page.locator('#gantt .g-row.stage', { hasText: name }).locator('.g-name');
 const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: name });
 
@@ -117,6 +180,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     // ── 데스크톱 ────────────────────────────────────────────────────
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
     const page = await desktop.newPage();
+    active = page;
     watch(page, 'desktop');
     page.setDefaultTimeout(10000);
 
@@ -949,6 +1013,27 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await shot(page, 'd24-update');
     });
 
+    await step('업데이트 — 서명 검증 표시, 시작되지 않아 되돌린 버전 안내·다시 시도·안내 닫기', async () => {
+        await page.goto(BASE + '/Admin/Update');
+        await page.waitForSelector('.update-version');
+        // 저장소에 공개키가 없는 빌드는 출처를 확인하지 않는다는 것을 알린다
+        assert((await page.locator('.update-body dl').innerText()).includes('서명 검증 꺼짐'), '서명 검증 상태가 없음');
+        assert((await page.locator('#upload-form input[type=file]').getAttribute('multiple')) !== null, '배포 정보·서명 파일을 함께 고를 수 없음');
+        await mockStartFailure(page);
+        await page.click('[data-act=check]');
+        await page.waitForSelector('.start-failure');
+        const text = await page.locator('.start-failure').innerText();
+        assert(text.includes('자동으로 되돌렸습니다') && text.includes('InvalidDataException'), '시작 실패 안내·원인이 없음: ' + text);
+        assert(text.includes('자동으로 다시 받거나 적용하지 않습니다'), '자동 적용 제외 안내가 없음');
+        assert(await page.locator('.start-failure [data-act=retry]').isVisible(), '다시 시도 단추가 없음');
+        assert((await page.locator('.update-body').innerText()).includes('시작되지 않아 되돌렸던 버전이라'), '받아 둔 버전의 자동 적용 안내가 다름');
+        await shot(page, 'd24b-update-start-failure');
+        // 안내 닫기 → 서버에 기록된 안내가 없어지고(실제 응답) 화면에서도 사라진다
+        await page.unroute('**/Admin/Update?handler=Check');
+        await page.click('.start-failure [data-act=dismiss-failure]');
+        await page.waitForSelector('.start-failure', { state: 'detached' });
+    });
+
     await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
         await page.goto(BASE + '/Projects');
         const build = await page.evaluate(() => document.documentElement.getAttribute('data-build'));
@@ -1015,6 +1100,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
     });
     const m = await mobile.newPage();
+    active = m;
     watch(m, 'mobile');
     m.setDefaultTimeout(10000);
 
@@ -1113,11 +1199,22 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.goto(BASE + '/Admin');
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
+        await shot(m, 'm11-admin');
         await m.goto(BASE + '/Admin/Update');
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
         await shot(m, 'm11-update');
-        await shot(m, 'm11-admin');
+    });
+
+    await step('모바일 업데이트 — 시작되지 않아 되돌린 버전 안내', async () => {
+        await m.goto(BASE + '/Admin/Update');
+        await m.waitForSelector('.update-version');
+        await mockStartFailure(m);
+        await m.click('[data-act=check]');
+        await m.waitForSelector('.start-failure');
+        await noOverflow('업데이트 시작 실패 안내');
+        await shot(m, 'm11d-update-start-failure');
+        await m.unroute('**/Admin/Update?handler=Check');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
@@ -1139,20 +1236,31 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     await browser.close();
 
     // ── 결과 정리 ───────────────────────────────────────────────────
-    const failed = results.filter((r) => !r.ok);
+    const ran = results.filter((r) => !r.skipped);
+    const failed = ran.filter((r) => !r.ok);
+    const code = (t) => '`' + String(t).replace(/`/g, "'") + '`';
     const lines = [
         `# 화면 점검 결과`,
         ``,
         `- 대상: ${BASE}`,
-        `- 단계: ${results.length - failed.length} / ${results.length} 통과`,
+        `- 단계: ${ran.length - failed.length} / ${ran.length} 통과` + (ran.length < results.length ? ` (ONLY=${ONLY.join('|')}, ${results.length - ran.length}개 건너뜀)` : ''),
         `- 콘솔·서버 오류: ${problems.length}건`,
         ``,
-        ...results.map((r) => `- ${r.ok ? '통과' : '**실패**'} — ${r.name}${r.ok ? '' : ` — \`${r.error}\``}`),
+        ...ran.flatMap((r) => r.ok ? [`- 통과 — ${r.name}`] : [
+            `- **실패** — ${r.name} — ${code(r.error)}`,
+            ...(r.url ? [`  - 주소: ${code(r.url)}`] : []),
+            ...(r.texts && r.texts.length ? [`  - 화면 문구: ${r.texts.map(code).join(' / ')}`] : []),
+            ...(r.screen ? [`  - 화면: [${r.screen}](${r.screen})`] : []),
+        ]),
     ];
-    if (problems.length) lines.push('', '## 콘솔·서버 오류', '', ...problems.map((p) => '- `' + p.replace(/`/g, "'") + '`'));
+    if (problems.length) lines.push('', '## 콘솔·서버 오류', '', ...problems.map((p) => '- ' + code(p)));
+    if (process.env.APP_LOG) {
+        const summary = appLogSummary(process.env.APP_LOG);
+        lines.push('', '## 앱 로그 경고·오류', '', ...(summary.length ? summary : ['- 없음']));
+    }
     fs.writeFileSync(path.join(OUT, 'report.md'), lines.join('\n') + '\n');
 
-    console.log(`\n${results.length - failed.length}/${results.length} passed, ${problems.length} console/server problems`);
+    console.log(`\n${ran.length - failed.length}/${ran.length} passed, ${problems.length} console/server problems`);
     process.exit(failed.length || problems.length ? 1 : 0);
 })().catch((err) => {
     console.error(err);
