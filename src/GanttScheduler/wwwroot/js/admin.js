@@ -174,6 +174,10 @@
                 '<select data-org-part aria-label="파트"' + (isAdmin ? '' : ' disabled') + '></select></div>' +
                 '<input type="hidden" name="orgUnitId" /></div>' +
                 '<label class="check"><input type="checkbox" name="isAdmin"' + (n.isAdmin ? ' checked' : '') + ' />관리자 (기준 정보 변경·과제 삭제)</label>' +
+                // 메일 요약 받는 주소 — 관리자만 보고 정한다(IP 식별이라 본인 입력은 가로채기 위험)
+                (isAdmin ? field('email', '메일 주소 <span class="opt">선택</span>', '<div class="ip-add"><input name="email" type="text" inputmode="email" maxlength="200" autocomplete="off" placeholder="name@company.com" value="' + esc(n.email || '') + '" />' +
+                    '<button type="button" class="btn" data-test-mail>' + icon('mail') + '시험 메일</button></div>') +
+                    '<span class="hint">하루 한 번 받을 메일 요약(읽지 않은 알림, 내 작업의 지연·임박)의 주소입니다. 시험 메일로 메일 서버 설정을 확인할 수 있습니다.</span>' : '') +
                 '<div class="field" data-field="ip"><span class="label">접속 IP</span><ul class="ip-list" data-ips>' + ipItems(n) + '</ul>' +
                 (isAdmin ? '<div class="ip-add"><input name="newIp" maxlength="45" inputmode="decimal" autocomplete="off" placeholder="IP 주소 (예: 10.1.2.3)" aria-label="연결할 IP 주소" />' +
                     '<button type="button" class="btn" data-add-ip>' + icon('plus') + '연결</button></div>' +
@@ -210,6 +214,17 @@
                 OrgPicker.bind(orgs, form.querySelector('[data-org-group]'), form.querySelector('[data-org-part]'),
                     form.elements.orgUnitId, form.querySelector('[data-org-field]'), n.orgUnitId);
                 bindIps(form, sheet, level, id);
+                var test = form.querySelector('[data-test-mail]');
+                if (test) test.addEventListener('click', function () {
+                    App.busy(test, async function () {
+                        sheet.setError(null);       // 앞의 오류(저장 실패 등)를 지우고 이번 결과만 보인다
+                        try {
+                            await App.post(url('TestMail'), { email: form.elements.email.value });
+                            sheet.setError(null);
+                            App.toast(form.elements.email.value.trim() + ' 로 시험 메일을 보냈습니다.');
+                        } catch (err) { sheet.setError(err.message, err.field); }
+                    });
+                });
             },
             onSubmit: async function (form) {
                 var f = form.elements;
@@ -228,7 +243,8 @@
                     orgUnitId: f.orgUnitId && f.orgUnitId.value ? +f.orgUnitId.value : null,
                     isAdmin: f.isAdmin ? f.isAdmin.checked : null,
                     date: f.date ? f.date.value : null,
-                    defaultWorkDays: days === '' ? null : +days
+                    defaultWorkDays: days === '' ? null : +days,
+                    email: f.email ? f.email.value : null
                 });
                 App.toast('저장했습니다.');
             }

@@ -11,7 +11,7 @@ public record MasterNode(
     string? Country = null, int? OceanLeadDays = null, string? Kind = null,
     string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null,
     DateOnly? LastSeen = null, List<UserIpView>? Addresses = null,
-    int? DefaultWorkDays = null, StageLeadHint? Lead = null);
+    int? DefaultWorkDays = null, StageLeadHint? Lead = null, string? Email = null);
 
 // 사용자에 연결된 접속 IP. LastSeen 은 한국 날짜, Current 는 지금 이 화면을 연 기기
 public record UserIpView(string Ip, DateOnly LastSeen, bool Current);
@@ -22,7 +22,7 @@ public record MasterIp(int UserId, string? Ip);
 public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
     string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date,
-    int? DefaultWorkDays = null);
+    int? DefaultWorkDays = null, string? Email = null);
 
 public record MasterRef(string Kind, int Level, int Id, int Dir);
 
@@ -107,7 +107,9 @@ public class MasterService
                         IsAdmin: u.IsAdmin, Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList(),
                         LastSeen: u.Addresses.Count == 0 ? null : KoreaClock.KstDate(u.Addresses.Max(a => a.LastSeenAt)),
                         Addresses: u.Addresses.OrderByDescending(a => a.LastSeenAt)
-                            .Select(a => new UserIpView(a.Ip, KoreaClock.KstDate(a.LastSeenAt), a.Ip == _me.Ip)).ToList()))
+                            .Select(a => new UserIpView(a.Ip, KoreaClock.KstDate(a.LastSeenAt), a.Ip == _me.Ip)).ToList(),
+                        // 메일 주소는 관리자에게만 보인다
+                        Email: _me.IsAdmin ? u.Email : null))
                     .ToList();
 
             default:
@@ -307,6 +309,13 @@ public class MasterService
                 var admin = input.IsAdmin ?? e.IsAdmin;
                 if (e.Id == _me.Id && e.Id != 0 && !admin) throw new RuleException("자기 자신의 관리자 권한은 해제할 수 없습니다.", "isAdmin");
                 e.IsAdmin = admin;
+                // 메일 요약 받는 주소: 관리자만 정한다(IP 로 식별하므로 본인 입력은 남의 알림을 가로챌 수 있다). null 은 그대로, 빈 값은 지움
+                if (input.Email != null)
+                {
+                    var email = input.Email.Trim();
+                    e.Email = email.Length == 0 ? null
+                        : NotifyOptions.NormalizeEmail(email) ?? throw new RuleException("메일 주소를 확인해 주세요. (예: name@company.com)", "email");
+                }
                 break;
             }
 

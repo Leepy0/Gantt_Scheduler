@@ -25,7 +25,8 @@ public record WorkInput(
     int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null,
     List<LinkInput>? Links = null);
 
-public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text);
+// Mentions: 알릴 사람(사용자 Id). 이름은 공백이 있을 수 있어 본문을 파싱하지 않고 화면이 목록에서 고른 Id 를 보낸다
+public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text, List<int>? Mentions = null);
 
 public record CheckInput(int StageId, int? Id, string? Text);
 
@@ -63,16 +64,21 @@ public partial class ProjectService
     private readonly IClock _clock;
     private readonly CurrentUser _me;
     private readonly UserService _users;
+    private readonly ActivityLog _log;
+    private readonly CommentOptions _comments;
     private WorkCalendar? _calendar;
     private List<Holiday>? _holidays;
     private LocationIndex? _locations;
 
-    public ProjectService(AppDb db, IClock clock, CurrentUser me, UserService users)
+    // log: 활동을 만들고 알림을 계산하는 요청 범위의 기록(첨부 서비스와 같은 것을 쓴다). 시험처럼 따로 만들 때는 비워 두면 새로 만든다
+    public ProjectService(AppDb db, IClock clock, CurrentUser me, UserService users, ActivityLog? log = null, CommentOptions? comments = null)
     {
         _db = db;
         _clock = clock;
         _me = me;
         _users = users;
+        _log = log ?? new ActivityLog(db, clock, me);
+        _comments = comments ?? CommentOptions.Default;
     }
 
     // ── 조회 ─────────────────────────────────────────────────────────────
@@ -139,7 +145,8 @@ public partial class ProjectService
 
     // 상세 화면 데이터. 저장 직후 응답에도 쓰므로 추적하지 않고 DB 에서 새로 읽는다(변경에 쓴 추적 그래프를 다시 쓰지 않는다).
     // activityLimit: 싣는 최근 활동 수 — null 이면 전부(Excel 내보내기)
-    public async Task<ProjectView?> ViewAsync(int id, int? activityLimit = ActivityPageSize)
+    // since: 이 시각 뒤에 다른 사람이 남긴 활동을 '새 활동'으로 표시한다(상세를 열 때 — OpenAsync)
+    public async Task<ProjectView?> ViewAsync(int id, int? activityLimit = ActivityPageSize, DateTime? since = null)
     {
         var p = await LoadAsync(id);
         if (p == null) return null;
@@ -149,7 +156,7 @@ public partial class ProjectService
         var acts = _db.Activities.AsNoTracking().Where(a => a.ProjectId == id);
         var total = await acts.CountAsync();
         var targetChanges = await acts.CountAsync(a => a.Type == ActivityType.TargetChanged);
-        var recent = await ActivityRowsAsync(acts, activityLimit);
+        var recent = await DecorateAsync(id, await ActivityRowsAsync(acts, activityLimit), since);
         // 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서비스의 검사와 같은 판정(Rules.CanDelete…)을 지금 사용자로 계산해 싣는다
         var userId = _me.User?.Id;
         var files = p.Attachments.ToDictionary(a => a.Id);
@@ -167,12 +174,14 @@ public partial class ProjectService
     }
 
     // 활동 나눠 받기: 최근 순(At, Id 내림차순)으로 beforeId 다음부터 take 건. workId 를 주면 그 작업의 활동만(작업 시트의 진행 내용).
-    // 과제가 없으면 null. 화면의 '더 보기'와 작업 시트가 쓴다 — 필터(종류 등)를 더할 때도 이 조회에 조건만 붙인다
-    public async Task<ActivityPage?> ActivitiesAsync(int projectId, int? beforeId = null, int? workId = null, int take = ActivityPageSize)
+    // 과제가 없으면 null. 화면의 '더 보기'와 작업 시트가 쓴다. filter: 활동 탭의 종류·단계·검색, since: '새 활동' 표시 기준
+    public async Task<ActivityPage?> ActivitiesAsync(int projectId, int? beforeId = null, int? workId = null, int take = ActivityPageSize,
+                                                     ActivityFilter? filter = null, DateTime? since = null)
     {
         take = Math.Clamp(take, 1, ActivityPageMax);
         var q = _db.Activities.AsNoTracking().Where(a => a.ProjectId == projectId);
         if (workId != null) q = q.Where(a => a.WorkItemId == workId);
+        q = ApplyFilter(q, filter);
         if (beforeId != null)
         {
             // 커서: 그 활동보다 뒤(오래된) 것. 시각이 같으면 Id 로 가른다 — 한 번에 남긴 활동(같은 시각)이 쪽 경계에서 빠지거나 겹치지 않게
@@ -181,10 +190,10 @@ public partial class ProjectService
             if (cursor == null) return await _db.Projects.AnyAsync(p => p.Id == projectId) ? new ActivityPage(new(), false) : null;
             q = q.Where(a => a.At < cursor.At || (a.At == cursor.At && a.Id < cursor.Id));
         }
-        var rows = await ActivityRowsAsync(q, take + 1);
+        var rows = await FilteredRowsAsync(q, filter, take + 1);
         if (rows.Count == 0 && beforeId == null && !await _db.Projects.AnyAsync(p => p.Id == projectId)) return null;
         var more = rows.Count > take;
-        return new ActivityPage(more ? rows.Take(take).ToList() : rows, more);
+        return new ActivityPage(await DecorateAsync(projectId, more ? rows.Take(take).ToList() : rows, since), more);
     }
 
     // 활동 행을 화면 모델로 (필요한 열만 읽는다 — 과제·사용자 엔티티를 통째로 만들지 않는다)
@@ -192,9 +201,16 @@ public partial class ProjectService
     {
         var ordered = q.OrderByDescending(a => a.At).ThenByDescending(a => a.Id);
         var rows = await (take == null ? ordered : ordered.Take(take.Value))
-            .Select(a => new { a.Id, a.Type, a.Text, a.Reason, User = a.User!.Name, a.At, a.StageId, a.WorkItemId })
+            .Select(a => new { a.Id, a.Type, a.Text, a.Reason, User = a.User!.Name, a.At, a.StageId, a.WorkItemId, a.UserId, a.EditedAt, a.DeletedAt, a.NewValue })
             .ToListAsync();
-        return rows.Select(a => new ActivityView(a.Id, Views.Key(a.Type), a.Text, a.Reason, a.User ?? "", a.At, a.StageId, a.WorkItemId)).ToList();
+        return rows.Select(a => new ActivityView(a.Id, Views.Key(a.Type), a.Text, a.Reason, a.User ?? "", a.At, a.StageId, a.WorkItemId)
+        {
+            Kind = Reporting.KindOf(a.Type),
+            UserId = a.UserId,
+            EditedAt = a.EditedAt,
+            Deleted = a.DeletedAt != null,
+            Ref = a.Type == ActivityType.CommentChanged && int.TryParse(a.NewValue, out var target) ? target : null,
+        }).ToList();
     }
 
     // 과제가 마지막으로 바뀐 시각만 읽는다. 열려 있는 상세 화면이 1분마다 물어 다른 사람의 변경을 알아챈다(없으면 null)
@@ -320,7 +336,12 @@ public partial class ProjectService
         if (before != ItemsSignature(p)) changed.Add(kind == CategoryKind.Container ? "용기 내역" : "기기 내역");
 
         if (changed.Count > 0)
-            p.Activities.Add(NewActivity(ActivityType.Edited, "과제 정보 수정: " + string.Join(", ", changed)));
+        {
+            var edited = NewActivity(ActivityType.Edited, "과제 정보 수정: " + string.Join(", ", changed));
+            p.Activities.Add(edited);
+            // 새 담당자에게도 알린다(이전 담당자는 저장 전 과제 담당으로 받는다)
+            _log.Involve(edited, owner?.Id, NotifyKinds.Project);
+        }
         p.Version++;
         Touch(p);
         await _db.SaveChangesAsync();
@@ -701,7 +722,9 @@ public partial class ProjectService
         await RemoveStageLinksAsync(p, new[] { s.Id }, removedProject: false);
         p.Stages.Remove(s);
         _db.Stages.Remove(s);
-        p.Activities.Add(NewActivity(ActivityType.StageRemoved, works > 0 ? $"단계 삭제: {s.Name} (작업 {works}건 포함)" : $"단계 삭제: {s.Name}"));
+        var removed = NewActivity(ActivityType.StageRemoved, works > 0 ? $"단계 삭제: {s.Name} (작업 {works}건 포함)" : $"단계 삭제: {s.Name}");
+        p.Activities.Add(removed);
+        foreach (var w in s.Works) InvolveOwners(removed, w.OwnerId, w.CoOwnerId);
         SyncState(p);
         Touch(p);
         await _db.SaveChangesAsync();
@@ -830,7 +853,9 @@ public partial class ProjectService
             };
             linkChanges = ApplyLinks(p, w, all, wanted);
             stage.Works.Add(w);
-            p.Activities.Add(NewActivity(ActivityType.WorkAdded, $"[{stage.Name}] 작업 추가: {title}", stageId: stage.Id));
+            var added = NewActivity(ActivityType.WorkAdded, $"[{stage.Name}] 작업 추가: {title}", stageId: stage.Id);
+            p.Activities.Add(added);
+            InvolveOwners(added, owner?.Id, coOwner?.Id);
             foreach (var text in linkChanges)
                 p.Activities.Add(NewActivity(ActivityType.LinkChanged, $"[{title}] {text}", stageId: stage.Id));
         }
@@ -879,7 +904,12 @@ public partial class ProjectService
             linkChanges = ApplyLinks(p, w, all, wanted);
 
             if (changed.Count > 0)
-                p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id));
+            {
+                var edited = NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
+                p.Activities.Add(edited);
+                // 이번에 맡게 된 사람 — 저장 전 담당(이전 담당자)은 작업으로 찾아 알린다
+                InvolveOwners(edited, w.OwnerId, w.CoOwnerId);
+            }
             foreach (var text in linkChanges)
                 p.Activities.Add(NewActivity(ActivityType.LinkChanged, $"[{title}] {text}", stageId: stage.Id, workId: w.Id));
             w.Version++;
@@ -1066,7 +1096,9 @@ public partial class ProjectService
         RemoveLinksOf(p, new HashSet<int> { w.Id });
         stage.Works.Remove(w);
         _db.WorkItems.Remove(w);
-        p.Activities.Add(NewActivity(ActivityType.WorkRemoved, $"[{stage.Name}] 작업 삭제: {w.Title}", stageId: stage.Id));
+        var removed = NewActivity(ActivityType.WorkRemoved, $"[{stage.Name}] 작업 삭제: {w.Title}", stageId: stage.Id);
+        p.Activities.Add(removed);
+        InvolveOwners(removed, w.OwnerId, w.CoOwnerId);
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
@@ -1080,7 +1112,14 @@ public partial class ProjectService
         var text = Text(input.Text, 1000, "내용", "text", required: true)!;
         var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
-        p.Activities.Add(NewActivity(ActivityType.Comment, text, stageId: input.StageId, workId: input.WorkId));
+        var mentions = await ValidateMentionsAsync(input.Mentions);
+        var comment = NewActivity(ActivityType.Comment, text, stageId: input.StageId, workId: input.WorkId);
+        foreach (var userId in mentions)
+        {
+            comment.Mentions.Add(new ActivityMention { UserId = userId });
+            _log.Involve(comment, userId, NotifyKinds.Mention);
+        }
+        p.Activities.Add(comment);
         Touch(p);
         await _db.SaveChangesAsync();
     }
@@ -1111,20 +1150,10 @@ public partial class ProjectService
         }
     }
 
+    // 활동은 모두 ActivityLog 한 곳에서 만든다(누가·언제, 그리고 저장할 때 알림을 함께 계산한다)
     public Activity NewActivity(ActivityType type, string text, string? reason = null, int? stageId = null, int? workId = null,
-                                string? oldValue = null, string? newValue = null, Guid? batch = null) => new()
-    {
-        Type = type,
-        Text = text.Length > 1000 ? text[..1000] : text,
-        Reason = reason,
-        StageId = stageId,
-        WorkItemId = workId,
-        OldValue = oldValue,
-        NewValue = newValue,
-        BatchId = batch,
-        UserId = _me.Id,
-        At = _clock.UtcNow,
-    };
+                                string? oldValue = null, string? newValue = null, Guid? batch = null) =>
+        _log.New(type, text, reason, stageId, workId, oldValue, newValue, batch);
 
     public static string Fmt(DateOnly? d) => d == null ? "미정" : d.Value.ToString("yyyy-MM-dd");
 

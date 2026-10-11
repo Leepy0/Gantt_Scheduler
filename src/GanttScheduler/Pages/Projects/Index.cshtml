@@ -66,7 +66,7 @@
 else
 {
     <section class="card flush">
-        <div class="ptable" role="table" aria-label="과제 목록">
+        <div class="ptable watchable" role="table" aria-label="과제 목록">
             <div class="ptable-head" role="row">
                 <span role="columnheader">과제</span>
                 <span role="columnheader">위치</span>
@@ -78,10 +78,16 @@ else
             </div>
             @foreach (var p in Model.Rows)
             {
+                var fresh = Model.NewCounts.GetValueOrDefault(p.Id);
+                var watched = Model.Watched.Contains(p.Id);
+                @* 관심 과제 별은 행 링크 밖에 둔다(링크 안의 단추는 쓸 수 없다) — collab.js 가 누름을 처리한다 *@
+                <div class="prow">
+                <button type="button" class="btn icon small watch" data-watch="@p.Id" data-title="@p.Title" aria-pressed="@(watched ? "true" : "false")"
+                        aria-label="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기") — @p.Title" title="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기")"><svg class="ic"><use href="#i-star" /></svg></button>
                 <a class="ptable-row" role="row" asp-page="/Projects/Detail" asp-route-id="@p.Id">
                     <span class="c-title" role="cell">
                         <span class="row-title">@p.Title</span>
-                        <span class="row-sub">@p.Category</span>
+                        <span class="row-sub">@p.Category@if (fresh > 0) {<text> · </text><span class="new-count" title="마지막으로 본 뒤 다른 사람이 남긴 활동">새 활동 @fresh</span>}</span>
                     </span>
                     <span class="c-loc" role="cell">
                         <span>@p.Corporation</span>
@@ -106,6 +112,7 @@ else
                     <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
                     <span class="c-state" role="cell"><partial name="_StatusChip" model="p.Chip" /></span>
                 </a>
+                </div>
             }
         </div>
     </section>

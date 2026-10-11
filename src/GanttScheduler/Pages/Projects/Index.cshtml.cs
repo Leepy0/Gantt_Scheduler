@@ -33,6 +33,9 @@ public class IndexModel : PageModel
     [BindProperty(SupportsGet = true)] public bool Mine { get; set; }
 
     public List<ProjectView> Rows { get; private set; } = new();
+    // 과제별 '새 활동' 수(다른 사람이 마지막 방문 뒤에 남긴 것)와 내 관심 과제 — 한 번씩만 읽는다
+    public Dictionary<int, int> NewCounts { get; private set; } = new();
+    public HashSet<int> Watched { get; private set; } = new();
     public List<Category> Categories { get; private set; } = new();
     public List<Location> Corporations { get; private set; } = new();
     public DateOnly Today { get; private set; }
@@ -52,6 +55,8 @@ public class IndexModel : PageModel
         // 위치는 목록 계산(ListAsync)이 읽는 것을 같이 쓴다 (요청 안에서 한 번만 읽기)
         Corporations = (await _projects.LocationsAsync()).All.Where(l => l.Level == 1).OrderBy(l => l.SortOrder).ThenBy(l => l.Id).ToList();
         Rows = await _dash.ListAsync(Filter());
+        NewCounts = await _projects.NewCountsAsync();
+        Watched = await _projects.WatchedIdsAsync();
     }
 
     public async Task<IActionResult> OnGetExcelAsync()

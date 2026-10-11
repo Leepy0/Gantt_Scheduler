@@ -31,6 +31,29 @@ public class AppDb : DbContext
     public DbSet<WorkLink> WorkLinks => Set<WorkLink>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<StageLink> StageLinks => Set<StageLink>();
+    public DbSet<ProjectVisit> ProjectVisits => Set<ProjectVisit>();
+    public DbSet<ProjectWatch> ProjectWatches => Set<ProjectWatch>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<ActivityMention> ActivityMentions => Set<ActivityMention>();
+
+    // 저장 직전·직후에 끼어드는 일 — 요청 범위의 활동 기록(Services/Notifications.cs 의 ActivityLog)이 등록해,
+    // 활동과 그 알림을 같은 SaveChanges 로 저장한다. 어느 서비스가 저장하든 빠지지 않게 저장 한 곳에서 부른다
+    private readonly List<ISaveHook> _hooks = new();
+
+    public void AddSaveHook(ISaveHook hook)
+    {
+        if (!_hooks.Contains(hook)) _hooks.Add(hook);
+    }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var h in _hooks) await h.BeforeSaveAsync(cancellationToken);
+        var n = await base.SaveChangesAsync(cancellationToken);
+        // 저장 뒤에야 Id 가 정해지는 것(새 과제의 활동)은 한 번 더 저장한다
+        foreach (var h in _hooks)
+            if (await h.AfterSaveAsync(cancellationToken)) n += await base.SaveChangesAsync(cancellationToken);
+        return n;
+    }
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -47,6 +70,7 @@ public class AppDb : DbContext
         {
             e.ToTable("Users");
             e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Email).HasMaxLength(200);
             e.HasIndex(x => x.Name).IsUnique();
             e.HasOne(x => x.OrgUnit).WithMany().HasForeignKey(x => x.OrgUnitId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -183,7 +207,8 @@ public class AppDb : DbContext
             e.Property(x => x.Type).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.Text).HasMaxLength(1000).IsRequired();
             e.Property(x => x.Reason).HasMaxLength(500);
-            e.Property(x => x.OldValue).HasMaxLength(100);
+            // 댓글을 고치면 첫 원문(최대 1000자)을 OldValue 에 남긴다
+            e.Property(x => x.OldValue).HasMaxLength(1000);
             e.Property(x => x.NewValue).HasMaxLength(100);
             e.HasOne(x => x.Project).WithMany(p => p.Activities).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
@@ -202,7 +227,52 @@ public class AppDb : DbContext
             e.HasIndex(x => new { x.PredecessorStageId, x.SuccessorStageId }).IsUnique();
             e.HasIndex(x => x.SuccessorStageId);
         });
+
+        // ── 협업·새 소식·알림 ──
+        // 사용자 FK 는 모두 Restrict(사용자는 지우지 않고 사용 중지한다). 과제·활동 쪽만 cascade 로 함께 지운다
+        b.Entity<ProjectVisit>(e =>
+        {
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.UserId, x.ProjectId }).IsUnique();
+        });
+
+        b.Entity<ProjectWatch>(e =>
+        {
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.UserId, x.ProjectId }).IsUnique();
+        });
+
+        b.Entity<Notification>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Key).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            // 과제 → 활동 → 알림 한 길로만 cascade 한다(과제로 바로 잇는 FK 를 두면 SQL Server 가 두 경로를 거절한다)
+            e.HasOne(x => x.Activity).WithMany().HasForeignKey(x => x.ActivityId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.Key).IsUnique();
+            // 읽지 않은 수(헤더 종, 1분마다)와 최근 순 목록
+            e.HasIndex(x => new { x.UserId, x.ReadAt });
+            e.HasIndex(x => new { x.UserId, x.CreatedAt });
+        });
+
+        b.Entity<ActivityMention>(e =>
+        {
+            e.HasOne(x => x.Activity).WithMany(a => a.Mentions).HasForeignKey(x => x.ActivityId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.ActivityId, x.UserId }).IsUnique();
+        });
     }
+}
+
+// 저장 직전·직후에 할 일 (AppDb.SaveChangesAsync 가 부른다)
+public interface ISaveHook
+{
+    Task BeforeSaveAsync(CancellationToken ct);
+    // true 면 바뀐 것이 있어 한 번 더 저장한다
+    Task<bool> AfterSaveAsync(CancellationToken ct);
 }
 
 public class UtcDateTimeConverter : ValueConverter<DateTime, DateTime>

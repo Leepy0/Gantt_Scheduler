@@ -102,6 +102,7 @@ public class OpsChecks
             await HolidaysAsync(ct),
             LastBackup(),
             SetupCheck(setup),
+            Mail(),
         };
         var st = UpdateStatus;
         var target = _backups.Target;
@@ -115,6 +116,26 @@ public class OpsChecks
     public async Task<List<CheckResult>> ReadyAsync(CancellationToken ct) => new() { await DbRoundTripAsync(ct), Disk() };
 
     // ── 개별 점검 ─────────────────────────────────────────────────────
+
+    // 메일 요약(Notify:*): 꺼져 있으면 그렇다고만 알리고, 켜져 있으면 메일 서버 설정과 마지막 요약 결과(App_Data/notify.json)를 본다
+    public CheckResult Mail()
+    {
+        const string name = "메일 요약";
+        var o = NotifyOptions.From(_cfg);
+        if (!o.Enabled)
+            return new CheckResult("mail", name, CheckLevel.Ok, "꺼짐 — 알림은 화면의 종에서만 봅니다." + (o.Smtp.Configured ? " (메일 서버는 설정됨)" : ""));
+        if (!o.Smtp.Configured)
+            return new CheckResult("mail", name, CheckLevel.Warn, "Notify:Enabled 가 켜져 있는데 메일 서버(Notify:Smtp:Host·From)가 비어 있습니다.",
+                "appsettings 의 Notify:Smtp 를 채우고 서버를 다시 시작하세요.");
+        var last = NotifyState.Load(AppPaths.Notify(_cfg, Root));
+        var where = $"{o.Smtp.Host}:{o.Smtp.Port} · 근무일 {o.DailyHour}시(한국 시간)";
+        if (last == null) return new CheckResult("mail", name, CheckLevel.Ok, where + " — 아직 보낸 적 없음", null, "/Admin");
+        if (last.Failed > 0)
+            return new CheckResult("mail", name, CheckLevel.Warn,
+                $"{last.Date:MM-dd} 요약에서 {last.Failed}명에게 보내지 못했습니다: " + Redact.Secrets(last.Error ?? ""),
+                "관리 > 사용자에서 시험 메일로 메일 서버 설정을 확인하세요.", "/Admin");
+        return new CheckResult("mail", name, CheckLevel.Ok, $"{where} — 마지막 {last.Date:MM-dd} {last.Sent}명에게 보냄");
+    }
     public async Task<CheckResult> DbRoundTripAsync(CancellationToken ct)
     {
         const string name = "DB 연결";

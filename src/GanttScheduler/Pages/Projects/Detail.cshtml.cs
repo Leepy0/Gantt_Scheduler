@@ -31,22 +31,31 @@ public class DetailModel : PageModel
     public record StateInput(int ProjectId, string? State, string? Reason, int? Version);
     public record ToggleInput(int Id, bool Done);
     public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
+    public record WatchInput(int ProjectId, bool On);
 
     public ProjectView Project { get; private set; } = null!;
     public string DataJson { get; private set; } = "{}";
+    public bool Watched { get; private set; }
 
     public async Task<IActionResult> OnGetAsync(int id)
     {
-        var view = await _projects.ViewAsync(id);
-        if (view == null) return NotFound();
+        // 상세를 열면 마지막으로 본 시각이 바뀐다 — 그 전 시각(since) 뒤의 남의 활동을 '새 활동'으로 표시한다
+        var opened = await _projects.OpenAsync(id);
+        if (opened is not var (view, since, watched)) return NotFound();
         Project = view;
+        Watched = watched;
+        // 담당자 자동완성(이름)과 알릴 사람 고르기(Id·이름)는 같은 목록이다 — 한 번만 읽는다
+        var people = await _projects.PeopleAsync();
         DataJson = AppJson.Serialize(new
         {
             project = view,
             today = _clock.Today,
             holidays = await _projects.HolidaysAsync(),
-            users = await _projects.UserNamesAsync(),
-            me = new { name = _me.Name, isAdmin = _me.IsAdmin },
+            users = people.Select(u => u.Name),
+            people,
+            me = new { id = _me.Id, name = _me.Name, isAdmin = _me.IsAdmin },
+            seen = new { since, count = view.Activities?.Count(a => a.New) ?? 0 },
+            kinds = Reporting.Kinds.Select(k => new { key = k.Key, label = k.Label }),
             upload = new { maxBytes = AttachmentService.MaxBytes, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
         });
         return Page();
@@ -60,9 +69,12 @@ public class DetailModel : PageModel
 
     // 활동 나눠 받기: 활동 탭의 '더 보기'(beforeId = 화면의 마지막 활동)와 작업 시트의 진행 내용(workId).
     // 응답 { ok, activities, more } — more 면 마지막 항목의 id 로 다음 쪽을 묻는다
-    public async Task<IActionResult> OnGetActivitiesAsync(int id, int? beforeId, int? workId, int take = ProjectService.ActivityPageSize)
+    // 활동 탭의 조건(kind·stageId·q)이 있으면 그 조건으로 나눠 받는다. since: 화면을 연 때의 '새 활동' 기준(표시용)
+    public async Task<IActionResult> OnGetActivitiesAsync(int id, int? beforeId, int? workId, int take = ProjectService.ActivityPageSize,
+                                                          string? kind = null, int? stageId = null, string? q = null, DateTime? since = null)
     {
-        var page = await _projects.ActivitiesAsync(id, beforeId, workId, take);
+        var filter = kind == null && stageId == null && string.IsNullOrWhiteSpace(q) ? null : new ActivityFilter(kind, stageId, q);
+        var page = await _projects.ActivitiesAsync(id, beforeId, workId, take, filter, since?.ToUniversalTime());
         return page == null ? Missing() : new JsonResult(new { ok = true, activities = page.Items, more = page.More });
     }
 
@@ -196,6 +208,26 @@ public class DetailModel : PageModel
 
     public Task<IActionResult> OnPostCommentAsync([FromBody] CommentInput input) =>
         Run(input.ProjectId, async () => { await _projects.CommentAsync(input); return input.ProjectId; });
+
+    // 댓글 고치기·지우기 (작성자만, Comments:EditHours 안에 — 서비스가 검사한다)
+    public Task<IActionResult> OnPostEditCommentAsync([FromBody] CommentEditInput input) =>
+        Run(null, () => _projects.EditCommentAsync(input));
+
+    public Task<IActionResult> OnPostDeleteCommentAsync([FromBody] IdInput input) =>
+        Run(null, () => _projects.DeleteCommentAsync(input.Id));
+
+    // 관심 과제 별 (상세·목록·내 할 일 공용). 개인 설정이라 과제를 다시 보내지 않는다
+    public async Task<IActionResult> OnPostWatchAsync([FromBody] WatchInput input)
+    {
+        try
+        {
+            return new JsonResult(new { ok = true, watched = await _projects.WatchAsync(input.ProjectId, input.On) });
+        }
+        catch (RuleException ex)
+        {
+            return Fail(ex);
+        }
+    }
 
     public Task<IActionResult> OnPostStateAsync([FromBody] StateInput input) =>
         Run(input.ProjectId, async () =>

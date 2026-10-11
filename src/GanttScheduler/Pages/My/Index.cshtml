@@ -12,8 +12,32 @@
     <span class="count">@total</span>
     <span class="muted">@Model.Name 님이 담당인 미완료 작업</span>
     <span class="spacer"></span>
+    <a class="btn" asp-page="/My/Notifications"><svg class="ic"><use href="#i-bell" /></svg>알림</a>
     <button type="button" class="btn no-print" data-print><svg class="ic"><use href="#i-print" /></svg><span class="hide-sm">인쇄</span></button>
 </div>
+
+@* 새 소식: 내 작업·내 과제·관심 과제·나를 고른 댓글에 다른 사람이 남긴 활동 (그 과제를 마지막으로 본 뒤, 최근 @Rules.NewActivityDays 일).
+   자동 밀기·연쇄 이동으로 내 작업 일정이 바뀐 것도 나온다. 누르면 과제 상세의 그 활동으로 간다 *@
+@if (Model.News.Count > 0)
+{
+    <section class="card" id="news">
+        <header class="card-head"><h2>새 소식</h2><span class="count">@Model.News.Count</span><span class="muted">마지막으로 본 뒤 다른 사람이 남긴 활동</span></header>
+        <ul class="rows">
+            @foreach (var n in Model.News)
+            {
+                <li>
+                    <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@n.ProjectId" asp-fragment="@("a" + n.ActivityId)">
+                        <span class="row-main">
+                            <span class="row-title">@(n.Type == "comment" ? "댓글: " + n.Text : n.Text)</span>
+                            <span class="row-sub">@n.Project · @n.User · <time datetime="@DateTime.SpecifyKind(n.At, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ssZ")">@KoreaClock.ToKst(n.At).ToString("MM-dd HH:mm")</time></span>
+                        </span>
+                        <span class="chip @(n.Why == NotifyKinds.Mention ? "accent" : "")">@n.WhyLabel</span>
+                    </a>
+                </li>
+            }
+        </ul>
+    </section>
+}
 
 @functions {
     // 작업 한 줄: 누르면 과제 상세에서 해당 작업 편집 창이 열린다
@@ -93,4 +117,27 @@ else
             </ul>
         </section>
     }
+}
+
+@* 관심 과제: 담당이 아니어도 새 소식·알림을 받는 과제. 별을 다시 누르면 뺀다 *@
+@if (Model.Watched.Count > 0)
+{
+    <section class="card" id="watched">
+        <header class="card-head"><h2>관심 과제</h2><span class="count">@Model.Watched.Count</span></header>
+        <ul class="rows watch-list">
+            @foreach (var w in Model.Watched)
+            {
+                <li>
+                    <button type="button" class="btn icon small watch" data-watch="@w.Id" data-title="@w.Title" aria-pressed="true" aria-label="관심 과제에서 빼기 — @w.Title" title="관심 과제에서 빼기"><svg class="ic"><use href="#i-star" /></svg></button>
+                    <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@w.Id">
+                        <span class="row-main">
+                            <span class="row-title">@w.Title</span>
+                            @if (w.NewCount > 0) {<span class="row-sub new-count">새 활동 @w.NewCount</span>}
+                        </span>
+                        <partial name="_StatusChip" model="w.Chip" />
+                    </a>
+                </li>
+            }
+        </ul>
+    </section>
 }

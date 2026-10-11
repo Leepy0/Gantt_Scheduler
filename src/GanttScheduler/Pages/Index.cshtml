@@ -61,7 +61,7 @@
                         <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@p.Id">
                             <span class="row-main">
                                 <span class="row-title">@p.Title</span>
-                                <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner</span>
+                                <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner@if (Model.NewCounts.GetValueOrDefault(p.Id) is > 0 and var n) {<text> · </text><span class="new-count">새 활동 @n</span>}</span>
                             </span>
                             <partial name="_StatusChip" model="p.Chip" />
                         </a>
@@ -86,7 +86,7 @@
                         <a class="row-link" asp-page="/Projects/Detail" asp-route-id="@u.ProjectId">
                             <span class="row-main">
                                 <span class="row-title">@u.Project</span>
-                                <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")</span>
+                                <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")@if (Model.NewCounts.GetValueOrDefault(u.ProjectId) is > 0 and var n) {<text> · </text><span class="new-count">새 활동 @n</span>}</span>
                             </span>
                             <partial name="_StatusChip" model="u.Chip" />
                         </a>

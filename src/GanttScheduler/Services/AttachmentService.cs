@@ -25,13 +25,16 @@ public class AttachmentService
     private readonly IClock _clock;
     private readonly CurrentUser _me;
     private readonly string _root;
+    private readonly ActivityLog _log;
 
-    public AttachmentService(AppDb db, IClock clock, CurrentUser me, IConfiguration cfg, IHostEnvironment env)
+    // log: 활동은 과제 서비스와 같은 기록(ActivityLog)을 거친다 — 첨부 활동에도 알림이 빠지지 않게
+    public AttachmentService(AppDb db, IClock clock, CurrentUser me, IConfiguration cfg, IHostEnvironment env, ActivityLog? log = null)
     {
         _db = db;
         _clock = clock;
         _me = me;
         _root = AppPaths.Uploads(cfg, env.ContentRootPath);
+        _log = log ?? new ActivityLog(db, clock, me);
     }
 
     private string FolderOf(int projectId) => Path.Combine(_root, projectId.ToString());
@@ -63,11 +66,9 @@ public class AttachmentService
             ProjectId = projectId, StageId = stage?.Id, FileName = fileName, StoredName = stored, ContentType = contentType,
             Size = length, UploadedById = _me.Id, UploadedAt = now,
         });
-        _db.Activities.Add(new Activity
-        {
-            ProjectId = projectId, StageId = stage?.Id, Type = ActivityType.AttachmentAdded,
-            Text = (stage == null ? "" : $"[{stage.Name}] ") + $"첨부 추가: {fileName}", UserId = _me.Id, At = now,
-        });
+        var added = _log.New(ActivityType.AttachmentAdded, (stage == null ? "" : $"[{stage.Name}] ") + $"첨부 추가: {fileName}", stageId: stage?.Id);
+        added.ProjectId = projectId;
+        _db.Activities.Add(added);
         project.UpdatedAt = now;
         try
         {
@@ -99,11 +100,9 @@ public class AttachmentService
 
         var now = _clock.UtcNow;
         _db.Attachments.Remove(a);
-        _db.Activities.Add(new Activity
-        {
-            ProjectId = a.ProjectId, StageId = a.StageId, Type = ActivityType.AttachmentRemoved,
-            Text = $"첨부 삭제: {a.FileName}", UserId = _me.Id, At = now,
-        });
+        var removed = _log.New(ActivityType.AttachmentRemoved, $"첨부 삭제: {a.FileName}", stageId: a.StageId);
+        removed.ProjectId = a.ProjectId;
+        _db.Activities.Add(removed);
         if (a.Project != null) a.Project.UpdatedAt = now;
         await _db.SaveChangesAsync();
 

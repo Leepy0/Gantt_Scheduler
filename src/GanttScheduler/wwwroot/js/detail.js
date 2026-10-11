@@ -5,6 +5,9 @@
     var data = App.data();
     var P = data.project;
     var today = data.today;
+    // 알릴 사람으로 고를 수 있는 사람 [{id, name}]과 '새 활동' 기준(상세를 연 때 서버가 정한 since — 마지막으로 본 시각)
+    var people = data.people || [];
+    var seen = data.seen || {};
     var D = App.d, esc = App.esc, icon = App.icon;
 
     var view = App.pref.get('detail.view', '') || (App.isMobile() ? 'list' : 'gantt');
@@ -506,13 +509,36 @@
         return ['edit', ''];
     }
 
+    // 활동 한 줄. id="a{활동 Id}" 로 딥링크(#a123 — 알림·변경 이력에서 들어옴)를 받는다.
+    // 새 활동(서버가 표시 — 마지막으로 본 뒤 다른 사람이 남김)·고친 댓글·지운 댓글·알릴 사람·고치기 단추를 함께 그린다
     function feedItem(a) {
         var ic = feedIcon(a.type);
-        return '<li><span class="feed-ic ' + ic[1] + '">' + icon(ic[0]) + '</span><div>' +
-            '<div class="feed-text">' + esc(a.text) + '</div>' +
+        var stage = a.stageId ? stageById(a.stageId) : null;
+        var text = a.deleted
+            ? '<div class="feed-text muted">' + icon('trash') + esc(a.text) + '</div>'
+            : '<div class="feed-text">' + esc(a.text) + '</div>';
+        var mentions = (a.mentions || []).length
+            ? '<div class="feed-mentions">' + a.mentions.map(function (m) { return '<span class="chip accent mention-chip">@' + esc(m.name) + '</span>'; }).join('') + '</div>'
+            : '';
+        var target = a.ref ? ' · <a href="#a' + a.ref + '" data-goto="' + a.ref + '">해당 댓글 보기</a>' : '';
+        var edited = a.editedAt && !a.deleted ? ' · <span class="edited" title="' + esc(App.timeFull(a.editedAt)) + ' 에 고침">(수정됨)</span>' : '';
+        var actions = a.canEdit
+            ? '<span class="feed-actions no-print"><button type="button" class="btn small ghost" data-edit-comment="' + a.id + '">' + icon('edit') + '고치기</button>' +
+              '<button type="button" class="btn small ghost" data-delete-comment="' + a.id + '">' + icon('trash') + '지우기</button></span>'
+            : '';
+        return '<li id="a' + a.id + '"' + (newIds[a.id] ? ' class="new"' : '') + '><span class="feed-ic ' + ic[1] + '">' + icon(ic[0]) + '</span><div>' +
+            text + mentions +
             (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
-            '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></div></li>';
+            '<div class="feed-meta">' + (newIds[a.id] ? '<span class="chip accent new-chip">새</span> ' : '') + esc(a.user) + ' · ' + App.timeTag(a.at) +
+            (stage ? ' · ' + esc(stage.name) : '') + edited + target + actions + '</div></div></li>';
     }
+
+    // 새 활동 표시는 상세를 연 때 서버가 정한다(a.new). 그 뒤의 변경 응답은 표시 없이 오므로 처음 본 표시를 기억해 둔다
+    var newIds = {};
+    function takeNew(list) {
+        (list || []).forEach(function (a) { if (a.new) newIds[a.id] = true; });
+    }
+    takeNew(P.activities);
 
     // 활동은 서버가 최근 것만 싣는다(P.activities, 전체 건수 P.activityTotal). 나머지는 '더 보기'로 나눠 받는다.
     // 화면에 쌓인 목록(feedItems)은 최근부터 빈틈없이 이어진다 — 변경 응답이 새 최근 목록을 주면 합쳐서, 더 받아 둔 옛 활동을 잃지 않는다
@@ -548,23 +574,109 @@
         mergeActivities(list);
     }
 
+    // 활동 탭의 조건(종류·단계·검색). 조건이 있으면 그 조건으로 서버에서 따로 나눠 받아(filtered) 그리고, 없으면 쌓아 둔 최근 목록을 그린다
+    var feedFilter = { kind: '', stageId: '', q: '' };
+    var filtered = { items: [], end: false, gen: 0, stamp: null, loading: false };
+    function filtering() { return !!(feedFilter.kind || feedFilter.stageId || feedFilter.q); }
+
     function renderFeed() {
         mergeRecent(P.activities);
         var total = Math.max(P.activityTotal || 0, feedItems.length);
         $('activity-count').textContent = total ? String(total) : '';
-        $('feed').innerHTML = feedItems.length ? feedItems.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        var fresh = feedItems.filter(function (a) { return newIds[a.id]; }).length;
+        $('activity-new').textContent = fresh ? '새 ' + fresh : '';
+        renderStageFilter();
+        if (filtering()) {
+            // 조건을 건 동안 과제가 바뀌었으면(내 저장·새로 고침) 조건 목록도 다시 받는다
+            if (filtered.stamp !== P.updatedAt && !filtered.loading) { loadFiltered(); return; }
+            $('feed').innerHTML = filtered.items.length ? filtered.items.map(feedItem).join('')
+                : '<li><span></span><p class="muted">' + (filtered.loading ? '불러오는 중…' : '조건에 맞는 활동이 없습니다.') + '</p></li>';
+            $('feed-more').hidden = filtered.end || !filtered.items.length;
+            $('feed-status').textContent = filtered.loading ? '' : '조건에 맞는 활동 ' + filtered.items.length + '건' + (filtered.end ? '' : ' 이상');
+            return;
+        }
+        var html = '';
+        var lastNew = -1;
+        feedItems.forEach(function (a, i) { if (newIds[a.id]) lastNew = i; });
+        feedItems.forEach(function (a, i) {
+            html += feedItem(a);
+            // 새 활동(위쪽)과 지난번에 본 활동 사이의 구분선 — 아래로 더 지난 기록이 있을 때만
+            if (i === lastNew && i < feedItems.length - 1) {
+                html += '<li class="feed-divider" role="separator"><span>' + icon('up') + '여기부터 위가 새 활동입니다 (' + fresh + '건 · 지난번에 본 뒤)</span></li>';
+            }
+        });
+        $('feed').innerHTML = html || '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
         var more = !feedEnd && feedItems.length < total;
         $('feed-more').hidden = !more;
         $('feed-status').textContent = total > 0 ? (more ? '최근 ' + feedItems.length + '건 / 전체 ' + total + '건' : '전체 ' + total + '건') : '';
     }
 
-    // 활동 한 쪽 받기 (beforeId 다음부터). workId 를 주면 그 작업의 활동만
-    function fetchActivities(beforeId, workId) {
-        return App.get(detailUrl('Activities') + '&id=' + P.id + (beforeId ? '&beforeId=' + beforeId : '') + (workId ? '&workId=' + workId : ''));
+    // 단계 고르기는 단계가 바뀌면(추가·삭제·이름) 다시 채운다. 고른 단계가 지워졌으면 '단계 전체'로
+    function renderStageFilter() {
+        var sel = $('feed-stage');
+        var html = '<option value="">단계 전체</option>' + P.stages.map(function (s) {
+            return '<option value="' + s.id + '">' + esc(s.name) + '</option>';
+        }).join('');
+        if (sel.dataset.html === html) return;
+        sel.dataset.html = html;
+        sel.innerHTML = html;
+        if (feedFilter.stageId && !stageById(+feedFilter.stageId)) feedFilter.stageId = '';
+        sel.value = feedFilter.stageId;
+    }
+
+    // 활동 한 쪽 받기 (beforeId 다음부터). workId 를 주면 그 작업의 활동만, filter 를 주면 그 조건으로
+    function fetchActivities(beforeId, workId, filter, take) {
+        var url = detailUrl('Activities') + '&id=' + P.id + (beforeId ? '&beforeId=' + beforeId : '') + (workId ? '&workId=' + workId : '') +
+            (take ? '&take=' + take : '') + (seen.since ? '&since=' + encodeURIComponent(seen.since) : '');
+        if (filter) {
+            if (filter.kind) url += '&kind=' + encodeURIComponent(filter.kind);
+            if (filter.stageId) url += '&stageId=' + encodeURIComponent(filter.stageId);
+            if (filter.q) url += '&q=' + encodeURIComponent(filter.q);
+        }
+        return App.get(url).then(function (r) { takeNew(r.activities); return r; });
+    }
+
+    // 조건 목록을 처음부터 받는다. 조건을 바꾸는 사이 늦게 온 옛 응답은 세대(gen)로 버린다
+    async function loadFiltered() {
+        var gen = ++filtered.gen;
+        filtered.loading = true;
+        filtered.items = [];
+        filtered.end = false;
+        filtered.stamp = P.updatedAt;
+        renderFeed();
+        try {
+            var r = await fetchActivities(null, null, feedFilter);
+            if (gen !== filtered.gen) return;
+            filtered.items = r.activities;
+            filtered.end = !r.more;
+        } catch (err) {
+            if (gen !== filtered.gen) return;
+            App.toast(err.message, 'error');
+            filtered.end = true;
+        }
+        filtered.loading = false;
+        renderFeed();
     }
 
     async function moreFeed() {
         var btn = $('feed-more');
+        if (filtering()) {
+            var lastF = filtered.items[filtered.items.length - 1];
+            if (!lastF) return;
+            var fgen = filtered.gen;
+            await App.busy(btn, async function () {
+                try {
+                    var rf = await fetchActivities(lastF.id, null, feedFilter);
+                    if (fgen !== filtered.gen) return;
+                    var known = {};
+                    filtered.items.forEach(function (a) { known[a.id] = true; });
+                    filtered.items = filtered.items.concat(rf.activities.filter(function (a) { return !known[a.id]; }));
+                    filtered.end = !rf.more;
+                    renderFeed();
+                } catch (err) { App.toast(err.message, 'error'); }
+            });
+            return;
+        }
         var last = feedItems[feedItems.length - 1];
         if (!last) return;
         var gen = feedGen;
@@ -579,6 +691,72 @@
                 renderFeed();
             } catch (err) { App.toast(err.message, 'error'); }
         });
+    }
+
+    // #a123: 그 활동을 활동 탭에서 찾아 보여 준다. 받아 둔 목록에 없으면 더 오래된 쪽을 이어 받으며 찾는다(최대 1,000건).
+    // 조건을 걸어 두었으면 풀고 찾는다(조건에 안 맞는 활동일 수 있다)
+    async function goToActivity(id) {
+        selectTab('activity', true);
+        if (filtering()) clearFeedFilter();
+        for (var i = 0; i < 5 && !feedItems.some(function (a) { return a.id === id; }) && !feedEnd && feedItems.length; i++) {
+            var gen = feedGen;
+            try {
+                var r = await fetchActivities(feedItems[feedItems.length - 1].id, null, null, 200);
+                if (gen !== feedGen) continue;
+                mergeActivities(r.activities);
+                if (!r.more) feedEnd = true;
+            } catch (err) { App.toast(err.message, 'error'); break; }
+        }
+        renderFeed();
+        var el = document.getElementById('a' + id);
+        if (!el) { App.toast('활동을 찾지 못했습니다. 지워진 과제의 기록이거나 너무 오래된 기록입니다.', 'error'); return; }
+        document.querySelectorAll('#feed > li.hit').forEach(function (x) { x.classList.remove('hit'); });
+        el.classList.add('hit');
+        el.setAttribute('tabindex', '-1');
+        el.scrollIntoView({ block: 'center' });
+        el.focus({ preventScroll: true });
+    }
+
+    function clearFeedFilter() {
+        feedFilter = { kind: '', stageId: '', q: '' };
+        filtered.gen++;
+        filtered.items = [];
+        filtered.stamp = null;
+        document.querySelectorAll('#feed-filters [data-kind]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.kind === '' ? 'true' : 'false'); });
+        $('feed-stage').value = '';
+        $('feed-q').value = '';
+    }
+
+    // ── 댓글 고치기·지우기 (작성자만, 정해진 시간 안 — 단추는 서버가 정한 a.canEdit 일 때만 보인다) ──
+    function activityById(id) {
+        return feedItems.concat(filtered.items).filter(function (a) { return a.id === id; })[0] || null;
+    }
+
+    function openCommentEdit(a) {
+        var picker = null;
+        App.sheet({
+            title: '댓글 고치기',
+            html: field('text', '내용', '<textarea name="text" rows="4" maxlength="1000" required>' + esc(a.text) + '</textarea>') +
+                '<div data-mentions data-field="mentions"></div>' +
+                '<p class="hint">처음 남긴 글은 기록으로 남고, 목록에는 \'(수정됨)\'이 붙습니다. 새로 고른 사람에게만 알림이 갑니다.</p>',
+            primary: '저장',
+            onOpen: function (form) {
+                picker = Collab.mentions(form.querySelector('[data-mentions]'), form.elements.text, people, a.mentions || []);
+            },
+            onSubmit: async function (form) {
+                await api('EditComment', { id: a.id, text: form.elements.text.value, mentions: picker ? picker.ids() : [] });
+                App.toast('댓글을 고쳤습니다.');
+            }
+        });
+    }
+
+    async function deleteComment(a) {
+        var ok = await App.confirm({ title: '댓글 지우기', message: '이 댓글의 내용을 지웁니다. 목록에는 \'삭제된 댓글\'로 자리만 남습니다.', verb: '지우기' });
+        if (!ok) return;
+        try {
+            await api('DeleteComment', { id: a.id });
+            App.toast('댓글을 지웠습니다.');
+        } catch (err) { App.toast(err.message, 'error'); }
     }
 
     function renderAll(keepScroll) {
@@ -1129,7 +1307,8 @@
 
     // 작업 시트의 진행 내용: 그 작업의 활동만 서버에서 따로 받는다(과제 데이터에는 최근 활동 일부만 있다)
     function workFeedItemHtml(a) {
-        return '<li><div class="feed-text">' + esc(a.text) + '</div>' +
+        return '<li><div class="feed-text' + (a.deleted ? ' muted' : '') + '">' + esc(a.text) + '</div>' +
+            ((a.mentions || []).length ? '<div class="feed-mentions">' + a.mentions.map(function (m) { return '<span class="chip accent mention-chip">@' + esc(m.name) + '</span>'; }).join('') + '</div>' : '') +
             (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
             '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
     }
@@ -1258,7 +1437,8 @@
 
         if (!isNew) {
             html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
-                '<textarea data-comment data-draft="comment" rows="2" maxlength="1000" placeholder="이 작업의 진행 내용 남기기" aria-label="진행 내용"></textarea>' +
+                '<textarea data-comment data-draft="comment" rows="2" maxlength="1000" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기)" aria-label="진행 내용"></textarea>' +
+                '<div data-work-mentions data-field="mentions"></div>' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button></div></div>';
         }
 
@@ -1381,12 +1561,14 @@
 
                 var addComment = form.querySelector('[data-add-comment]');
                 if (addComment) {
+                    var workMentions = Collab.mentions(form.querySelector('[data-work-mentions]'), form.querySelector('[data-comment]'), people);
                     addComment.addEventListener('click', function () {
                         var box = form.querySelector('[data-comment]');
                         // 응답이 올 때까지 다시 눌리지 않게 잠근다 (같은 진행 내용이 두 번 등록되지 않게)
                         return App.busy(addComment, async function () {
                             try {
-                                await api('Comment', { projectId: P.id, stageId: w.stageId, workId: w.id, text: box.value });
+                                await api('Comment', { projectId: P.id, stageId: w.stageId, workId: w.id, text: box.value, mentions: workMentions.ids() });
+                                workMentions.reset();
                                 box.value = '';
                                 box.defaultValue = '';
                                 sheet.saveDraft();
@@ -1508,7 +1690,8 @@
 
     // 탭은 주소 해시(#info·#files·#activity)로 남긴다 — 새로 고치거나 주소를 보내도 같은 탭이 열린다.
     // 기록을 쌓지 않고(replaceState) 바꿔 브라우저 뒤로 가기는 그대로 이전 화면으로 간다
-    function selectTab(name) {
+    // keepHash: 딥링크(#a123)로 연 경우 — 주소를 #activity 로 바꾸지 않는다
+    function selectTab(name, keepHash) {
         if (TABS.indexOf(name) < 0) return;
         tab = name;
         document.querySelectorAll('.tabs [data-tab]').forEach(function (x) {
@@ -1519,14 +1702,16 @@
         TABS.forEach(function (t) { $('tab-' + t).hidden = t !== tab; });
         if (tab === 'schedule') renderSchedule(true);
         var hash = tab === 'schedule' ? '' : '#' + tab;
-        if (window.location.hash !== hash) history.replaceState(history.state, '', window.location.pathname + window.location.search + hash);
+        if (!keepHash && window.location.hash !== hash) history.replaceState(history.state, '', window.location.pathname + window.location.search + hash);
     }
     document.querySelectorAll('.tabs [data-tab]').forEach(function (b) {
         b.addEventListener('click', function () { selectTab(b.dataset.tab); });
     });
     window.addEventListener('hashchange', function () {
         var h = window.location.hash.slice(1);
-        if (TABS.indexOf(h) >= 0) selectTab(h);
+        var act = /^a(\d+)$/.exec(h);
+        if (act) goToActivity(+act[1]);
+        else if (TABS.indexOf(h) >= 0) selectTab(h);
     });
 
     document.querySelectorAll('#view-mode [data-view]').forEach(function (b) {
@@ -1613,13 +1798,48 @@
 
     $('feed-more').addEventListener('click', moreFeed);
 
+    // 활동 조건: 종류 칩·단계·검색(입력을 멈추면 조회)
+    document.querySelectorAll('#feed-filters [data-kind]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            feedFilter.kind = b.dataset.kind;
+            document.querySelectorAll('#feed-filters [data-kind]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+            if (filtering()) loadFiltered(); else renderFeed();
+        });
+    });
+    $('feed-stage').addEventListener('change', function () {
+        feedFilter.stageId = $('feed-stage').value;
+        if (filtering()) loadFiltered(); else renderFeed();
+    });
+    var qTimer = null;
+    $('feed-q').addEventListener('input', function () {
+        clearTimeout(qTimer);
+        qTimer = setTimeout(function () {
+            var q = $('feed-q').value.trim();
+            if (q === feedFilter.q) return;
+            feedFilter.q = q;
+            if (filtering()) loadFiltered(); else renderFeed();
+        }, 300);
+    });
+
+    // 활동 목록 안의 단추: 댓글 고치기·지우기, '해당 댓글 보기'
+    $('feed').addEventListener('click', function (e) {
+        var t;
+        if ((t = e.target.closest('[data-edit-comment]'))) { var a = activityById(+t.dataset.editComment); if (a) openCommentEdit(a); }
+        else if ((t = e.target.closest('[data-delete-comment]'))) { var d = activityById(+t.dataset.deleteComment); if (d) deleteComment(d); }
+        else if ((t = e.target.closest('[data-goto]'))) { e.preventDefault(); goToActivity(+t.dataset.goto); }
+    });
+
+    // 진행 내용의 알릴 사람(멘션)
+    var commentMentions = Collab.mentions($('comment-mentions'), $('comment-text'), people);
+
     $('comment-form').addEventListener('submit', function (e) {
         e.preventDefault();
         var box = $('comment-text');
         // 처리 중에는 다시 누르지 못하게 잠근다 (같은 글이 두 번 등록되지 않게)
         App.busy($('comment-btn'), async function () {
             try {
-                await api('Comment', { projectId: P.id, text: box.value });
+                await api('Comment', { projectId: P.id, text: box.value, mentions: commentMentions.ids() });
+                commentMentions.reset();
                 box.value = '';
                 clearTimeout(commentTimer);
                 App.draft.clear(commentKey);
@@ -1744,11 +1964,15 @@
 
     // '내 할 일' 등에서 #w123 으로 들어오면 그 작업의 편집 창을 바로 연다. 연 뒤에는 주소에서 지워
     // 새로 고칠 때 창이 다시 뜨지 않게 한다. #info·#files·#activity 는 그 탭을 연다
+    // #a123(알림·새 소식에서)은 활동 탭에서 그 활동을 찾아 강조한다 — 주소는 그대로 둬 다시 고쳐도 같은 곳을 보인다
     var hash = /^#w(\d+)$/.exec(window.location.hash || '');
+    var actHash = /^#a(\d+)$/.exec(window.location.hash || '');
     if (hash) {
         history.replaceState(history.state, '', window.location.pathname + window.location.search);
         var target = workById(+hash[1]);
         if (target) openWorkSheet(target);
+    } else if (actHash) {
+        goToActivity(+actHash[1]);
     } else if (TABS.indexOf(window.location.hash.slice(1)) > 0) {
         selectTab(window.location.hash.slice(1));
     }

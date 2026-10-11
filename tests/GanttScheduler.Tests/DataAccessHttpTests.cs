@@ -134,7 +134,8 @@ public class DataAccessHttpTests : IClassFixture<CountingApp>
         var (detail, detailCommands) = await CountAsync(client, new HttpRequestMessage(HttpMethod.Get, $"/Projects/Detail?id={big.Id}"), "detail");
         Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
         // 사용자 확인 1 + 과제 그래프(분할) 8 + 위치·공휴일 2 + 활동 건수 2·최근 활동 1 + 사용자 이름 1 ≈ 15
-        AssertAtMost(18, detailCommands, "상세 화면");
+        // + 협업(S11): 방문 기록 읽기·저장 2, 관심 과제 1, 최근 활동의 멘션 1 ≈ 19
+        AssertAtMost(22, detailCommands, "상세 화면");
         // 공휴일은 뷰 계산(달력)과 화면 데이터(목록)가 함께 쓴다 — 한 번만 읽는다
         Assert.True(detailCommands.Count(c => FromTable(c, "Holidays")) == 1, string.Join("\n---\n", detailCommands));
 
@@ -149,7 +150,8 @@ public class DataAccessHttpTests : IClassFixture<CountingApp>
         var (changed, changeCommands) = await CountAsync(client, toggle, "toggle");
         Assert.Equal(HttpStatusCode.OK, changed.StatusCode);
         // 사용자 1 + 체크→과제 1 + 변경 그래프(분할) 5 + 저장 + 응답(상세와 같은 조회) 13 ≈ 23. 예전에는 활동·첨부까지 두 번 읽었다
-        AssertAtMost(26, changeCommands, "체크 변경");
+        // + 알림 계산(과제 담당·관심자 1)과 알림 INSERT 1, 응답의 멘션 1 ≈ 26
+        AssertAtMost(29, changeCommands, "체크 변경");
         // 변경하면서 활동·첨부를 통째로 읽지 않는다 (활동 표를 읽는 것은 응답의 건수·최근 활동 조회뿐)
         // 활동 표를 건드리는 명령: 응답의 건수 2·최근 활동 1, 저장(INSERT) 1 — 그래프에 활동을 싣으면 분할 쿼리가 늘어 넘는다
         Assert.True(changeCommands.Count(c => Mentions(c, "Activities")) <= 4, string.Join("\n---\n", changeCommands));
