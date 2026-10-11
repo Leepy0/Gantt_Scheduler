@@ -27,7 +27,7 @@
     }
     else
     {
-        <ul class="notes" id="notes">
+        <ul class="note-list" id="notes">
             @foreach (var n in d.Items)
             {
                 <li class="@(n.Read ? "" : "unread")" data-note="@n.Id">
