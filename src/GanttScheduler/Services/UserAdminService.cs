@@ -180,7 +180,10 @@ public class UserAdminService
             a.ProjectId = projectId;
             _db.Activities.Add(a);
         }
-        var summary = $"과제 {touched.Count} · 담당 과제 {projectCount} · 작업 {workCount} · 옮긴 기록 {rows}";
+        // 0 인 항목은 빼고 적는다(새로 만든 오타 이름처럼 기록이 없으면 '옮긴 기록 없음')
+        var parts = new[] { touched.Count > 0 ? $"과제 {touched.Count}" : null, projectCount > 0 ? $"담당 과제 {projectCount}" : null,
+            workCount > 0 ? $"작업 {workCount}" : null, $"옮긴 기록 {rows}" }.Where(x => x != null).ToList();
+        var summary = rows == 0 ? "옮긴 기록 없음" : string.Join(" · ", parts);
         _changes.Add("user", t, $"{text} ({summary})" + (reason == null ? "" : $" — {reason}"), from.Name, into.Name);
         _db.Users.Remove(from);
         await SaveAsync();
@@ -238,7 +241,9 @@ public class UserAdminService
 
         var wasActive = from.IsActive;
         from.IsActive = false;
-        var summary = $"과제 {projects.Count} · 작업 {works.Count}";
+        // 넘긴 것만 적는다 (과제 0 · 작업 3 이 아니라 '작업 3건')
+        var summary = string.Join(" · ", new[] { projects.Count > 0 ? $"과제 {projects.Count}건" : null, works.Count > 0 ? $"작업 {works.Count}건" : null }
+            .Where(x => x != null));
         var text = to == null || projects.Count + works.Count == 0
             ? $"사용 중지: {from.Name} (맡은 진행 과제·작업 없음)"
             : $"담당 이관 후 사용 중지: {from.Name} → {to.Name} ({summary})";
@@ -246,7 +251,7 @@ public class UserAdminService
             _changes.Add("user", from.Id, text + (reason == null ? "" : $" — {reason}"), wasActive ? "사용" : "사용 중지", to?.Name);
         await SaveAsync();
         return new UserMoveResult(projects.Count, works.Count, projects.Count + works.Count,
-            projects.Count + works.Count == 0 ? $"{from.Name} 님을 사용 중지했습니다." : $"{summary}을(를) {to!.Name} 님에게 넘기고 {from.Name} 님을 사용 중지했습니다.");
+            projects.Count + works.Count == 0 ? $"{from.Name} 님을 사용 중지했습니다." : $"{summary}의 담당을 {to!.Name} 님에게 넘기고 {from.Name} 님을 사용 중지했습니다.");
     }
 
     // 미완료 작업: 실적 종료가 없고 단계가 끝나지 않았으며(Rules.IsOpen) 과제가 휴지통이 아닌 진행·보류 과제

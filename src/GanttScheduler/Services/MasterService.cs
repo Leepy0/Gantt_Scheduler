@@ -919,7 +919,8 @@ public class MasterService
         var created = id() == 0;
         if (created)
         {
-            var details = _diff.Where(d => d.Label != "이름" && d.Label != "내용" && d.New != null).Select(d => $"{d.Label} {d.New}").ToList();
+            // 이름에 이미 든 값(공휴일의 날짜 등)은 되풀이하지 않는다
+            var details = _diff.Where(d => d.Label != "이름" && d.Label != "내용" && d.New != null && !name.Contains(d.New)).Select(d => $"{d.Label} {d.New}").ToList();
             _changes.Add(kind, () => id(), $"{what} 추가: {name}", null, details.Count == 0 ? name : name + " (" + string.Join(", ", details) + ")");
         }
         else if (_diff.Count > 0)

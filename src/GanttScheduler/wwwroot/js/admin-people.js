@@ -38,8 +38,8 @@
             '건과 미완료 작업 ' + (n.openWorks || 0) + '건을 다른 사람에게 넘기고 사용 중지합니다. 완료·중단 과제의 담당 기록은 그대로 남습니다.</span></p>' +
             field('toId', '넘겨받을 사람', '<select name="toId" required><option value="">골라 주세요</option>' + userOptions(users, n.id, true) + '</select>') +
             '<div class="field" data-field="scope"><span class="label">넘길 범위</span>' +
-            '<label class="check"><input type="checkbox" name="projects" checked' + (n.openProjects ? '' : ' disabled') + ' />진행 과제 담당 <span class="num muted">' + (n.openProjects || 0) + '건</span></label>' +
-            '<label class="check"><input type="checkbox" name="works" checked' + (n.openWorks ? '' : ' disabled') + ' />미완료 작업 담당·부담당 <span class="num muted">' + (n.openWorks || 0) + '건</span></label>' +
+            '<label class="check"><input type="checkbox" name="projects"' + (n.openProjects ? ' checked' : ' disabled') + ' />진행 과제 담당 <span class="num muted">' + (n.openProjects || 0) + '건</span></label>' +
+            '<label class="check"><input type="checkbox" name="works"' + (n.openWorks ? ' checked' : ' disabled') + ' />미완료 작업 담당·부담당 <span class="num muted">' + (n.openWorks || 0) + '건</span></label>' +
             '<span class="hint">넘기지 않은 것은 사용 중지된 사람 이름으로 남습니다. 바뀐 과제마다 활동이 남고 넘겨받는 사람에게 알림이 갑니다.</span></div>' +
             reasonField();
         App.sheet({
@@ -52,7 +52,7 @@
                     fromId: n.id, toId: f.toId.value ? +f.toId.value : null,
                     projects: f.projects.checked, works: f.works.checked, reason: f.reason.value
                 });
-                App.toast(r.notice || '사용 중지했습니다.');
+                if (!r.notice) App.toast('사용 중지했습니다.');   // 서버 안내는 change() 가 띄운다
             }
         });
     }
@@ -79,7 +79,7 @@
                 var ok = await App.confirm({ title: '사용자 합치기', message: n.name + ' 님을 ' + (into ? into.name : '') + ' 님으로 합칩니다. ' + n.name + ' 이름은 지워지고 되돌릴 수 없습니다.', verb: '합치기' });
                 if (!ok) return false;
                 var r = await change('Merge', { fromId: n.id, intoId: +f.intoId.value, reason: f.reason.value });
-                App.toast(r.notice || '합쳤습니다.');
+                if (!r.notice) App.toast('합쳤습니다.');
             }
         });
     }
