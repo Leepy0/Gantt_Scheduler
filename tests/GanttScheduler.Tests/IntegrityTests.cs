@@ -1,6 +1,8 @@
 using GanttScheduler.Domain;
 using GanttScheduler.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 
 namespace GanttScheduler.Tests;
 
@@ -189,5 +191,93 @@ public class IntegrityTests : IClassFixture<TestDb>
 
         // 관리자(테스터)도 다시 확정할 수 있다
         using (var s = _db.NewScope()) await s.Projects.SetBaselineAsync(id, "재검토", after.Version);
+    }
+}
+
+// 첨부: 커밋 뒤 파일 삭제 실패 내성, 상한 설정(Storage:MaxMB)
+public class AttachmentIntegrityTests : IClassFixture<TestDb>
+{
+    private readonly TestDb _db;
+    public AttachmentIntegrityTests(TestDb db) => _db = db;
+
+    private AttachmentService Files(TestDb.Scope s, string root, int? maxMB = null)
+    {
+        var cfg = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Storage:Path"] = root,
+            ["Storage:MaxMB"] = maxMB?.ToString(),
+        }).Build();
+        return new AttachmentService(s.Db, _db.Clock, s.Me, cfg, new Env());
+    }
+
+    private sealed class Env : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Development";
+        public string ApplicationName { get; set; } = "GanttScheduler";
+        public string ContentRootPath { get; set; } = Path.GetTempPath();
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    private async Task<int> NewProjectAsync(string title)
+    {
+        using var s = _db.NewScope();
+        var cat = await s.Db.Categories.FirstAsync(c => c.Name == "물류");
+        var corp = await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "한국");
+        return await s.Projects.CreateAsync(new ProjectInput(title, cat.Id, corp.Id, null, new DateOnly(2026, 10, 1), null, null, null, null));
+    }
+
+    [Fact]
+    public async Task 기록을_지운_뒤_파일을_지우지_못해도_성공으로_답하고_파일은_남긴다()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "gantt-att-" + Guid.NewGuid().ToString("N"));
+        var id = await NewProjectAsync("테스트 첨부 삭제 내성");
+        int fileId;
+        using (var s = _db.NewScope())
+        {
+            await Files(s, root).SaveAsync(id, null, "도면.pdf", 4, new MemoryStream(new byte[] { 1, 2, 3, 4 }));
+            fileId = await s.Db.Attachments.Where(a => a.ProjectId == id).Select(a => a.Id).SingleAsync();
+        }
+        var stored = Directory.GetFiles(Path.Combine(root, id.ToString())).Single();
+
+        using (var s = _db.NewScope())
+        {
+            var files = Files(s, root);
+            files.DeleteFile = _ => throw new IOException("다른 프로세스가 사용 중");
+            Assert.Equal(id, await files.DeleteAsync(fileId));
+        }
+        using (var s = _db.NewScope())
+        {
+            Assert.False(await s.Db.Attachments.AnyAsync(a => a.Id == fileId));
+            Assert.Contains(await s.Db.Activities.Where(a => a.ProjectId == id).Select(a => a.Text).ToListAsync(), t => t == "첨부 삭제: 도면.pdf");
+        }
+        Assert.True(File.Exists(stored));      // 남은 파일은 고아 파일 정리가 치운다
+
+        // 과제 폴더 정리도 실패를 올리지 않는다
+        using (var s = _db.NewScope())
+        {
+            var files = Files(s, root);
+            files.DeleteFolder = _ => throw new UnauthorizedAccessException("거부됨");
+            files.RemoveProjectFiles(id);
+            Assert.True(Directory.Exists(Path.Combine(root, id.ToString())));
+            Files(s, root).RemoveProjectFiles(id);
+        }
+        Assert.False(Directory.Exists(Path.Combine(root, id.ToString())));
+        Directory.Delete(root, true);
+    }
+
+    [Fact]
+    public async Task 첨부_상한은_설정_하나로_정하고_문구도_그_값을_쓴다()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "gantt-att-" + Guid.NewGuid().ToString("N"));
+        var id = await NewProjectAsync("테스트 첨부 상한");
+        using var s = _db.NewScope();
+        Assert.Equal(AttachmentService.DefaultMaxMB, Files(s, root).MaxMB);
+        Assert.Equal(AttachmentService.MaxMBLimit, Files(s, root, 99999).MaxMB);       // 설정할 수 있는 끝으로 자른다
+
+        var small = Files(s, root, 1);
+        Assert.Equal(1024L * 1024, small.MaxBytes);
+        var ex = await Assert.ThrowsAsync<RuleException>(() => small.SaveAsync(id, null, "큰파일.zip", 2 * 1024 * 1024, new MemoryStream(new byte[10])));
+        Assert.Equal("파일은 1MB 이하만 올릴 수 있습니다.", ex.Message);
+        if (Directory.Exists(root)) Directory.Delete(root, true);
     }
 }

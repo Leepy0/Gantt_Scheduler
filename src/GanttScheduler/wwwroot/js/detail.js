@@ -1725,7 +1725,7 @@
         var dot = file.name.lastIndexOf('.');
         var ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : '';
         if (data.upload.extensions.indexOf(ext) < 0) { App.toast('올릴 수 없는 형식입니다(' + (ext || '확장자 없음') + ').', 'error'); return; }
-        if (file.size > data.upload.maxBytes) { App.toast('파일은 30MB 이하만 올릴 수 있습니다.', 'error'); return; }
+        if (file.size > data.upload.maxBytes) { App.toast('파일은 ' + data.upload.maxMB + 'MB 이하만 올릴 수 있습니다.', 'error'); return; }
 
         var btn = $('upload-btn');
         var label = btn.innerHTML;

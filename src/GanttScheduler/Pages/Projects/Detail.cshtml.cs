@@ -37,6 +37,7 @@ public class DetailModel : PageModel
     public record PreviewInput(int ProjectId, List<StagePlanRow>? Rows);
 
     public ProjectView Project { get; private set; } = null!;
+    public int UploadMaxMB => _files.MaxMB;
     public string DataJson { get; private set; } = "{}";
 
     public async Task<IActionResult> OnGetAsync(int id)
@@ -51,7 +52,7 @@ public class DetailModel : PageModel
             holidays = await _projects.HolidaysAsync(),
             users = await _projects.UserNamesAsync(),
             me = new { name = _me.Name, isAdmin = _me.IsAdmin },
-            upload = new { maxBytes = AttachmentService.MaxBytes, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
+            upload = new { maxBytes = _files.MaxBytes, maxMB = _files.MaxMB, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
         });
         return Page();
     }
@@ -243,7 +244,7 @@ public class DetailModel : PageModel
         try
         {
             await _projects.DeleteAsync(input.Id);
-            _files.RemoveProjectFiles(input.Id);
+            _files.RemoveProjectFiles(input.Id);     // 실패해도 예외 없이 경고만 남긴다 (과제 삭제는 이미 커밋됨)
             return new JsonResult(new { ok = true, redirect = Url.Page("/Projects/Index") });
         }
         catch (RuleException ex)
