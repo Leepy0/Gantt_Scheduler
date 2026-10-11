@@ -1141,6 +1141,10 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .tw-panel { margin-top: 16px; min-height: 0; border-right: 0; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-1); overflow: hidden; }
 .tw-panel > .hint { padding: 8px 16px 0; }
 .tw-foot { padding: 8px 16px 16px; }
+/* 작업 템플릿은 시작·기간·선행 설명이 길다 — 이름을 가리지 않게 설명을 다음 줄로 넘긴다 */
+.tw-panel .node-main { flex-wrap: wrap; gap: 0 8px; padding-top: 6px; padding-bottom: 6px; }
+.tw-panel .node-name { flex: none; max-width: 100%; }
+.tw-panel .node-extra { white-space: normal; }
 /* 붙여넣기·가져오기 미리보기 표: 문제 있는 줄은 기존 오류 모양(form-error)으로 그 줄 아래에 적는다 — 지연 칩(빨강)과 헷갈리지 않게 칩을 쓰지 않는다 */
 .paste-preview { display: flex; flex-direction: column; gap: 8px; }
 .paste-preview:empty { display: none; }
@@ -1148,6 +1152,7 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .rows-table td { vertical-align: top; }
 .rows-table .num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rows-table tr.row-bad > td { border-bottom: 0; }
+.rows-table td:first-child { padding-left: 12px; }
 .rows-table tr.row-bad > td:first-child { box-shadow: inset 3px 0 0 var(--alarm); }
 .rows-table tr.row-bad-detail > td { padding-top: 0; }
 .row-issue { padding: 4px 8px; font-weight: 400; font-size: var(--fs-xs); }
@@ -1169,6 +1174,7 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
     .rows-table tr.row-bad-detail { border-top: 0; padding-top: 0; }
     .rows-table td { display: flex; gap: 8px; padding: 2px 0; border: 0; }
     .rows-table td[data-label]::before { content: attr(data-label); flex: 0 0 72px; color: var(--text-3); font-size: var(--fs-xs); }
+    .rows-table td:first-child { padding-left: 0; }
     .rows-table tr.row-bad > td:first-child { box-shadow: none; }
     .rows-table tr.row-bad { box-shadow: inset 3px 0 0 var(--alarm); padding-left: 8px; }
     .rows-table tr.row-bad-detail td { display: block; }

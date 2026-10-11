@@ -231,6 +231,12 @@ public partial class ProjectService
                 built[at] = (p, plans);
             }
             workRows.Sort((a, b) => a.Row.CompareTo(b.Row));
+            // 과제 행의 작업 수에 작업 시트 줄을 더한다(그 과제는 템플릿 작업 대신 이 줄로 만든다)
+            for (var i = 0; i < projectRows.Count; i++)
+            {
+                var mine = workRows.Count(w => w.Project == projectRows[i].Title);
+                if (mine > 0) projectRows[i] = projectRows[i] with { Works = projectRows[i].Works + mine };
+            }
         }
 
         issues.Sort((a, b) => a.Sheet == b.Sheet ? a.Row.CompareTo(b.Row) : a.Sheet == ImportColumns.ProjectSheet ? -1 : 1);
