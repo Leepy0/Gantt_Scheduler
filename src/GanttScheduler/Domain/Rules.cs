@@ -64,7 +64,7 @@ public static class Rules
     public static StageStatus StatusOf(Stage s, Project p, DateOnly today)
     {
         if (s.CompletedDate != null) return StageStatus.Done;
-        if (s.TargetDate != null && s.TargetDate.Value < today) return StageStatus.Late;
+        if (IsLate(s, today)) return StageStatus.Late;
         // 순서상 첫 미완료 단계가 '진행 중'
         return ReferenceEquals(CurrentStage(p), s) ? StageStatus.Current : StageStatus.Planned;
     }
@@ -396,4 +396,47 @@ public static class Rules
         if (progress < 0 || progress > 100 || progress % ProgressStep != 0)
             throw new RuleException("진행률은 0~100 사이 5 단위로 입력합니다.", "progress");
     }
+
+    // ── 화면·내보내기가 함께 쓰는 표시 규칙 ─────────────────────────────
+    // 대시보드·목록·내 할 일·상세·Excel 이 같은 값을 보이도록 여기 한 곳에서 정한다(화면은 서버가 채운 값만 그린다)
+
+    // '임박': 목표일까지 남은 날이 이 일수 이하(오늘 포함)
+    public const int SoonDays = 7;
+
+    public static int DaysLeft(DateOnly date, DateOnly today) => date.DayNumber - today.DayNumber;
+
+    public static bool IsSoon(int daysLeft) => daysLeft >= 0 && daysLeft <= SoonDays;
+
+    // 미완료 단계의 목표일이 지남
+    public static bool IsLate(Stage s, DateOnly today) => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value < today;
+
+    // 단계를 목표일보다 늦게 완료함 (간트의 '목표 초과 완료' 막대·Excel 간트 색)
+    public static bool IsDoneLate(Stage s) => s.CompletedDate != null && s.TargetDate != null && s.CompletedDate.Value > s.TargetDate.Value;
+
+    // 작업 목표 종료의 기준선 대비 (밀리면 양수). 기준선이 없으면 null
+    public static int? SlipDays(WorkItem w) => w.BaselineEnd == null ? null : w.PlanEnd.DayNumber - w.BaselineEnd.Value.DayNumber;
+
+    // 지연 작업이 목표 종료를 넘긴 달력 일수 (지연이 아니면 0)
+    public static int LateDays(WorkItem w, Stage? stage, DateOnly today)
+    {
+        var late = stage == null ? IsLate(w, today) : IsLate(w, stage, today);
+        return late ? today.DayNumber - w.PlanEnd.DayNumber : 0;
+    }
+
+    // ── 접속자의 '오늘' ─────────────────────────────────────────────────
+    // 지연 판정의 '오늘'은 한국 날짜(규칙 8)지만, 실적 날짜의 기본값('오늘 시작'·진행률만 올린 작업의 실적 시작)은
+    // 접속한 PC 의 날짜를 쓴다 — 해외 법인에서 저녁에 누르면 한국은 이미 다음 날이라 하루 뒤 날짜가 기록되기 때문이다.
+    // PC 시계가 틀린 경우를 막으려고 한국 날짜 ±ClientDayWindow 일 안일 때만 받는다(시간대 차이는 하루를 넘지 않는다)
+    public const int ClientDayWindow = 1;
+
+    public static DateOnly UserToday(DateOnly? clientToday, DateOnly today) =>
+        clientToday is { } c && Math.Abs(c.DayNumber - today.DayNumber) <= ClientDayWindow ? c : today;
+
+    // ── 삭제 권한 ───────────────────────────────────────────────────────
+    // 서비스의 검사와 화면의 단추 표시가 같은 판정을 쓰도록 둔다 (권한 없는 사람에게 누르면 거절당할 단추를 보이지 않게)
+    public static bool CanDeleteProject(Project p, int? userId, bool isAdmin) =>
+        isAdmin || (userId != null && (p.OwnerId == userId || p.CreatedById == userId));
+
+    public static bool CanDeleteAttachment(Attachment a, int? projectOwnerId, int? userId, bool isAdmin) =>
+        isAdmin || (userId != null && (a.UploadedById == userId || projectOwnerId == userId));
 }

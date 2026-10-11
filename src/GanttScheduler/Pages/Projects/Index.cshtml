@@ -104,28 +104,7 @@ else
                         <span class="num">@p.Progress%</span>
                     </span>
                     <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
-                    <span class="c-state" role="cell">
-                        @if (p.DelayDays > 0)
-                        {
-                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@p.DelayDays</span>
-                        }
-                        else if (p.State == "active")
-                        {
-                            <span class="chip accent">진행</span>
-                        }
-                        else if (p.State == "done")
-                        {
-                            <span class="chip ok"><svg class="ic"><use href="#i-check" /></svg>완료</span>
-                        }
-                        else if (p.State == "hold")
-                        {
-                            <span class="chip"><svg class="ic"><use href="#i-pause" /></svg>보류</span>
-                        }
-                        else
-                        {
-                            <span class="chip"><svg class="ic"><use href="#i-ban" /></svg>중단</span>
-                        }
-                    </span>
+                    <span class="c-state" role="cell"><partial name="_StatusChip" model="p.Chip" /></span>
                 </a>
             }
         </div>

@@ -7,19 +7,24 @@
 
 <div id="detail" class="detail">
     <div class="page-head">
-        <a class="btn icon" asp-page="/Projects/Index" aria-label="과제 목록"><svg class="ic"><use href="#i-left" /></svg></a>
+        @* 목록에서 들어왔으면 detail.js 가 브라우저 뒤로 가기로 바꿔 목록의 필터를 지킨다 *@
+        <a class="btn icon" id="back-link" asp-page="/Projects/Index" aria-label="과제 목록"><svg class="ic"><use href="#i-left" /></svg></a>
         <h1 id="p-title">@Model.Project.Title</h1>
     </div>
 
-    <section class="card summary" id="summary" aria-live="polite"></section>
+    @* 다른 사용자가 이 과제를 바꿨거나 삭제했을 때의 안내 (자동으로 새로 고치지 않는다) *@
+    <div class="change-banner" id="change-banner" role="status" hidden></div>
+
+    @* 저장할 때마다 통째로 다시 그리는 곳이라 aria-live 를 두지 않는다 — 결과 알림은 #toasts 가 읽어 준다 *@
+    <section class="card summary" id="summary"></section>
 
     <nav class="stepper" id="stepper" aria-label="단계 진행"></nav>
 
     <div class="tabs scroll" role="tablist">
-        <button type="button" role="tab" class="on" data-tab="schedule" aria-selected="true">일정</button>
-        <button type="button" role="tab" data-tab="info" aria-selected="false">정보</button>
-        <button type="button" role="tab" data-tab="files" aria-selected="false">자료 <span class="count" id="files-count"></span></button>
-        <button type="button" role="tab" data-tab="activity" aria-selected="false">활동 <span class="count" id="activity-count"></span></button>
+        <button type="button" role="tab" class="on" data-tab="schedule" aria-selected="true" aria-controls="tab-schedule">일정</button>
+        <button type="button" role="tab" data-tab="info" aria-selected="false" aria-controls="tab-info">정보</button>
+        <button type="button" role="tab" data-tab="files" aria-selected="false" aria-controls="tab-files">자료 <span class="count" id="files-count"></span></button>
+        <button type="button" role="tab" data-tab="activity" aria-selected="false" aria-controls="tab-activity">활동 <span class="count" id="activity-count"></span></button>
     </div>
 
     <section class="tab-panel" id="tab-schedule">
@@ -83,7 +88,7 @@
                 <span class="label">진행 내용 남기기</span>
                 <textarea id="comment-text" rows="2" maxlength="1000" placeholder="진행 상황이나 이슈를 남겨 주세요"></textarea>
             </label>
-            <div class="form-actions"><button type="submit" class="btn primary">등록</button></div>
+            <div class="form-actions"><button type="submit" class="btn primary" id="comment-btn">등록</button></div>
         </form>
         <div class="card flush"><ul class="feed" id="feed"></ul></div>
     </section>

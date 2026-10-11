@@ -26,6 +26,10 @@ public record WorkView
     public bool Critical { get; init; }                 // 미완료이고 여유가 없음
     public bool DepViolation { get; init; }             // 선행 작업보다 먼저 시작하게 잡혀 있음
     public DateOnly? ClosedOn { get; init; }            // 실적 종료 없이 단계 완료로 함께 끝난 것으로 보는 날 (단계 완료일)
+    // 화면·Excel·PDF 가 같은 값을 쓰도록 서버가 채운다 (Rules)
+    public int? SlipDays { get; init; }                 // 목표 종료의 기준선 대비 (밀리면 양수)
+    public int LateDays { get; init; }                  // 지연 일수 (지연이 아니면 0)
+    public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (Views.WorkChip)
 }
 
 public record CheckView(int Id, string Text, bool Done, string? DoneBy, DateTime? DoneAt);
@@ -56,6 +60,9 @@ public record StageView
     public List<WorkView> Works { get; init; } = new();
     public int OpenWorks { get; init; }                 // 실적 종료가 없는 작업 수 (완료하면서 함께 닫을 수 있는 작업)
     public int LaterWorks { get; init; }                // 연쇄 이동 때 함께 옮길 수 있는 이후 단계의 미착수 작업 수
+    public bool DoneLate { get; init; }                 // 목표일보다 늦게 완료 (Rules.IsDoneLate)
+    public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (Views.StageChip)
+    public ChipView? DueChip { get; init; }             // 목표일 임박 칩 (미완료·미지연이고 Rules.SoonDays 안일 때만)
 }
 
 public record ActivityView(
@@ -65,8 +72,17 @@ public record ItemView(int TypeId, string Name, int Quantity, string? Note);
 
 public record LinkView(int Id, int From, int To, int Lag);
 
+// CanDelete: 지금 사용자가 지울 수 있는지 (ProjectService.ViewAsync 가 Rules.CanDeleteAttachment 로 채운다)
 public record AttachmentView(
-    int Id, string FileName, string ContentType, long Size, string UploadedBy, DateTime UploadedAt, int? StageId, bool Previewable);
+    int Id, string FileName, string ContentType, long Size, string UploadedBy, DateTime UploadedAt, int? StageId, bool Previewable,
+    bool CanDelete = false);
+
+// 상태 칩 하나: 색 구분(cls: ''·accent·ok·warn·alarm), 아이콘(스프라이트 이름), 글자.
+// Razor 는 _StatusChip 부분 뷰, JS 는 App.chip 이 같은 마크업으로 그린다 — 어떤 칩을 보일지는 서버(Views)가 정한다
+public record ChipView(string Cls, string? Icon, string Text)
+{
+    public static readonly ChipView None = new("", null, "");
+}
 
 public record ProjectView
 {
@@ -111,6 +127,10 @@ public record ProjectView
     public string? CreatedBy { get; init; }
     public DateTime? CreatedAt { get; init; }
     public DateTime? UpdatedAt { get; init; }
+
+    public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (지연이면 '지연 D+n')
+    public string StateLabel { get; init; } = "";       // 표 글자 (지연이면 '지연', 아니면 진행·보류·중단·완료)
+    public bool CanDelete { get; init; }                // 지금 사용자가 과제를 지울 수 있는지 (상세 화면에서만 채운다)
 }
 
 // 위치 트리 조회용 색인
@@ -179,6 +199,8 @@ public static class Views
         int? slack = floats != null && floats.TryGetValue(w.Id, out var f) ? f : null;
         // 완료된 단계의 작업은 지연·임계로 보지 않는다 (Rules.IsOpen)
         var open = stage == null ? w.ActualEnd == null : Rules.IsOpen(w, stage);
+        var late = open && Rules.IsLate(w, today);
+        var closed = stage != null && Rules.IsClosedByStage(w, stage);
         return new WorkView
         {
             Id = w.Id, StageId = w.StageId, Version = w.Version, Title = w.Title,
@@ -186,12 +208,15 @@ public static class Views
             PlanStart = w.PlanStart, PlanEnd = w.PlanEnd, PlanWorkDays = cal.WorkingDays(w.PlanStart, w.PlanEnd),
             ActualStart = w.ActualStart, ActualEnd = w.ActualEnd,
             BaselineStart = w.BaselineStart, BaselineEnd = w.BaselineEnd,
-            Status = Key(Rules.StatusOf(w)), Late = open && Rules.IsLate(w, today), DoneLate = Rules.IsDoneLate(w), Note = w.Note,
+            Status = Key(Rules.StatusOf(w)), Late = late, DoneLate = Rules.IsDoneLate(w), Note = w.Note,
             Predecessors = predecessors ?? new List<int>(),
             Float = slack,
             Critical = open && slack != null && slack.Value <= 0,
             DepViolation = violation,
-            ClosedOn = stage != null && Rules.IsClosedByStage(w, stage) ? stage.CompletedDate : null,
+            ClosedOn = closed ? stage!.CompletedDate : null,
+            SlipDays = Rules.SlipDays(w),
+            LateDays = Rules.LateDays(w, stage, today),
+            Chip = WorkChip(late, Rules.StatusOf(w), Rules.IsDoneLate(w), closed),
         };
     }
 
@@ -261,6 +286,11 @@ public static class Views
                 Works = works,
                 OpenWorks = withWorks && s.CompletedDate == null ? s.Works.Count(w => w.ActualEnd == null) : 0,
                 LaterWorks = withWorks ? Rules.CascadeWorks(p, s).Count() : 0,
+                DoneLate = Rules.IsDoneLate(s),
+                Chip = StageChip(status, lateDays),
+                DueChip = (status is StageStatus.Current or StageStatus.Planned) && s.TargetDate != null
+                          && Rules.IsSoon(Rules.DaysLeft(s.TargetDate.Value, today))
+                    ? DueChip(Rules.DaysLeft(s.TargetDate.Value, today), late: false) : null,
             });
 
             if (s.TargetDate != null) prevTarget = s.TargetDate;
@@ -311,6 +341,8 @@ public static class Views
             CreatedBy = detail ? p.CreatedBy?.Name : null,
             CreatedAt = detail ? p.CreatedAt : null,
             UpdatedAt = detail ? p.UpdatedAt : null,
+            Chip = ProjectChip(p.State, delayDays),
+            StateLabel = StateLabel(p.State, delayDays),
         };
     }
 
@@ -320,4 +352,42 @@ public static class Views
         if (t == null) return "";
         return t.Parent == null ? t.Name : $"{t.Parent.Name} · {t.Name}";
     }
+
+    // ── 상태 칩·라벨 (화면·Excel·PDF 공용) ─────────────────────────────────
+    // 같은 상태를 화면마다 따로 적으면 글자·색이 어긋난다. 칩과 표 글자를 여기서만 정한다
+
+    // 과제 표 글자: 지연이면 '지연', 아니면 상태 이름
+    public static string StateLabel(ProjectState state, int delayDays) => delayDays > 0 ? "지연" : Label(state);
+
+    public static ChipView ProjectChip(ProjectState state, int delayDays) =>
+        delayDays > 0 ? new("alarm", "alert", $"지연 D+{delayDays}")
+        : state switch
+        {
+            ProjectState.Active => new("accent", null, "진행"),
+            ProjectState.Done => new("ok", "check", "완료"),
+            ProjectState.Hold => new("", "pause", "보류"),
+            _ => new("", "ban", "중단"),
+        };
+
+    public static ChipView StageChip(StageStatus status, int lateDays) => status switch
+    {
+        StageStatus.Done => new("ok", "check", "완료"),
+        StageStatus.Late => new("alarm", "alert", $"지연 D+{lateDays}"),
+        StageStatus.Current => new("accent", null, "진행 중"),
+        _ => new("", null, "예정"),
+    };
+
+    // 작업: 지연 → 완료(초과 완료) → 단계 완료로 끝남 → 진행 중 → 예정 순으로 본다
+    public static ChipView WorkChip(bool late, WorkStatus status, bool doneLate, bool closedByStage) =>
+        late ? new("alarm", "alert", "지연")
+        : status == WorkStatus.Done ? (doneLate ? new("warn", "clock", "초과 완료") : new("ok", "check", "완료"))
+        : closedByStage ? new("ok", "check", "완료(단계)")      // '완료'로 시작해 표의 색도 완료와 같다
+        : status == WorkStatus.InProgress ? new("accent", null, "진행 중")
+        : new("", null, "예정");
+
+    // 목표일까지 남은 날: 지났으면 '지연 D+n'(빨강), 임박(Rules.SoonDays 안)이면 노랑, 그 밖은 회색 'D-n'
+    public static ChipView DueChip(int daysLeft, bool late) =>
+        late || daysLeft < 0 ? new("alarm", "alert", $"지연 D+{-daysLeft}")
+        : Rules.IsSoon(daysLeft) ? new("warn", "clock", daysLeft == 0 ? "오늘" : $"D-{daysLeft}")
+        : new("", null, $"D-{daysLeft}");
 }

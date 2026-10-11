@@ -7,7 +7,8 @@
 //            marks: [{ date, top, cls, title }] }],
 //   links: [{ from: rowKey, to: rowKey, cls }],     // 선행 행의 anchor 막대 끝 → 후행 행의 anchor 막대 시작
 //   today, holidays: [{date, name}], zoom: 'day'|'week'|'month', corner,
-//   onRowClick(row), onToggle(row), onBarDrag(row, bar, {from, to}), keepScroll
+//   onRowClick(row), onToggle(row), onBarDrag(row, bar, {from, to}), keepScroll,
+//   fit: 전체 폭(px) — 인쇄처럼 가로 스크롤 없이 모든 일정을 한 폭에 담아야 할 때. 하루 폭을 배율 값 이하로 줄여 맞춘다
 // })
 window.Gantt = (function () {
     'use strict';
@@ -51,7 +52,8 @@ window.Gantt = (function () {
         var end = max + 21;                            // 뒤쪽은 드래그로 밀 공간을 넉넉히
 
         var leftW = parseInt(getComputedStyle(host).getPropertyValue('--g-left'), 10) || 300;
-        var avail = Math.max(0, host.clientWidth - leftW);
+        var avail = Math.max(0, (opts.fit || host.clientWidth) - leftW);
+        if (opts.fit && avail > 0) ppd = Math.min(ppd, Math.max(0.5, avail / (end - start + 1)));
         var days = Math.max(end - start + 1, Math.ceil(avail / ppd));
         end = start + days - 1;
         var width = days * ppd;
@@ -158,8 +160,10 @@ window.Gantt = (function () {
                 nameHtml += '<button type="button" class="g-toggle" aria-expanded="' + (r.toggle.expanded ? 'true' : 'false') +
                     '" aria-label="작업 펼치기/접기">' + App.icon('down') + '</button>';
             }
-            nameHtml += '<span class="g-name-main"><span class="g-name-title">' + esc(r.title) + '</span>' +
+            var mainHtml = '<span class="g-name-main"><span class="g-name-title">' + esc(r.title) + '</span>' +
                 (r.sub ? '<span class="g-name-sub">' + esc(r.sub) + '</span>' : '') + '</span>';
+            // 눌러서 여는 행(상세의 단계·작업)은 이름을 단추로 둔다 — 키보드(Tab·Enter)로도 편집 창을 열 수 있게
+            nameHtml += !r.href && opts.onRowClick ? '<button type="button" class="g-name-btn">' + mainHtml + '</button>' : mainHtml;
             if (r.side) nameHtml += '<span class="g-name-side">' + r.side + '</span>';
             name.innerHTML = nameHtml;
             name.title = r.title + (r.sub ? ' · ' + r.sub : '');
@@ -336,7 +340,7 @@ window.Gantt = (function () {
         if (stage.actualFrom && stage.actualTo) {
             var af = index > 0 && stage.actualFrom < stage.actualTo ? D.add(stage.actualFrom, 1) : stage.actualFrom;
             if (stage.completedDate) {
-                var lateDone = stage.targetDate && stage.completedDate > stage.targetDate;
+                var lateDone = stage.doneLate;      // 서버가 Rules.IsDoneLate 로 정한 값
                 bars.push({
                     from: af, to: stage.actualTo, top: lane.actTop, h: lane.actH, cls: lateDone ? 'over' : 'done',
                     title: stage.name + ' 완료 ' + stage.completedDate + (lateDone ? ' (목표 ' + stage.targetDate + ' 초과)' : '')

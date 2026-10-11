@@ -28,7 +28,7 @@ public class ExcelExporter
     {
         using var wb = NewWorkbook();
         var ws = wb.Worksheets.Add("과제 목록");
-        Title(ws, "과제 목록", $"기준일 {today:yyyy-MM-dd} · {filterText} · {rows.Count}건");
+        Title(ws, "과제 목록", $"기준일 {today:yyyy-MM-dd}(한국 시간) · {filterText} · {rows.Count}건");
 
         const int head = 4;
         Header(ws, head, ("No", 5), ("과제명", 38), ("유형", 13), ("법인", 11), ("위치", 22), ("담당", 10), ("상태", 9),
@@ -43,7 +43,7 @@ public class ExcelExporter
             ws.Cell(r, 4).Value = p.Corporation;
             ws.Cell(r, 5).Value = p.LocationPath;
             ws.Cell(r, 6).Value = p.Owner;
-            State(ws.Cell(r, 7), StateLabel(p));
+            State(ws.Cell(r, 7), p.StateLabel);
             ws.Cell(r, 8).Value = p.CurrentStage ?? "";
             Date(ws.Cell(r, 9), p.CurrentTarget);
             Percent(ws.Cell(r, 10), p.Progress);
@@ -77,7 +77,8 @@ public class ExcelExporter
     private static void ScheduleSheet(XLWorkbook wb, ProjectView p, DateOnly today)
     {
         var ws = wb.Worksheets.Add("일정");
-        Title(ws, p.Title, $"출력일 {today:yyyy-MM-dd}");
+        // 지연 판정과 날짜·시각이 모두 한국 시간 기준이라는 것을 밝힌다 (해외 법인에서 열어도 헷갈리지 않게)
+        Title(ws, p.Title, $"출력일 {today:yyyy-MM-dd} · 날짜·시각은 한국 시간 기준");
 
         // 요약: 항목명-값 3쌍씩 두 줄
         var baseline = p.BaselineAt == null ? "미확정"
@@ -85,7 +86,7 @@ public class ExcelExporter
         Pair(ws, 3, 1, "유형", p.Category);
         Pair(ws, 3, 4, "위치", p.Corporation + (p.LocationPath.Length > 0 ? " · " + p.LocationPath : ""));
         Pair(ws, 3, 8, "담당", p.Owner + (p.OwnerOrg == null ? "" : $" ({p.OwnerOrg})"));
-        Pair(ws, 4, 1, "상태", StateLabel(p) + (p.DelayDays > 0 ? $" D+{p.DelayDays}" : ""));
+        Pair(ws, 4, 1, "상태", p.Chip.Text);
         Pair(ws, 4, 4, "기간", $"{p.StartDate:yyyy-MM-dd} ~ {(p.EndTarget == null ? "미정" : p.EndTarget.Value.ToString("yyyy-MM-dd"))}");
         Pair(ws, 4, 8, "진행률", p.Progress + "%");
         Pair(ws, 5, 1, "기준선", baseline);
@@ -103,7 +104,7 @@ public class ExcelExporter
         {
             ws.Cell(r, 1).Value = "단계";
             ws.Cell(r, 2).Value = s.Name;
-            State(ws.Cell(r, 4), StageLabel(s));
+            State(ws.Cell(r, 4), s.Chip.Text);
             Percent(ws.Cell(r, 5), s.Progress);
             Date(ws.Cell(r, 7), s.BaselineDate);
             Date(ws.Cell(r, 8), s.PlanFrom);
@@ -122,7 +123,7 @@ public class ExcelExporter
                 ws.Cell(r, 2).Value = w.Title;
                 ws.Cell(r, 2).Style.Alignment.Indent = 1;
                 ws.Cell(r, 3).Value = string.Join(", ", new[] { w.Owner, w.CoOwner }.Where(x => !string.IsNullOrEmpty(x)));
-                State(ws.Cell(r, 4), WorkLabel(w));
+                State(ws.Cell(r, 4), w.Chip.Text);
                 Percent(ws.Cell(r, 5), w.Progress);
                 Date(ws.Cell(r, 6), w.BaselineStart);
                 Date(ws.Cell(r, 7), w.BaselineEnd);
@@ -131,7 +132,7 @@ public class ExcelExporter
                 ws.Cell(r, 10).Value = w.PlanWorkDays;
                 Date(ws.Cell(r, 11), w.ActualStart);
                 Date(ws.Cell(r, 12), w.ActualEnd);
-                Slip(ws.Cell(r, 13), w.BaselineEnd == null ? null : w.PlanEnd.DayNumber - w.BaselineEnd.Value.DayNumber);
+                Slip(ws.Cell(r, 13), w.SlipDays);
                 ws.Cell(r, 14).Value = string.Join(", ", w.Predecessors.Select(id => titles.TryGetValue(id, out var t) ? t : "")) + (w.Critical ? (w.Predecessors.Count > 0 ? " · " : "") + "임계" : "");
                 ws.Cell(r, 15).Value = w.Note ?? "";
                 r++;
@@ -219,7 +220,7 @@ public class ExcelExporter
             if (s.PlanFrom != null && s.TargetDate != null) Paint(r, s.PlanFrom.Value, s.TargetDate.Value, Plan);
             if (s.ActualFrom != null && s.ActualTo != null)
             {
-                if (s.CompletedDate != null) Paint(r, s.ActualFrom.Value, s.ActualTo.Value, s.TargetDate != null && s.CompletedDate > s.TargetDate ? WarnMid : Accent);
+                if (s.CompletedDate != null) Paint(r, s.ActualFrom.Value, s.ActualTo.Value, s.DoneLate ? WarnMid : Accent);
                 else
                 {
                     Paint(r, s.ActualFrom.Value, s.ActualTo.Value, AccentMid);
@@ -291,7 +292,8 @@ public class ExcelExporter
         var ws = wb.Worksheets.Add("체크리스트");
         Title(ws, "체크리스트", p.Title);
         const int head = 4;
-        Header(ws, head, ("단계", 14), ("항목", 50), ("완료", 8), ("완료자", 12), ("완료 시각", 18));
+        // 서버가 만드는 시각은 한국 시간이다 — 해외 법인에서 열어도 헷갈리지 않게 머리글에 적는다
+        Header(ws, head, ("단계", 14), ("항목", 50), ("완료", 8), ("완료자", 12), ("완료 시각(한국 시간)", 20));
         var r = head + 1;
         foreach (var s in p.Stages)
         {
@@ -314,7 +316,7 @@ public class ExcelExporter
         var ws = wb.Worksheets.Add("활동");
         Title(ws, "활동 이력", p.Title);
         const int head = 4;
-        Header(ws, head, ("일시", 18), ("사용자", 12), ("내용", 70), ("사유", 46));
+        Header(ws, head, ("일시(한국 시간)", 18), ("사용자", 12), ("내용", 70), ("사유", 46));
         var r = head + 1;
         foreach (var a in p.Activities ?? new())
         {
@@ -334,7 +336,7 @@ public class ExcelExporter
         using var wb = NewWorkbook();
         var ws = wb.Worksheets.Add("주간 보고");
         Title(ws, $"주간 보고 ({report.From:yyyy-MM-dd} ~ {report.To:MM-dd})",
-            $"진행 과제 {report.Active} · 지연 {report.Delayed} · 이번 주 완료 {report.DoneCount}건 · 일정 변경 {report.ChangeCount}건 · 작성일 {report.Today:yyyy-MM-dd}");
+            $"진행 과제 {report.Active} · 지연 {report.Delayed} · 이번 주 완료 {report.DoneCount}건 · 일정 변경 {report.ChangeCount}건 · 작성일 {report.Today:yyyy-MM-dd}(한국 시간)");
 
         const int head = 4;
         Header(ws, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 9), ("진행률", 8), ("현재 단계", 16),
@@ -365,32 +367,7 @@ public class ExcelExporter
     private static string Lines(IEnumerable<string> items) => string.Join("\n", items.Select(x => "· " + x));
 
     // ── 표시 문구 ────────────────────────────────────────────────────────
-    public static string StateLabel(ProjectView p) => p.DelayDays > 0 ? "지연" : p.State switch
-    {
-        "active" => "진행",
-        "hold" => "보류",
-        "dropped" => "중단",
-        "done" => "완료",
-        _ => p.State,
-    };
-
-    public static string StageLabel(StageView s) => s.Status switch
-    {
-        "done" => "완료",
-        "late" => $"지연 D+{s.LateDays}",
-        "current" => "진행중",
-        _ => "예정",
-    };
-
-    // 실적 종료 없이 단계 완료로 함께 끝난 작업은 '완료(단계)' — '완료'로 시작해 색도 완료와 같다
-    public static string WorkLabel(WorkView w) =>
-        w.Late ? "지연" : w.DoneLate ? "초과 완료" : w.ClosedOn != null ? "완료(단계)" : w.Status switch
-        {
-            "done" => "완료",
-            "inprogress" => "진행중",
-            _ => "예정",
-        };
-
+    // 상태 글자는 화면 칩과 같은 것을 쓴다(Views.ProjectChip·StageChip·WorkChip, ProjectView.StateLabel)
     public static string Signed(int days) => days > 0 ? "+" + days : days.ToString();
 
     // ── 양식 공통 ────────────────────────────────────────────────────────
@@ -488,7 +465,7 @@ public class ExcelExporter
             _ when label.StartsWith("지연") || label == "미완료" => (Alarm, AlarmWeak),
             _ when label.StartsWith("완료") => (Ok, OkWeak),
             "초과 완료" => (Warn, WarnWeak),
-            "진행" or "진행중" => (Accent, AccentWeak),
+            "진행" or "진행 중" => (Accent, AccentWeak),
             _ => (Muted, Soft),
         };
         cell.Style.Font.FontColor = fore;

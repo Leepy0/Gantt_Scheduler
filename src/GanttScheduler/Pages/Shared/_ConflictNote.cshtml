@@ -1,0 +1,6 @@
+@model string?
+@* 동시 수정 충돌 뒤 '다른 사용자가 바꾼 값' 안내 — 상세 화면 시트(App.sheet 의 conflictNote)와 같은 모양 *@
+@if (!string.IsNullOrEmpty(Model))
+{
+    <span class="hint conflict-note" data-conflict-note><svg class="ic" aria-hidden="true"><use href="#i-alert" /></svg>다른 사용자가 바꾼 값: @Model</span>
+}
