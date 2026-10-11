@@ -7,9 +7,13 @@
     <RootNamespace>GanttScheduler</RootNamespace>
     <AssemblyName>GanttScheduler</AssemblyName>
     <BuildChannel Condition="'$(BuildChannel)' == ''">local</BuildChannel>
+    <UpdateKeyFile Condition="'$(UpdateKeyFile)' == ''">update-key.pub</UpdateKeyFile>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="BuildChannel" Value="$(BuildChannel)" />
     <AssemblyMetadata Include="SchemaId" Value="$(SchemaId)" />
+    <!-- 실제 빌드와 같게: 배포 파일 서명 확인용 공개키가 있으면 넣는다 -->
+    <None Remove="update-key.pub" />
+    <EmbeddedResource Include="$(UpdateKeyFile)" LogicalName="update-key.pub" Condition="'$(UpdateKeyFile)' != '' and Exists('$(UpdateKeyFile)')" />
   </ItemGroup>
 </Project>

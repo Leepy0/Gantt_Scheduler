@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace GanttScheduler.Services;
 
@@ -7,6 +8,8 @@ namespace GanttScheduler.Services;
 // "--apply-update" 로 따로 띄워 교체를 맡긴다. 순서: 점검 중 안내(app_offline.htm) → 서버 종료 대기 →
 // 지금 파일을 보관 폴더로 옮김 → 새 파일 복사 → 안내 제거 → (직접 실행이면) 서버 다시 시작.
 // 되돌리기도 같은 절차로, 보관해 둔 이전 버전 폴더의 실행 파일이 맡는다.
+// 적용(apply)일 때는 다시 띄운 새 버전이 정해진 시간 안에 요청을 받기 시작했는지(started.json) 확인하고,
+// 시작되지 않으면 DB 구조가 같을 때만 이전 버전으로 되돌린다. 도우미는 새 버전의 실행 파일이므로 옛 서버가 띄워도 이 확인을 한다
 public static class UpdateApplier
 {
     public const string Flag = "--apply-update";
@@ -25,6 +28,9 @@ public static class UpdateApplier
 
     public record Result(bool Ok, string Kind, string From, string To, string? Error, DateTime At);
 
+    // 새 버전이 시작되기를 기다리는 기본 시간. 서버가 --verify-seconds 로 바꿀 수 있다 (0 = 확인하지 않음)
+    public const int DefaultVerifySeconds = 120;
+
     public static int Run(string[] args)
     {
         var opt = Parse(args);
@@ -39,11 +45,22 @@ public static class UpdateApplier
             catch (Exception) { /* 기록 실패가 교체를 막지 않게 */ }
         }
 
+        var kind = opt.Get("--kind");
+        var fromVersion = opt.Get("--from-version");
+        var to = opt.Get("--to");
+        var dataDir = Path.GetDirectoryName(Path.GetFullPath(resultPath))!;
+        var statePath = Path.Combine(dataDir, "state.json");
+        var startedPath = Path.Combine(dataDir, StartedMark.FileName);
+        // 교체 전 상태. 새 버전이 시작되지 않아 되돌릴 때 이 상태로 돌려놓는다 (새 버전이 잠깐 떠서 바꿔 놓은 것을 지우기 위해)
+        var snapshot = ReadText(statePath);
+
         var offline = Path.Combine(app, OfflineFile);
         string? error = null;
         try
         {
-            Log($"{opt.Get("--kind")} 시작: {opt.Get("--from-version")} → {opt.Get("--to")} (app={app}, from={from})");
+            Log($"{kind} 시작: {fromVersion} → {to} (app={app}, from={from})");
+            // 지금 서버가 남긴 시작 표시를 지워 둔다. 다시 띄운 뒤 새로 생기는 표시만 본다
+            TryDelete(startedPath);
             File.WriteAllText(offline, OfflinePage);
 
             if (int.TryParse(opt.Get("--pid", ""), out var pid)) WaitExit(pid, TimeSpan.FromSeconds(90));
@@ -59,22 +76,48 @@ public static class UpdateApplier
             Log("실패: " + ex);
         }
 
-        try
-        {
-            File.WriteAllText(resultPath, JsonSerializer.Serialize(
-                new Result(error == null, opt.Get("--kind"), opt.Get("--from-version"), opt.Get("--to"), error, DateTime.UtcNow)));
-        }
-        catch (Exception ex) { Log("결과 기록 실패: " + ex.Message); }
+        WriteResult(resultPath, new Result(error == null, kind, fromVersion, to, error, DateTime.UtcNow), Log);
 
         try { File.Delete(offline); }
         catch (Exception ex) { Log("안내 파일 삭제 실패: " + ex.Message); }
 
         // 서버를 다시 띄운다. 교체에 실패했어도 원래 버전이 다시 떠야 한다
+        var began = DateTime.UtcNow;
+        var server = StartServer(opt, app, Log);
+
+        // 새 버전이 실제로 요청을 받기 시작했는지 확인한다. IIS 는 다음 요청 때 앱을 띄우므로(도우미가 띄우지 않음) 확인하지 않는다
+        var verify = int.TryParse(opt.Get("--verify-seconds", ""), out var v) ? Math.Clamp(v, 0, 1800) : DefaultVerifySeconds;
+        if (error == null && kind == "apply" && verify > 0 && server.Restarted)
+        {
+            // 기다리는 시간은 다시 띄우기가 끝난 뒤부터 센다 (서비스 시작 재시도에 쓴 시간은 빼고)
+            var crashed = false;
+            var started = WaitStarted(startedPath, to, DateTime.UtcNow + TimeSpan.FromSeconds(verify),
+                () => crashed = server.Failed || server.Process is { HasExited: true });
+            if (started) Log($"새 버전 v{to} 시작 확인");
+            else
+            {
+                // 시작하다 멈췄으면(프로세스 종료·서비스 시작 실패) 그 사실을, 아니면 기다린 시간을 이유로 남긴다
+                var why = crashed ? "시작하다 멈춤" : $"{verify}초 안에 시작되지 않음";
+                StartFailed(new FailedStart(opt, app, backup, Path.Combine(dataDir, "rolledback"), resultPath, statePath, snapshot,
+                    fromVersion, to, why, began, server), Log);
+                return 1;
+            }
+        }
+        return error == null ? 0 : 1;
+    }
+
+    // ── 다시 띄우기와 시작 확인 ────────────────────────────────────────────
+    // Restarted: 도우미가 서버를 띄웠는지(서비스·직접 실행). Failed: 서비스를 시작하지 못함. Process: 직접 실행한 서버
+    private sealed record Server(bool Restarted, bool Failed, Process? Process);
+
+    private static Server StartServer(Options opt, string app, Action<string> log)
+    {
         var service = opt.Get("--start-service", "");
         if (service.Length > 0)
         {
             var failed = ServiceInstaller.StartService(service, TimeSpan.FromSeconds(90));
-            Log(failed == null ? "서비스 다시 시작: " + service : "서비스 다시 시작 실패: " + failed);
+            log(failed == null ? "서비스 다시 시작: " + service : "서비스 다시 시작 실패: " + failed);
+            return new Server(true, failed != null, null);
         }
 
         // 직접 실행(서비스·IIS 아님)한 서버는 같은 명령으로 다시 띄운다
@@ -85,12 +128,202 @@ public static class UpdateApplier
             {
                 var psi = new ProcessStartInfo(restart) { UseShellExecute = false, WorkingDirectory = opt.Get("--restart-dir", app) };
                 foreach (var a in opt.Rest) psi.ArgumentList.Add(a);
-                Process.Start(psi);
-                Log("서버 다시 시작: " + restart);
+                var p = Process.Start(psi);
+                log("서버 다시 시작: " + restart);
+                return new Server(true, p == null, p);
             }
-            catch (Exception ex) { Log("서버 다시 시작 실패: " + ex.Message); }
+            catch (Exception ex)
+            {
+                log("서버 다시 시작 실패: " + ex.Message);
+                return new Server(true, true, null);
+            }
         }
-        return error == null ? 0 : 1;
+        return new Server(false, false, null);
+    }
+
+    // 새 버전이 시작 표시(started.json)를 남길 때까지 기다린다. 서버가 먼저 끝나 버리면(시작하자마자 죽음) 더 기다리지 않는다
+    internal static bool WaitStarted(string startedPath, string version, DateTime until, Func<bool> gone)
+    {
+        while (true)
+        {
+            if (StartedVersion(startedPath) == version) return true;
+            if (gone() || DateTime.UtcNow > until)
+            {
+                Thread.Sleep(500);   // 끝나기 직전에 쓴 표시를 놓치지 않게 한 번 더 본다
+                return StartedVersion(startedPath) == version;
+            }
+            Thread.Sleep(1000);
+        }
+    }
+
+    internal static string? StartedVersion(string path)
+    {
+        try { return File.Exists(path) ? JsonSerializer.Deserialize<StartedMark>(File.ReadAllText(path))?.Version : null; }
+        catch (Exception) { return null; }   // 쓰는 중이거나 깨졌으면 아직 없는 것으로 본다
+    }
+
+    // Why: 시작되지 않은 모습 ("시작하다 멈춤" / "120초 안에 시작되지 않음") — 안내 문장에 그대로 넣는다
+    private sealed record FailedStart(Options Opt, string App, string Backup, string RolledBack, string ResultPath, string StatePath, string? Snapshot,
+        string From, string To, string Why, DateTime Began, Server Server);
+
+    // 새 버전이 시작되지 않았다. DB 구조가 같으면 이전 버전으로 되돌려 다시 띄우고, 다르면(마이그레이션이 이미 적용됐을 수 있음)
+    // 되돌리지 않고 복구 방법을 남긴다. 결과·상태는 다시 뜬 이전 버전이 이력과 업데이트 화면에 보여 준다
+    private static void StartFailed(FailedStart f, Action<string> log)
+    {
+        var detail = StartupError(f.App, f.Began);
+        // 새 버전의 DB 구조: 도우미 자신(새 버전의 실행 파일)의 값, 없으면 서버가 넘긴 배포 정보의 값
+        var toSchema = AppBuild.FromAssembly().Schema;
+        if (toSchema.Length == 0) toSchema = f.Opt.Get("--to-schema", "");
+        var fromSchema = f.Opt.Get("--from-schema", "");
+        if (fromSchema.Length == 0) fromSchema = PendingSchema(f.Snapshot) ?? "";
+        var sameSchema = fromSchema.Length > 0 && fromSchema == toSchema;
+        log($"새 버전(v{f.To})이 시작되지 않음: {f.Why} (DB 구조 {(sameSchema ? "같음" : $"다르거나 알 수 없음: {fromSchema} → {toSchema}")})"
+            + (detail != null ? Environment.NewLine + detail : ""));
+
+        if (!sameSchema)
+        {
+            var message = $"새 버전(v{f.To})이 시작되지 않았습니다({f.Why}). DB 구조가 바뀌는 업데이트라 자동으로 되돌리지 않았습니다. " +
+                          $"DB 백업을 복원한 뒤 이전 버전(v{f.From}) 배포 파일로 설치하세요.";
+            WriteState(f.StatePath, ReadText(f.StatePath), s => s["StartFailure"] = Failure(f, message, detail, false), log);
+            WriteResult(f.ResultPath, new Result(false, "apply", f.From, f.To, message, DateTime.UtcNow), log);
+            log(message);
+            return;
+        }
+
+        string? rollbackError = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            StopServer(f.Opt, f.App, f.Server.Process, log);
+            try
+            {
+                if (!WaitUnlocked(f.App, TimeSpan.FromSeconds(60))) throw new IOException("새 버전이 종료되지 않아 파일을 바꿀 수 없습니다.");
+                Swap(f.App, f.Backup, f.RolledBack);
+                rollbackError = null;
+                break;
+            }
+            catch (Exception ex)
+            {
+                rollbackError = ex.Message;
+                log($"되돌리기 실패 ({attempt}/3): {ex.Message}");
+            }
+        }
+
+        string error;
+        if (rollbackError == null)
+        {
+            error = $"새 버전(v{f.To})이 시작되지 않아({f.Why}) 이전 버전(v{f.From})으로 자동으로 되돌렸습니다.";
+            // 교체 전 상태로 돌려놓고(되돌린 버전이 남긴 이력·이전 버전 기록 제거), 이 버전은 자동으로 다시 적용하지 않게 한다.
+            // SkipAuto 는 원래 뜻(되돌린 버전) 그대로 쓴다 — 이 기능이 없는 옛 버전으로 돌아가도 밤마다 다시 적용하지 않도록
+            WriteState(f.StatePath, f.Snapshot ?? ReadText(f.StatePath), s =>
+            {
+                s["SkipAuto"] = f.To;
+                s["StartFailure"] = Failure(f, error, detail, true);
+                s["Previous"] = null;   // 보관 폴더는 이번 교체에서 지금 버전 파일로 바뀌었다
+            }, log);
+        }
+        else
+        {
+            error = $"새 버전(v{f.To})이 시작되지 않았고({f.Why}) 이전 버전으로 되돌리지도 못했습니다: {rollbackError}";
+            WriteState(f.StatePath, ReadText(f.StatePath), s => s["StartFailure"] = Failure(f, error, detail, false), log);
+        }
+        WriteResult(f.ResultPath, new Result(false, "apply", f.From, f.To,
+            error + (detail != null ? " 시작 오류: " + FirstLine(detail) : ""), DateTime.UtcNow), log);
+        log(error);
+        StartServer(f.Opt, f.App, log);
+    }
+
+    private static JsonNode? Failure(FailedStart f, string error, string? detail, bool rolledBack) =>
+        JsonSerializer.SerializeToNode(new StartFailure(f.To, f.From, error, detail, rolledBack, DateTime.UtcNow));
+
+    // 시작하다 죽은 서버가 남긴 오류(App_Data/startup-error.log)의 앞부분. 이번에 다시 띄운 뒤에 쓴 것만
+    internal static string? StartupError(string app, DateTime since)
+    {
+        try
+        {
+            var path = Path.Combine(app, DataDir, ServiceInstaller.StartupErrorFile);
+            if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < since.AddSeconds(-2)) return null;
+            var text = string.Join(Environment.NewLine, File.ReadLines(path).Take(15)).Trim();
+            return text.Length == 0 ? null : text.Length > 2000 ? text[..2000] : text;
+        }
+        catch (Exception) { return null; }
+    }
+
+    // 교체 직전에 서버가 기록한 DB 구조 (옛 서버는 --from-schema 를 넘기지 않으므로 상태 파일에서 읽는다)
+    private static string? PendingSchema(string? state)
+    {
+        try { return state == null ? null : JsonNode.Parse(state)?["Pending"]?["FromSchema"]?.GetValue<string>(); }
+        catch (Exception) { return null; }
+    }
+
+    private static string FirstLine(string text)
+    {
+        // 첫 줄은 기록 시각이라 그다음 줄(예외 내용)을 쓴다
+        var lines = text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        var line = lines.Count > 1 && DateTime.TryParse(lines[0], out _) ? lines[1] : lines.FirstOrDefault() ?? "";
+        return line.Length > 300 ? line[..300] : line;
+    }
+
+    // 되돌리기 전에 새 버전을 확실히 내린다. 서비스는 복구 동작(실패 시 다시 시작)으로 다시 뜰 수 있어 남은 프로세스까지 끝낸다
+    private static void StopServer(Options opt, string app, Process? process, Action<string> log)
+    {
+        try
+        {
+            if (process is { HasExited: false })
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(10000);
+            }
+        }
+        catch (Exception ex) { log("서버 종료 실패: " + ex.Message); }
+
+        var service = opt.Get("--start-service", "");
+        if (service.Length == 0) return;
+        var stopped = ServiceInstaller.StopService(service, TimeSpan.FromSeconds(60));
+        if (stopped != null) log("서비스 중지: " + stopped);
+        if (!OperatingSystem.IsWindows()) return;
+        var exe = Path.Combine(app, "GanttScheduler.exe");
+        foreach (var p in Process.GetProcessesByName("GanttScheduler"))
+        {
+            using (p)
+            {
+                try
+                {
+                    if (p.Id == Environment.ProcessId || !string.Equals(p.MainModule?.FileName, exe, StringComparison.OrdinalIgnoreCase)) continue;
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(10000);
+                    log("남은 서버 프로세스 종료: " + p.Id);
+                }
+                catch (Exception ex) { log("서버 프로세스 종료 실패: " + ex.Message); }
+            }
+        }
+    }
+
+    // 상태 파일은 서버의 UpdateState 다. 이 도우미보다 옛/새 버전이 쓴 항목도 그대로 남도록 JSON 으로 고친다
+    private static void WriteState(string path, string? text, Action<JsonObject> change, Action<string> log)
+    {
+        try
+        {
+            JsonObject state;
+            try { state = (text == null ? null : JsonNode.Parse(text) as JsonObject) ?? new JsonObject(); }
+            catch (JsonException) { state = new JsonObject(); }
+            change(state);
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, state.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex) { log("상태 기록 실패: " + ex.Message); }
+    }
+
+    private static void WriteResult(string path, Result result, Action<string> log)
+    {
+        try { File.WriteAllText(path, JsonSerializer.Serialize(result)); }
+        catch (Exception ex) { log("결과 기록 실패: " + ex.Message); }
+    }
+
+    private static string? ReadText(string path)
+    {
+        try { return File.Exists(path) ? File.ReadAllText(path) : null; }
+        catch (Exception) { return null; }
     }
 
     // 앱 폴더의 파일을 source 의 내용으로 바꾼다. 원래 파일은 backup 으로 옮겨 둔다(되돌리기용).
@@ -174,6 +407,21 @@ public static class UpdateApplier
         var list = File.ReadAllLines(path).Select(l => l.Trim().Replace('\\', '/')).Where(l => l.Length > 0).ToList();
         if (!list.Contains(FileList)) list.Add(FileList);
         return list;
+    }
+
+    // 받아 둔 버전 폴더에서 빠진 파일 (없으면 null). 실행 파일과, 패키지 목록이 있으면 그 목록의 파일을 모두 본다.
+    // 폴더가 일부만 지워진 경우(Windows 에서 잠긴 파일만 남음)를 적용 전에 알아채 다시 받게 하려는 것이다
+    public static string? MissingFile(string dir)
+    {
+        try
+        {
+            if (!File.Exists(Path.Combine(dir, EntryDll))) return EntryDll;
+            return ReadList(dir)?.Where(r => !Protected(r)).FirstOrDefault(r => !File.Exists(Path.Combine(dir, r)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return FileList;   // 목록을 읽지 못하면 온전한지 알 수 없다
+        }
     }
 
     // 데이터 폴더와 점검 안내 파일은 교체 대상에서 뺀다

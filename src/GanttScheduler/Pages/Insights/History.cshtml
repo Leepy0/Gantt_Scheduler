@@ -61,7 +61,8 @@
             @foreach (var r in d.Rows)
             {
                 <li>
-                    <span class="history-time num" data-utc="@r.At.ToString("o")">@KoreaClock.ToKst(r.At).ToString("MM-dd HH:mm")</span>
+                    @* 화면의 시각은 모두 브라우저 현지 시각(App.time). 서버는 UTC 를 datetime 에 싣고, 글자는 스크립트가 못 돌 때의 한국 시간이다 *@
+                    <time class="history-time num" datetime="@DateTime.SpecifyKind(r.At, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ssZ")">@KoreaClock.ToKst(r.At).ToString("MM-dd HH:mm")</time>
                     <span class="history-user">@r.User</span>
                     <span class="history-body">
                         <a asp-page="/Projects/Detail" asp-route-id="@r.ProjectId">@r.Project</a>

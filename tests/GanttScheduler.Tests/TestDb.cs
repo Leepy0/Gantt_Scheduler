@@ -46,7 +46,10 @@ public sealed class TestDb : IDisposable
     public AppDb Open()
     {
         var builder = new DbContextOptionsBuilder<AppDb>();
-        if (UseSqlServer) builder.UseSqlServer(SqlServerConnection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema));
+        // 운영(DbSetup.Configure)과 같은 실행 전략(재시도)으로 연다 — 서비스가 트랜잭션을 직접 열면 운영에서는
+        // 'does not support user-initiated transactions' 로 실패하므로, 서비스 테스트도 같은 조건에서 걸리게 한다
+        if (UseSqlServer)
+            builder.UseSqlServer(SqlServerConnection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema).EnableRetryOnFailure());
         else builder.UseSqlite($"Data Source={_sqlitePath}");
         return new AppDb(builder.Options);
     }

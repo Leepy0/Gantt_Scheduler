@@ -10,17 +10,14 @@ public class ExcelExporter
     public const string ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     public byte[] ProjectList(List<ProjectView> rows, DateOnly today, string filterText) =>
-        Encoding.UTF8.GetBytes(filterText + "\n" + string.Join("\n", rows.Select(p => $"{p.Title},{p.Category},{StateLabel(p)},{p.Progress}")));
+        Encoding.UTF8.GetBytes(filterText + "\n" + string.Join("\n", rows.Select(p => $"{p.Title},{p.Category},{p.StateLabel},{p.Progress}")));
 
     public byte[] ProjectSchedule(ProjectView p, DateOnly today) =>
-        Encoding.UTF8.GetBytes(string.Join("\n", p.Stages.Select(s => $"{s.Name},{s.TargetDate},{s.CompletedDate},{StageLabel(s)}")));
+        Encoding.UTF8.GetBytes(string.Join("\n", p.Stages.Select(s => $"{s.Name},{s.TargetDate},{s.CompletedDate},{s.Chip.Text}")));
 
     public byte[] Weekly(WeeklyReport report) =>
         Encoding.UTF8.GetBytes(string.Join("\n", report.Projects.Select(p => $"{p.Title},{p.StateLabel},{p.Done.Count},{p.Changes.Count}")));
 
-    public static string StateLabel(ProjectView p) => p.DelayDays > 0 ? "지연" : p.State;
-    public static string StageLabel(StageView s) => s.Status;
-    public static string WorkLabel(WorkView w) => w.Status;
     public static string Signed(int days) => days > 0 ? "+" + days : days.ToString();
 }
 

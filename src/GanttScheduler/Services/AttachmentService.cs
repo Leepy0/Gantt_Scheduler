@@ -94,7 +94,7 @@ public class AttachmentService
     {
         var a = await _db.Attachments.Include(x => x.Project).FirstOrDefaultAsync(x => x.Id == id)
             ?? throw new RuleException("첨부 파일을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
-        if (!_me.IsAdmin && a.UploadedById != _me.Id && a.Project?.OwnerId != _me.Id)
+        if (!Rules.CanDeleteAttachment(a, a.Project?.OwnerId, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("첨부 삭제는 올린 사람·과제 담당자 또는 관리자만 할 수 있습니다.");
 
         var now = _clock.UtcNow;

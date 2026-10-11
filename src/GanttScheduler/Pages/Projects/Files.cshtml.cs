@@ -12,11 +12,13 @@ public class FilesModel : PageModel
 {
     private readonly AttachmentService _files;
     private readonly ProjectService _projects;
+    private readonly IClock _clock;
 
-    public FilesModel(AttachmentService files, ProjectService projects)
+    public FilesModel(AttachmentService files, ProjectService projects, IClock clock)
     {
         _files = files;
         _projects = projects;
+        _clock = clock;
     }
 
     public IActionResult OnGet() => NotFound();
@@ -41,7 +43,8 @@ public class FilesModel : PageModel
             if (file == null) throw new RuleException("파일을 선택해 주세요.", "file");
             await using var stream = file.OpenReadStream();
             await _files.SaveAsync(projectId, stageId, file.FileName, file.Length, stream);
-            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId) });
+            // today: 상세 화면의 다른 변경 응답(Detail 의 Run)과 같게 한국 날짜를 실어 오래 열어 둔 화면의 '오늘'을 맞춘다
+            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId), today = _clock.Today });
         }
         catch (RuleException ex)
         {

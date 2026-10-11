@@ -33,13 +33,18 @@ public static class ServiceInstaller
     // 서비스가 실행할 명령. 포트를 여기에 두므로 설정 파일을 고치지 않는다 (바꾸려면 install 을 다시 실행)
     public static string BinPath(string exe, string name, int port) => $"\"{exe}\" --service {name} --urls http://*:{port}";
 
-    // 서비스 보안 설명자(SDDL)에 "이 계정은 서비스를 시작·조회할 수 있다"를 더한다.
-    // 교체 도우미는 서비스 계정으로 돌기 때문에, 이 권한이 없으면 파일을 바꾼 뒤 서비스를 다시 띄우지 못한다
+    // 서비스 보안 설명자(SDDL)에 "이 계정은 서비스를 시작·중지·조회할 수 있다"를 더한다.
+    // 교체 도우미는 서비스 계정으로 돌기 때문에, 이 권한이 없으면 파일을 바꾼 뒤 서비스를 다시 띄우지 못한다.
+    // 중지(WP)는 새 버전이 시작되지 않아 이전 버전으로 되돌릴 때, 복구 동작으로 다시 뜨는 서비스를 멈추는 데 쓴다
     public static string AddStartRight(string sddl, string sid)
     {
         sddl = sddl.Trim();
-        var ace = $"(A;;RPLC;;;{sid})";
+        var ace = $"(A;;RPWPLC;;;{sid})";
         if (sddl.Contains(ace, StringComparison.OrdinalIgnoreCase)) return sddl;
+        // 예전 설치가 넣은 시작·조회 권한(RPLC)은 새 권한으로 바꾼다
+        var old = $"(A;;RPLC;;;{sid})";
+        var at = sddl.IndexOf(old, StringComparison.OrdinalIgnoreCase);
+        if (at >= 0) return sddl[..at] + ace + sddl[(at + old.Length)..];
         if (!sddl.StartsWith("D:", StringComparison.Ordinal)) throw new FormatException("서비스 보안 설명자 형식을 알 수 없습니다: " + sddl);
         var sacl = sddl.IndexOf("S:(", StringComparison.Ordinal);   // 감사 설정(SACL)이 있으면 그 앞에 넣는다
         return sacl < 0 ? sddl + ace : sddl[..sacl] + ace + sddl[sacl..];
@@ -360,6 +365,25 @@ public static class ServiceInstaller
         var output = p.StandardOutput.ReadToEnd();
         p.WaitForExit();
         return (p.ExitCode, output + error.GetAwaiter().GetResult());
+    }
+
+    // 교체 도우미가 시작되지 않은 새 버전을 되돌리기 전에 서비스를 멈춘다. 멈췄거나 이미 멈춰 있으면 null, 아니면 이유.
+    // 예전에 설치한 서비스는 서비스 계정에 중지 권한이 없어 거절될 수 있다 — 그때는 도우미가 프로세스를 직접 끝낸다
+    public static string? StopService(string name, TimeSpan timeout)
+    {
+        try
+        {
+            var (code, output) = Sc("stop", name);
+            if (code != 0 && code != 1062) return $"sc stop 코드 {code}: {output.Trim()}";   // 1062: 시작되지 않음
+            var until = DateTime.UtcNow + timeout;
+            while (StateOf(Sc("query", name).Output) is { } state && state != "STOPPED")
+            {
+                if (DateTime.UtcNow > until) return "서비스가 멈추지 않습니다 (" + state + ")";
+                Thread.Sleep(500);
+            }
+            return null;
+        }
+        catch (Exception ex) { return ex.Message; }
     }
 
     // 교체 도우미가 파일을 바꾼 뒤 서비스를 다시 띄운다. 직전 프로세스가 완전히 정리될 때까지 잠깐 거절될 수 있어 다시 시도한다

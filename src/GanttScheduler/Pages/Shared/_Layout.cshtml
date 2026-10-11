@@ -1,5 +1,6 @@
 @inject CurrentUser Me
 @inject UpdateService Updates
+@inject IClock Clock
 @{
     // 관리자에게만 새 버전·적용 대기를 알린다
     var badge = Me.IsAdmin ? Updates.Badge() : null;
@@ -7,7 +8,9 @@
     var bare = ViewData["Bare"] as bool? ?? false;
 }
 <!DOCTYPE html>
-<html lang="ko" data-build="@Updates.Build.Id">
+@* data-today: 한국 날짜(지연 판정의 '오늘'). 화면이 오래 열려 있으면 /version 응답의 today 로 갱신한다
+   data-day-window: 접속자 PC 의 날짜를 '오늘'로 받아 주는 범위(한국 날짜 ± 일수, Rules.ClientDayWindow) — App.userToday 가 쓴다 *@
+<html lang="ko" data-build="@Updates.Build.Id" data-today="@Clock.Today.ToString("yyyy-MM-dd")" data-day-window="@Rules.ClientDayWindow">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -49,11 +52,11 @@
     @if (!bare)
     {
         <nav class="bottom-nav" aria-label="주 메뉴">
-            <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")"><svg class="ic"><use href="#i-dash" /></svg><span>대시보드</span></a>
-            <a asp-page="/My/Index" class="@(nav == "my" ? "on" : "")"><svg class="ic"><use href="#i-tasks" /></svg><span>내 할 일</span></a>
-            <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")"><svg class="ic"><use href="#i-list" /></svg><span>과제</span></a>
-            <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")"><svg class="ic"><use href="#i-chart" /></svg><span>분석</span></a>
-            <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")"><svg class="ic"><use href="#i-gear" /></svg><span>관리</span></a>
+            <a asp-page="/Index" class="@(nav == "dash" ? "on" : "")" aria-current="@(nav == "dash" ? "page" : null)"><svg class="ic"><use href="#i-dash" /></svg><span>대시보드</span></a>
+            <a asp-page="/My/Index" class="@(nav == "my" ? "on" : "")" aria-current="@(nav == "my" ? "page" : null)"><svg class="ic"><use href="#i-tasks" /></svg><span>내 할 일</span></a>
+            <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")" aria-current="@(nav == "projects" ? "page" : null)"><svg class="ic"><use href="#i-list" /></svg><span>과제</span></a>
+            <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")" aria-current="@(nav == "insights" ? "page" : null)"><svg class="ic"><use href="#i-chart" /></svg><span>분석</span></a>
+            <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)"><svg class="ic"><use href="#i-gear" /></svg><span>관리</span></a>
         </nav>
     }
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>

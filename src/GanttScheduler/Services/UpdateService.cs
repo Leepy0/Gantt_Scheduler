@@ -12,13 +12,16 @@ public record ReleaseView(string Version, long Size, DateTime? Published, string
 public record StagedView(string Version, DateTime At, string Origin, string By, string Sha256, string? Notes, bool SchemaChange);
 public record PreviousView(string Version, DateTime At, bool CanRollback, string? BlockReason);
 public record UpdateSettings(bool AutoCheck, bool AutoApply, int WindowFrom, int WindowTo, int IdleMinutes);
+// 적용했지만 시작되지 않은 버전. Retry: 다시 시도할 방법 (apply = 받아 둔 파일로 적용, download = 다시 받기, null = 없음)
+public record StartFailureView(string Version, string From, string Error, string? Detail, bool RolledBack, DateTime At, string? Retry);
 
 public record UpdateStatus(
     string Version, string Build, string Channel, string ChannelName, string? Commit, string Host, string Source, string? BrowserPage,
     bool CanApply, string? BlockReason, string? BlockFix,
     string Phase, int Progress, string? Error, string? ErrorFix,
     ReleaseView? Latest, DateTime? CheckedAt, string? CheckError, string? CheckFix,
-    StagedView? Staged, PreviousView? Previous, UpdateSettings Settings, List<UpdateLog> History, bool SqliteData, string? SkipAuto);
+    StagedView? Staged, PreviousView? Previous, UpdateSettings Settings, List<UpdateLog> History, bool SqliteData, string? SkipAuto,
+    bool SignatureCheck = false, string? KeyId = null, StartFailureView? StartFailure = null);
 
 // 마지막 사용자 요청 시각 — 아무도 쓰지 않을 때만 자동 적용하기 위해 기록한다
 public class ActivityTracker
@@ -26,6 +29,16 @@ public class ActivityTracker
     private long _ticks = DateTime.UtcNow.Ticks;
     public DateTime LastUtc => new(Interlocked.Read(ref _ticks), DateTimeKind.Utc);
     public void Touch() => Interlocked.Exchange(ref _ticks, DateTime.UtcNow.Ticks);
+
+    // 화면이 사람의 조작 없이 주기적으로 보내는 요청에 붙이는 머리글 (app.js 의 App.poll)
+    public const string BackgroundHeader = "X-Background";
+
+    // 사람이 쓴 요청인지. 새 버전 확인(/version)·상태 확인(/health)과 배경 확인(X-Background: 1)은 뺀다 —
+    // 열어 둔 화면이 1분마다 묻는 것까지 세면 아무도 없는 밤에도 자동 적용이 되지 않는다
+    public static bool IsUserRequest(HttpRequest request) =>
+        !request.Path.StartsWithSegments("/version")
+        && !request.Path.StartsWithSegments("/health")
+        && request.Headers[BackgroundHeader] != "1";
 }
 
 public class UpdatePaths
@@ -38,6 +51,7 @@ public class UpdatePaths
     public string StagedRoot => Path.Combine(DataDir, "staged");
     public string PreviousDir => Path.Combine(DataDir, "previous");
     public string RolledBackDir => Path.Combine(DataDir, "rolledback");
+    public string StartedPath => Path.Combine(DataDir, StartedMark.FileName);
 }
 
 // 서버 자동 업데이트: 새 버전 확인 → 받기(SHA-256 검증) → 풀어 두기 → 도우미를 띄워 교체.
@@ -51,6 +65,12 @@ public class UpdateService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<UpdateService> _log;
     private readonly bool _sqlite;
+    private readonly int _verifySeconds;
+    // 방금 적용한 받아 둔 폴더. 이 버전이 요청을 받기 시작(ApplicationStarted)할 때까지 지우지 않는다 —
+    // 그 전에 죽으면 도우미가 되돌리면서 상태를 교체 전으로 돌려(Staged = 이 폴더) '다시 시도'가 이 폴더를 쓰기 때문이다.
+    // 교체 도우미도 이 폴더에서 돌며 시작을 기다린다(Windows 에서는 실행 파일이 잠겨 반쪽만 지워진다)
+    private string? _appliedDir;
+    private volatile bool _started;
 
     private readonly object _gate = new();
     private readonly SemaphoreSlim _work = new(1, 1);   // 확인·받기는 한 번에 하나만
@@ -70,7 +90,11 @@ public class UpdateService
         _lifetime = lifetime;
         _log = log;
         _sqlite = !string.Equals(cfg["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
+        // 교체 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 도우미가 이전 버전으로 되돌린다 (0 이면 확인하지 않는다)
+        _verifySeconds = Math.Clamp(cfg.GetValue("Update:VerifySeconds", 120), 0, 1800);
         _state = Load();
+        // 요청을 받기 시작했다는 표시를 남긴다. 교체 도우미가 이것으로 새 버전이 제대로 떴는지 안다
+        lifetime.ApplicationStarted.Register(MarkStarted);
     }
 
     public AppBuild Build => _build;
@@ -107,8 +131,19 @@ public class UpdateService
                 s.CheckedAt, s.CheckError, s.CheckFix,
                 s.Staged == null ? null : new StagedView(s.Staged.Version, s.Staged.At, s.Staged.Origin, s.Staged.By, s.Staged.Sha256, s.Staged.Notes, SchemaChanged(s.Staged.Schema)),
                 prev, new UpdateSettings(s.AutoCheck, s.AutoApply, s.WindowFrom, s.WindowTo, s.IdleMinutes),
-                s.History.OrderByDescending(h => h.At).Take(10).ToList(), _sqlite, s.SkipAuto);
+                s.History.OrderByDescending(h => h.At).Take(10).ToList(), _sqlite, s.SkipAuto,
+                _source.Key != null, _source.Key?.Id, FailureView(s));
         }
+    }
+
+    // 시작되지 않은 버전과 다시 시도할 방법. 받아 둔 파일이 있으면 그것으로, 없으면 다시 받아서
+    private StartFailureView? FailureView(UpdateState s)
+    {
+        var f = s.StartFailure;
+        if (f == null) return null;
+        var retry = s.Staged?.Version == f.Version ? "apply"
+            : s.Latest != null && s.Latest.Version == f.Version && IsNewer(f.Version) ? "download" : null;
+        return new StartFailureView(f.Version, f.From, f.Error, f.Detail, f.RolledBack, f.At, retry);
     }
 
     // 관리자에게 보여 줄 한 줄 요약 (상단 칩): 받아 둔 버전 또는 새 버전
@@ -222,6 +257,9 @@ public class UpdateService
         {
             SetPhase("downloading");
             Directory.CreateDirectory(_paths.DataDir);
+            // 서명을 확인하는 빌드는 서명이 맞은 매니페스트의 해시만 믿는다 (옆에 둔 .sha256 은 서명되지 않았다)
+            if (_source.Key != null && (!r.Signed || r.Sha256 == null))
+                throw new UpdateException("서명을 확인한 배포 정보가 아닙니다.", "'지금 확인'을 다시 눌러 서명된 배포 정보를 받은 뒤 받기를 눌러 주세요.");
             var expected = r.Sha256 ?? await _source.FetchShaAsync(r, ct)
                 ?? throw new UpdateException("배포 정보에 검증용 SHA-256 이 없습니다.", "배포 파일(zip)을 직접 올려 적용하세요.");
 
@@ -248,9 +286,27 @@ public class UpdateService
         }
     }
 
-    // 브라우저로 올린 배포 파일(zip)을 검증해 받아 둔다. 서버가 인터넷에 못 나가는 사내망용
-    public async Task UploadAsync(Stream content, string by, CancellationToken ct)
+    // 브라우저로 올린 배포 파일(zip)을 검증해 받아 둔다. 서버가 인터넷에 못 나가는 사내망용.
+    // 매니페스트(GanttScheduler.json)를 같이 올리면 zip 의 해시가 그것과 같은지 보고, 서명을 확인하는 빌드는
+    // 매니페스트와 서명(GanttScheduler.json.sig)이 반드시 있어야 한다 — 올린 사람이 아니라 릴리스를 만든 곳을 믿기 위해
+    public async Task UploadAsync(Stream content, string by, CancellationToken ct, byte[]? manifest = null, byte[]? signature = null)
     {
+        ReleaseInfo? expected = null;
+        if (_source.Key != null)
+        {
+            if (manifest == null)
+                throw new UpdateException("이 서버는 서명된 배포 파일만 받습니다. 배포 정보와 서명 파일이 없습니다.",
+                    "릴리스의 zip, GanttScheduler.json, GanttScheduler.json.sig 세 파일을 함께 골라 올려 주세요.");
+            UpdateSource.CheckSignature(_source.Key, manifest, signature);
+        }
+        if (manifest != null)
+        {
+            try { expected = UpdateSource.ParseManifest(manifest); }
+            catch (JsonException) { /* 아래에서 거절 */ }
+            if (expected?.Sha256 == null)
+                throw new UpdateException("배포 정보(GanttScheduler.json)를 읽을 수 없습니다.", "릴리스의 GanttScheduler.json 을 그대로 올려 주세요.");
+        }
+
         if (!await _work.WaitAsync(0, ct)) throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
         var zip = Path.Combine(_paths.DataDir, "upload.zip.partial");
         try
@@ -260,7 +316,9 @@ public class UpdateService
             await using (var dst = new FileStream(zip, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
                 await content.CopyToAsync(dst, ct);
             var sha = await Task.Run(() => HashFile(zip), ct);
-            Stage(zip, sha, "upload", by, null);
+            if (expected != null && !sha.Equals(expected.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new UpdateException("올린 zip 이 배포 정보(GanttScheduler.json)의 SHA-256 과 다릅니다.", "같은 릴리스의 zip 과 GanttScheduler.json 을 함께 올려 주세요.");
+            Stage(zip, sha, "upload", by, expected);
         }
         finally
         {
@@ -346,13 +404,14 @@ public class UpdateService
         lock (_gate)
         {
             var staged = _state.Staged ?? throw new UpdateException("받아 둔 업데이트가 없습니다.", "먼저 새 버전을 받거나 배포 파일을 올려 주세요.");
-            if (!File.Exists(Path.Combine(staged.Dir, UpdateApplier.EntryDll)))
+            // 실행 파일만 보지 않고 패키지 목록의 파일이 모두 있는지 본다 — 일부만 남은 폴더로 바꾸면 새 버전이 시작되지 않는다
+            if (UpdateApplier.MissingFile(staged.Dir) is { } missing)
             {
                 _state.Staged = null;
                 Save();
-                throw new UpdateException("받아 둔 업데이트 파일이 없어졌습니다.", "새 버전을 다시 받아 주세요.");
+                throw new UpdateException($"받아 둔 업데이트 파일이 없어졌습니다({missing}).", "새 버전을 다시 받아 주세요.");
             }
-            Launch("apply", staged.Dir, _paths.PreviousDir, staged.Version, by);
+            Launch("apply", staged.Dir, _paths.PreviousDir, staged.Version, staged.Schema, by);
         }
     }
 
@@ -365,12 +424,12 @@ public class UpdateService
                 throw new UpdateException("되돌릴 이전 버전이 없습니다.", "이전 버전 배포 파일로 다시 설치해야 합니다.");
             if (prev.Schema != _build.Schema)
                 throw new UpdateException("이 버전에서 DB 구조가 바뀌어 프로그램만 되돌릴 수 없습니다.", "적용 전 DB 백업을 복원한 뒤 이전 버전 배포 파일로 설치해 주세요.");
-            Launch("rollback", prev.Dir, _paths.RolledBackDir, prev.Version, by);
+            Launch("rollback", prev.Dir, _paths.RolledBackDir, prev.Version, prev.Schema, by);
         }
     }
 
     // 도우미(새 버전·이전 버전 폴더의 실행 파일)를 띄우고 서버를 내린다. _gate 안에서 부른다
-    private void Launch(string kind, string fromDir, string backupDir, string toVersion, string by)
+    private void Launch(string kind, string fromDir, string backupDir, string toVersion, string? toSchema, string by)
     {
         if (_phase != "idle") throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
         var (ok, reason, fix) = ApplyBlock();
@@ -388,6 +447,8 @@ public class UpdateService
                      UpdateApplier.Flag, "--kind", kind, "--app", _paths.AppDir, "--from", fromDir, "--backup", backupDir,
                      "--pid", Environment.ProcessId.ToString(), "--result", _paths.ResultPath,
                      "--from-version", _build.VersionText, "--to", toVersion,
+                     // 아래 인자는 나중에 추가한 것이다. 옛 도우미는 모르는 인자를 무시하고, 새 도우미는 없으면 기본값을 쓴다
+                     "--verify-seconds", _verifySeconds.ToString(), "--from-schema", _build.Schema, "--to-schema", toSchema ?? "",
                  })
             psi.ArgumentList.Add(a);
 
@@ -457,6 +518,7 @@ public class UpdateService
         if (!s.AutoApply || s.Staged == null) return false;
         if (!AppBuild.TryParseVersion(s.Staged.Version, out var v) || v <= build.Version) return false;
         if (s.Staged.Version == s.SkipAuto) return false;   // 문제가 있어 되돌린 버전
+        if (s.Staged.Version == s.StartFailure?.Version) return false;   // 적용했지만 시작되지 않은 버전
         if (string.IsNullOrEmpty(s.Staged.Schema) || s.Staged.Schema != build.Schema) return false;
         if (utcNow - lastActivityUtc < TimeSpan.FromMinutes(s.IdleMinutes)) return false;
         var hour = KoreaClock.ToKst(utcNow).Hour;
@@ -470,8 +532,9 @@ public class UpdateService
     {
         lock (_gate)
         {
-            if (_phase != "idle" || !ApplyBlock().Ok) return;
-            if (!ShouldAutoApply(_state, _build, DateTime.UtcNow, _activity.LastUtc)) return;
+            // 쓰기 시험(ApplyBlock → 시험 파일 쓰기)은 비용이 있어, 적용할 때가 됐을 때만 본다 (이 판단은 1분마다 돈다)
+            if (_phase != "idle" || !ShouldAutoApply(_state, _build, DateTime.UtcNow, _activity.LastUtc)) return;
+            if (!ApplyBlock().Ok) return;
         }
         try { Apply("자동"); }
         catch (Exception ex) { _log.LogWarning("자동 적용 실패: {Message}", ex.Message); }
@@ -489,7 +552,7 @@ public class UpdateService
         {
             latest = _state.Latest;
             if (latest == null || !IsNewer(latest.Version) || !_state.AutoApply || _state.Staged?.Version == latest.Version) return;
-            if (latest.Version == _state.SkipAuto) return;
+            if (latest.Version == _state.SkipAuto || latest.Version == _state.StartFailure?.Version) return;
         }
         await DownloadAsync(latest, "자동", ct);
     }
@@ -510,8 +573,9 @@ public class UpdateService
                 }
                 catch (Exception) { /* 결과 파일이 깨졌으면 버전으로 판단 */ }
 
-                // 결과 파일이 없어도 지금 버전이 목표 버전이면 성공한 것이다
-                var ok = result?.Ok ?? (_build.VersionText == pending.To);
+                // 지금 버전이 목표 버전이면 성공한 것이다. 결과 파일은 실패 이유를 알려 준다
+                // (교체 뒤 새 버전이 늦게 떠서 도우미가 실패로 적어 두었더라도, 이렇게 떴으면 성공이다)
+                var ok = _build.VersionText == pending.To;
                 var error = ok ? null : result?.Error ?? "교체가 끝나지 않았습니다. App_Data/updates/apply.log 를 확인하세요.";
                 _state.History.Add(new UpdateLog(DateTime.UtcNow, pending.Kind, pending.From, pending.To, pending.By, ok, error));
                 if (_state.History.Count > 30) _state.History.RemoveRange(0, _state.History.Count - 30);
@@ -519,7 +583,9 @@ public class UpdateService
                 if (ok && pending.Kind == "apply")
                 {
                     _state.Previous = new PreviousVersion(pending.From, pending.FromSchema, _paths.PreviousDir, DateTime.UtcNow);
+                    if (_state.Staged?.Version == pending.To) _appliedDir = Path.GetFullPath(_state.Staged.Dir);
                     _state.Staged = null;
+                    _state.StartFailure = null;
                 }
                 else if (ok)
                 {
@@ -532,8 +598,11 @@ public class UpdateService
                 else _log.LogError("{Kind} 실패: v{From} → v{To}: {Error}", pending.Kind, pending.From, pending.To, error);
             }
 
-            // 이미 적용됐거나 없어진 받아 둔 파일 정리
-            if (_state.Staged != null && (!IsNewer(_state.Staged.Version) || !Directory.Exists(_state.Staged.Dir))) _state.Staged = null;
+            // 시작되지 않았다고 기록된 버전이 지금 떠 있으면 그 기록은 지난 일이다
+            if (_state.StartFailure != null && _state.StartFailure.Version == _build.VersionText) _state.StartFailure = null;
+
+            // 이미 적용됐거나 없어진(일부만 남은 것 포함) 받아 둔 파일 정리 — 반쪽 폴더로 적용하면 새 버전이 반드시 시작에 실패한다
+            if (_state.Staged != null && (!IsNewer(_state.Staged.Version) || UpdateApplier.MissingFile(_state.Staged.Dir) != null)) _state.Staged = null;
             if (_state.Previous != null && !Directory.Exists(_state.Previous.Dir)) _state.Previous = null;
             Save();
         }
@@ -546,17 +615,18 @@ public class UpdateService
         if (!_work.Wait(0)) return;   // 받거나 푸는 중인 파일을 지우지 않도록
         try
         {
-            string? keep;
+            var keep = new List<string>();
             bool hasPrevious;
             lock (_gate)
             {
-                keep = _state.Staged == null ? null : Path.GetFullPath(_state.Staged.Dir);
+                if (_state.Staged != null) keep.Add(Path.GetFullPath(_state.Staged.Dir));
+                if (_appliedDir != null && !_started) keep.Add(_appliedDir);   // 시작이 확인될 때까지 (위 _appliedDir 설명)
                 hasPrevious = _state.Previous != null;
             }
             if (Directory.Exists(_paths.StagedRoot))
             {
                 foreach (var dir in Directory.GetDirectories(_paths.StagedRoot))
-                    if (!string.Equals(Path.GetFullPath(dir), keep, StringComparison.OrdinalIgnoreCase)) TryDeleteDir(dir);
+                    if (!keep.Contains(Path.GetFullPath(dir), StringComparer.OrdinalIgnoreCase)) TryDeleteDir(dir);
             }
             TryDeleteDir(_paths.RolledBackDir);
             if (!hasPrevious) TryDeleteDir(_paths.PreviousDir);
@@ -567,6 +637,24 @@ public class UpdateService
         {
             _work.Release();
         }
+    }
+
+    // 시작되지 않은 버전 안내를 닫는다. 그 버전을 자동으로 다시 적용하지 않는 것(SkipAuto)은 그대로 둔다
+    public void DismissFailure() => Change(s => s.StartFailure = null);
+
+    // 요청을 받기 시작했을 때(ApplicationStarted) 남기는 표시. 쓰다가 끊겨도 깨진 파일을 읽지 않게 임시 파일에 쓰고 바꿔치기한다
+    internal void MarkStarted()
+    {
+        // 이제 방금 적용한 받아 둔 폴더를 지워도 된다 (다음 정리 때 — 도우미가 이 표시를 보고 끝난 뒤)
+        _started = true;
+        try
+        {
+            Directory.CreateDirectory(_paths.DataDir);
+            var temp = _paths.StartedPath + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(new StartedMark(_build.Id, _build.VersionText, Environment.ProcessId, DateTime.UtcNow)));
+            File.Move(temp, _paths.StartedPath, overwrite: true);
+        }
+        catch (Exception ex) { _log.LogWarning("시작 표시를 남기지 못했습니다: {Message}", ex.Message); }
     }
 
     // ── 내부 ─────────────────────────────────────────────────────────────

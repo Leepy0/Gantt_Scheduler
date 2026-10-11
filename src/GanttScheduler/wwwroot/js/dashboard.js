@@ -32,11 +32,13 @@
         });
     }
 
-    function render(keepScroll) {
+    // print: 인쇄할 때는 월 배율로 전체 일정을 종이 한 폭에 담는다 (화면처럼 가로 스크롤 안의 일부만 잘려 나오지 않게)
+    function render(keepScroll, print) {
         if (!host) return;
         gantt = Gantt.render(host, {
-            rows: rows(), today: data.today, holidays: data.holidays, zoom: zoom,
-            corner: '과제', keepScroll: keepScroll
+            rows: rows(), today: data.today, holidays: data.holidays, zoom: print ? 'month' : zoom,
+            fit: print ? 1000 : null,
+            corner: '과제', keepScroll: keepScroll && !print
         });
         document.querySelectorAll('#zoom [data-zoom]').forEach(function (b) {
             b.classList.toggle('on', b.dataset.zoom === zoom);
@@ -73,6 +75,8 @@
         clearTimeout(timer);
         timer = setTimeout(function () { render(true); }, 150);
     });
+
+    App.onPrint(function () { render(false, true); }, function () { render(false); });
 
     render(false);
 })();

@@ -28,6 +28,8 @@ namespace Microsoft.EntityFrameworkCore
     public class SqlServerOptions
     {
         public SqlServerOptions MigrationsHistoryTable(string table, string? schema = null) => this;
+        public SqlServerOptions EnableRetryOnFailure() => this;
+        public SqlServerOptions EnableRetryOnFailure(int maxRetryCount, TimeSpan maxRetryDelay, IEnumerable<int>? errorNumbersToAdd) => this;
     }
 
     public class DbContextOptionsBuilder

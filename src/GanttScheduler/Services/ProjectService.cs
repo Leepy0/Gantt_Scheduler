@@ -15,10 +15,11 @@ public record StageInput(
     int ProjectId, int? Id, string? Name, DateOnly? TargetDate, DateOnly? CompletedDate, string? Reason, bool Cascade,
     int? Version = null, bool CloseWorks = false, bool CascadeWorks = false);
 
+// ClientToday: 화면(접속한 PC)의 오늘 날짜. 진행률만 올렸을 때 넣는 실적 시작에 쓴다(Rules.UserToday)
 public record WorkInput(
     int? Id, int StageId, string? Title, string? Owner, string? CoOwner,
     DateOnly? PlanStart, DateOnly? PlanEnd, DateOnly? ActualStart, DateOnly? ActualEnd,
-    int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null);
+    int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null);
 
 public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text);
 
@@ -100,7 +101,26 @@ public class ProjectService
     public async Task<ProjectView?> ViewAsync(int id)
     {
         var p = await LoadAsync(id);
-        return p == null ? null : Views.Project(p, _clock.Today, await LocationsAsync(), detail: true, calendar: await CalendarAsync());
+        if (p == null) return null;
+        var view = Views.Project(p, _clock.Today, await LocationsAsync(), detail: true, calendar: await CalendarAsync());
+        // 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서비스의 검사와 같은 판정(Rules.CanDelete…)을 지금 사용자로 계산해 싣는다
+        var userId = _me.User?.Id;
+        var files = p.Attachments.ToDictionary(a => a.Id);
+        return view with
+        {
+            CanDelete = Rules.CanDeleteProject(p, userId, _me.IsAdmin),
+            Attachments = view.Attachments?.Select(a => a with
+            {
+                CanDelete = files.TryGetValue(a.Id, out var f) && Rules.CanDeleteAttachment(f, p.OwnerId, userId, _me.IsAdmin),
+            }).ToList(),
+        };
+    }
+
+    // 과제가 마지막으로 바뀐 시각만 읽는다. 열려 있는 상세 화면이 1분마다 물어 다른 사람의 변경을 알아챈다(없으면 null)
+    public async Task<DateTime?> StampAsync(int id)
+    {
+        var row = await _db.Projects.AsNoTracking().Where(p => p.Id == id).Select(p => new { p.UpdatedAt }).FirstOrDefaultAsync();
+        return row?.UpdatedAt;
     }
 
     private async Task<Project> RequireAsync(int id) =>
@@ -111,7 +131,7 @@ public class ProjectService
     public async Task<int> CreateAsync(ProjectInput input)
     {
         var title = Text(input.Title, 200, "과제명", "title", required: true)!;
-        var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems)
+        var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery()
                            .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
@@ -260,7 +280,7 @@ public class ProjectService
     public async Task DeleteAsync(int id)
     {
         var p = await RequireAsync(id);
-        if (!_me.IsAdmin && p.OwnerId != _me.Id && p.CreatedById != _me.Id)
+        if (!Rules.CanDeleteProject(p, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("과제 삭제는 담당자·등록자 또는 관리자만 할 수 있습니다.");
         // 의존 관계는 작업보다 먼저 지워야 한다 (작업 쪽 FK 가 Restrict)
         _db.WorkLinks.RemoveRange(p.Links);
@@ -648,7 +668,7 @@ public class ProjectService
         var progress = input.Progress;
         var actualStart = input.ActualStart;
         if (input.ActualEnd != null) progress = 100;                          // 종료일이 있으면 100%
-        else if (progress > 0 && actualStart == null) actualStart = _clock.Today; // 진행률만 올렸으면 오늘 시작한 것으로
+        else if (progress > 0 && actualStart == null) actualStart = Rules.UserToday(input.ClientToday, _clock.Today); // 진행률만 올렸으면 (접속자의) 오늘 시작한 것으로
 
         WorkItem w;
         var batch = Guid.NewGuid();

@@ -11,6 +11,8 @@
     <h1>내 할 일</h1>
     <span class="count">@total</span>
     <span class="muted">@Model.Name 님이 담당인 미완료 작업</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn no-print" data-print><svg class="ic"><use href="#i-print" /></svg><span class="hide-sm">인쇄</span></button>
 </div>
 
 @functions {
@@ -27,18 +29,7 @@
                             <span class="row-sub">@w.Project · @w.Stage · @w.Role · 목표 @w.PlanStart.ToString("MM-dd")~@w.PlanEnd.ToString("MM-dd")</span>
                             <span class="work-progress"><span class="progress" aria-hidden="true"><i style="width:@(w.Progress)%"></i></span><span class="num">@w.Progress%</span></span>
                         </span>
-                        @if (w.Late)
-                        {
-                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@(-w.DDay)</span>
-                        }
-                        else if (w.DDay <= 7)
-                        {
-                            <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(w.DDay == 0 ? "오늘" : "D-" + w.DDay)</span>
-                        }
-                        else
-                        {
-                            <span class="chip">D-@w.DDay</span>
-                        }
+                        <partial name="_StatusChip" model="w.Chip" />
                     </a>
                 </li>
             }
@@ -62,7 +53,7 @@ else
         </section>
     }
     <section class="card">
-        <header class="card-head"><h2>이번 주</h2><span class="count">@d.Soon.Count</span><span class="muted">진행 중이거나 7일 안에 끝나야 하는 작업</span></header>
+        <header class="card-head"><h2>이번 주</h2><span class="count">@d.Soon.Count</span><span class="muted">진행 중이거나 @(Rules.SoonDays)일 안에 끝나야 하는 작업</span></header>
         @if (d.Soon.Count == 0)
         {
             <p class="empty">이번 주에 챙길 작업이 없습니다.</p>
@@ -92,17 +83,9 @@ else
                                 <span class="row-title">@s.Project</span>
                                 <span class="row-sub">@s.Stage 단계 · @(s.Target == null ? "목표일 미정" : "목표 " + s.Target.Value.ToString("MM-dd")) · 진행률 @s.Progress%</span>
                             </span>
-                            @if (s.Late)
+                            @if (s.Chip != null)
                             {
-                                <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@(-s.DDay)</span>
-                            }
-                            else if (s.DDay != null && s.DDay <= 7)
-                            {
-                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(s.DDay == 0 ? "오늘" : "D-" + s.DDay)</span>
-                            }
-                            else if (s.DDay != null)
-                            {
-                                <span class="chip">D-@s.DDay</span>
+                                <partial name="_StatusChip" model="s.Chip" />
                             }
                         </a>
                     </li>

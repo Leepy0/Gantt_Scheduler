@@ -34,6 +34,7 @@
     function autoText(version) {
         var s = st.settings;
         if (!s.autoApply) return '자동 적용이 꺼져 있습니다. 직접 눌러 적용합니다.';
+        if (version && st.startFailure && version === st.startFailure.version) return '시작되지 않아 되돌렸던 버전이라 자동으로는 다시 적용하지 않습니다. 직접 눌러 적용합니다.';
         if (version && version === st.skipAuto) return '되돌렸던 버전이라 자동으로는 다시 적용하지 않습니다. 직접 눌러 적용합니다.';
         var when = s.windowFrom === s.windowTo ? '시간대 제한 없이' : hours(s.windowFrom) + '~' + hours(s.windowTo) + '(한국 시간) 사이에';
         return when + ' ' + s.idleMinutes + '분 동안 아무도 쓰지 않으면 자동으로 적용합니다.';
@@ -51,6 +52,9 @@
             (st.commit ? '<dt>커밋</dt><dd class="num">' + esc(st.commit) + '</dd>' : '') +
             '<dt>실행 방식</dt><dd>' + esc(st.host) + '</dd>' +
             '<dt>받아 오는 곳</dt><dd>' + esc(st.source) + '</dd>' +
+            '<dt>서명 검증</dt><dd>' + (st.signatureCheck
+                ? '<span class="chip ok">' + icon('check') + '켜짐</span> <span class="muted num">공개키 ' + esc(st.keyId || '') + '</span>'
+                : '<span class="chip">서명 검증 꺼짐</span> <span class="muted">이 빌드에는 공개키가 없어 배포 파일의 출처는 확인하지 않고 SHA-256 으로 손상만 확인합니다.</span>') + '</dd>' +
             '<dt>마지막 확인</dt><dd class="num">' + (st.checkedAt ? esc(App.time(st.checkedAt)) : '아직 확인하지 않음') + '</dd></dl>';
         if (st.checkError) h += fixBlock('form-note', st.checkError, st.checkFix);
         if (!st.canApply && st.blockReason) h += fixBlock('form-note', st.blockReason, st.blockFix);
@@ -62,12 +66,13 @@
         var h = '<section class="card"><div class="card-head"><h2>새 버전</h2></div>';
         if (waiting) {
             h += '<div class="update-state"><span class="spinner"></span><div><p class="update-title">' + esc(waiting.text) + '</p>' +
-                '<p class="muted">서버가 다시 시작되면 이 화면이 자동으로 바뀝니다. 보통 1분 안에 끝납니다.</p></div></div>';
+                '<p class="muted">서버가 다시 시작되면 이 화면이 자동으로 바뀝니다. 보통 1분 안에 끝납니다. 새 버전이 시작되지 않으면 몇 분 안에 이전 버전으로 자동으로 되돌립니다.</p></div></div>';
             if (waiting.slow) h += fixBlock('form-note', '아직 서버가 돌아오지 않았습니다.', '서버의 App_Data/updates/apply.log 를 확인하거나 서버를 직접 다시 시작해 주세요.');
             return h + '</section>';
         }
         if (failure) h += fixBlock('form-error', failure.message, failure.fix);
         else if (st.error) h += fixBlock('form-error', st.error, st.errorFix);
+        h += startFailureBlock();
 
         if (st.phase === 'downloading' || uploading != null) {
             var pct = uploading != null ? uploading : st.progress;
@@ -99,13 +104,36 @@
         return h + '</section>';
     }
 
+    // 적용했지만 시작되지 않은 버전 (교체 도우미가 기록). 되돌렸으면 그 버전은 자동으로 다시 적용하지 않는다
+    function startFailureBlock() {
+        var f = st.startFailure;
+        if (!f) return '';
+        var h = '<div class="form-warn start-failure">' + icon('alert') + '<div class="grow"><p>' + esc(f.error) + '</p>' +
+            '<p class="muted num">' + esc(App.time(f.at)) + '</p>' +
+            (f.detail ? '<pre class="notes">' + esc(f.detail) + '</pre>' : '') +
+            '<p class="fix">' + esc(f.rolledBack
+                ? 'v' + f.version + ' 은 자동으로 다시 받거나 적용하지 않습니다. 원인을 확인한 뒤 다시 시도하거나, 고친 새 버전을 기다려 주세요.'
+                : '서버의 App_Data/startup-error.log 와 App_Data/updates/apply.log 에 자세한 내용이 있습니다.') + '</p>';
+        if (admin) {
+            h += '<div class="form-actions">' +
+                '<button type="button" class="btn ghost small" data-act="dismiss-failure">안내 닫기</button>' +
+                // 받아 둔 파일로 다시 적용하는 것은 '지금 적용'과 같은 조건(쓰기 권한·로컬 빌드 등)에 막힌다. 다시 받기는 그대로 된다
+                (f.retry ? '<button type="button" class="btn small" data-act="retry"' +
+                    (st.phase !== 'idle' || (f.retry === 'apply' && !st.canApply) ? ' disabled' : '') + '>' + icon('refresh') + '다시 시도</button>' : '') +
+                '</div>';
+        }
+        return h + '</div></div>';
+    }
+
     // ── 카드: 파일로 올려 적용 ───────────────────────────────────────
     function uploadCard() {
         if (!admin) return '';
         var h = '<section class="card"><div class="card-head"><h2>파일로 업데이트</h2></div>' +
             '<p class="muted">서버가 인터넷에 나갈 수 없을 때 씁니다. 릴리스의 <b>GanttScheduler-win-x64.zip</b> 을 받아 그대로 올리면, 서버가 내용을 확인한 뒤 적용 준비 상태로 둡니다.' +
+            (st.signatureCheck ? ' 이 서버는 서명을 확인하므로 <b>GanttScheduler.json</b> 과 <b>GanttScheduler.json.sig</b> 도 함께 골라 세 파일을 올립니다.'
+                : ' <b>GanttScheduler.json</b> 을 함께 고르면 zip 이 릴리스와 같은 파일인지도 확인합니다.') +
             (st.browserPage ? ' <a href="' + esc(st.browserPage) + '" target="_blank" rel="noopener">릴리스 페이지 열기</a>' : '') + '</p>' +
-            '<form class="upload-row" id="upload-form"><input type="file" name="file" accept=".zip" aria-label="배포 파일(zip)" required />' +
+            '<form class="upload-row" id="upload-form"><input type="file" name="file" accept=".zip,.json,.sig" multiple aria-label="배포 파일(zip)과 배포 정보·서명 파일" required />' +
             '<button type="submit" class="btn"' + (st.phase !== 'idle' || uploading != null ? ' disabled' : '') + '>' + icon('upload') + '올리기</button></form>';
         return h + '</section>';
     }
@@ -170,7 +198,7 @@
         clearTimeout(pollTimer);
         if (waiting || uploading != null || st.phase === 'idle') return;
         pollTimer = setTimeout(function () {
-            App.get(url + '?handler=Status').then(function (r) { st = r.status; render(); }).catch(function () { schedulePoll(); });
+            App.poll(url + '?handler=Status').then(function (r) { st = r.status; render(); }).catch(function () { schedulePoll(); });
         }, 1000);
     }
 
@@ -199,8 +227,23 @@
                     if (v && !v.updating && Date.now() - waiting.since > 20000) { clearInterval(timer); location.reload(); }
                 })
                 .catch(function () { /* 내려가 있는 동안은 실패가 정상 */ });
-            if (!waiting.slow && Date.now() - waiting.since > 180000) { waiting.slow = true; render(); }
+            // 새 버전이 뜨지 않으면 도우미가 기다렸다가(기본 2분) 되돌리므로 그보다 넉넉히 기다린 뒤 안내한다
+            if (!waiting.slow && Date.now() - waiting.since > 300000) { waiting.slow = true; render(); }
         }, 3000);
+    }
+
+    function applyStaged() {
+        var s = st.staged;
+        if (!s) return;
+        App.confirm({
+            title: 'v' + s.version + ' 적용',
+            message: '서버가 잠깐(보통 1분 이내) 멈췄다가 새 버전으로 다시 시작합니다. 그동안 저장하지 않은 입력은 저장되지 않을 수 있습니다.' +
+                (s.schemaChange ? ' DB 구조가 바뀌므로 DB 백업을 먼저 확인해 주세요.' : ''),
+            verb: '적용'
+        }).then(function (yes) {
+            if (!yes) return;
+            act('Apply').then(function () { waitRestart('v' + s.version + ' 적용 중'); }).catch(fail);
+        });
     }
 
     root.addEventListener('click', function (e) {
@@ -214,17 +257,17 @@
             act('Download').then(function () { st.phase = 'downloading'; render(); }).catch(fail);
         } else if (name === 'discard') {
             act('Discard').catch(fail);
+        } else if (name === 'dismiss-failure') {
+            act('DismissFailure').catch(fail);
+        } else if (name === 'retry') {
+            // 받아 둔 파일이 있으면 그것으로 다시 적용하고, 없으면 다시 받는다
+            if (st.startFailure && st.startFailure.retry === 'download') {
+                act('Download').then(function () { st.phase = 'downloading'; render(); }).catch(fail);
+            } else {
+                applyStaged();
+            }
         } else if (name === 'apply') {
-            var s = st.staged;
-            App.confirm({
-                title: 'v' + s.version + ' 적용',
-                message: '서버가 잠깐(보통 1분 이내) 멈췄다가 새 버전으로 다시 시작합니다. 그동안 저장하지 않은 입력은 저장되지 않을 수 있습니다.' +
-                    (s.schemaChange ? ' DB 구조가 바뀌므로 DB 백업을 먼저 확인해 주세요.' : ''),
-                verb: '적용'
-            }).then(function (yes) {
-                if (!yes) return;
-                act('Apply').then(function () { waitRestart('v' + s.version + ' 적용 중'); }).catch(fail);
-            });
+            applyStaged();
         } else if (name === 'rollback') {
             var p = st.previous;
             App.confirm({
@@ -248,18 +291,18 @@
                 windowFrom: +form.windowFrom.value, windowTo: +form.windowTo.value, idleMinutes: +form.idleMinutes.value
             }).then(function () { App.toast('설정을 저장했습니다.'); }).catch(fail);
         } else if (form.id === 'upload-form') {
-            upload(form.file.files[0]);
+            upload(form.file.files);
         }
     });
 
     // 큰 파일이라 진행률을 보여 준다 (fetch 는 올리기 진행률을 알 수 없어 XMLHttpRequest 사용)
-    function upload(file) {
-        if (!file) return;
+    function upload(files) {
+        if (!files || !files.length) return;
         failure = null;
         uploading = 0;
         render();
         var fd = new FormData();
-        fd.append('file', file);
+        for (var i = 0; i < files.length; i++) fd.append('file', files[i]);
         var xhr = new XMLHttpRequest();
         xhr.open('POST', url + '?handler=Upload');
         xhr.setRequestHeader('Accept', 'application/json');

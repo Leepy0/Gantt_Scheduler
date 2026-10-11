@@ -3,6 +3,10 @@
 //   OUT_DIR   결과 폴더 (기본 e2e/out) — screens/*.png, exports/*(내보낸 Excel·PDF), report.md
 //   PW_CHANNEL=chrome  설치된 Chrome 사용 (CI). 지정하지 않으면 Playwright 의 Chromium
 //   FAKE_EXPORT=1      내보내기 파일의 형식 검사를 건너뛴다 (가짜 내보내기를 쓰는 로컬 섀도 빌드용)
+//   ONLY=<문자열>      이름에 이 문자열이 든 단계만 돈다 ('|' 로 여러 개). 등록 단계는 다른 단계의 전제라 항상 돈다.
+//                      단계끼리 상태를 이어 쓰므로(샘플 과제를 고친 결과 등) 앞 단계를 건너뛰면 실패할 수 있다
+//   APP_LOG=<파일>     앱 로그. 경고·오류 줄을 모아 보고서(report.md)에 요약한다 (CI)
+// 단계가 실패하면 그때의 화면(screens/fail-NN.png), 주소, 화면에 보인 오류 문구를 보고서에 남긴다
 const fs = require('fs');
 const path = require('path');
 
@@ -16,22 +20,68 @@ const EXPORTS = path.join(OUT, 'exports');
 fs.mkdirSync(SHOTS, { recursive: true });
 fs.mkdirSync(EXPORTS, { recursive: true });
 
-const results = [];      // { name, ok, error }
+const results = [];      // { name, ok, error, skipped, url, screen, texts }
 const problems = [];     // 콘솔 오류·실패한 요청
+// 일부러 404 를 받는 요청 (없는 과제 화면, 삭제된 과제의 변경 확인)
+const expected404 = ['/Projects/Detail?id=999999', 'handler=Stamp'];
+const ONLY = (process.env.ONLY || '').split('|').map((x) => x.trim()).filter(Boolean);
+// ONLY 와 관계없이 도는 단계 (이름 앞부분). 이름 등록이 없으면 다른 화면이 열리지 않는다
+const SETUP = ['처음 접속하면', '이름·소속'];
+let active = null;       // 지금 단계가 쓰는 화면 (실패 캡처용). 다른 화면(동시 수정용 두 번째 화면 등)을 쓰는 동안은 그 화면
+let home = null;         // 단계가 끝나면 돌아갈 기본 화면 (데스크톱·모바일)
 
 function kstToday(offset = 0) {
     return new Date(Date.now() + 9 * 3600e3 + offset * 86400e3).toISOString().slice(0, 10);
 }
 
 async function step(name, fn) {
+    if (ONLY.length && !SETUP.some((x) => name.startsWith(x)) && !ONLY.some((x) => name.includes(x))) {
+        results.push({ name, skipped: true });
+        console.log('  skip ' + name);
+        return;
+    }
     try {
         await fn();
         results.push({ name, ok: true });
         console.log('  ok   ' + name);
     } catch (err) {
-        results.push({ name, ok: false, error: String(err && err.message || err).split('\n')[0] });
-        console.log('  FAIL ' + name + ' — ' + String(err && err.message || err).split('\n')[0]);
+        const r = { name, ok: false, error: String(err && err.message || err).split('\n')[0] };
+        await capture(r);
+        results.push(r);
+        console.log('  FAIL ' + name + ' — ' + r.error + (r.url ? ' (' + r.url + ')' : ''));
+    } finally {
+        active = home;
     }
+}
+
+// 실패한 단계의 화면·주소·화면에 보인 오류 문구 (원인을 다시 돌리지 않고 보고서에서 볼 수 있게)
+async function capture(r) {
+    if (!active) return;
+    const n = String(results.length + 1).padStart(2, '0');
+    try { r.url = active.url(); } catch (e) { /* 닫힌 화면 */ }
+    try {
+        r.texts = await active.evaluate(() => Array.from(document.querySelectorAll(
+            '.form-error:not([hidden]), .form-warn:not([hidden]), .toast, .notice, .field.invalid .hint'))
+            .map((el) => el.innerText.trim().replace(/\s+/g, ' ')).filter(Boolean).slice(0, 5));
+    } catch (e) { /* 이동 중 */ }
+    try {
+        await active.screenshot({ path: path.join(SHOTS, 'fail-' + n + '.png') });
+        r.screen = 'screens/fail-' + n + '.png';
+    } catch (e) { /* 캡처 실패는 무시 */ }
+}
+
+// 앱 로그의 경고·오류를 종류별로 센다. ASP.NET 콘솔 로그는 "warn: 범주[번호]" 다음 줄에 내용이 온다
+function appLogSummary(file) {
+    let lines;
+    try { lines = fs.readFileSync(file, 'utf8').split(/\r?\n/); } catch (e) { return ['- 앱 로그를 읽지 못했습니다: ' + file]; }
+    const counts = new Map();
+    for (let i = 0; i < lines.length; i++) {
+        const m = /^(warn|fail|crit): ([^\[]+)\[\d+\]/.exec(lines[i]);
+        if (!m) continue;
+        const key = m[1] + ' ' + m[2] + ' — ' + (lines[i + 1] || '').trim().slice(0, 160);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts].map(([k, n]) => '- ' + n + '× `' + k.replace(/`/g, "'") + '`');
 }
 
 function watch(page, label) {
@@ -42,6 +92,7 @@ function watch(page, label) {
     page.on('pageerror', (e) => problems.push(`[${label}] pageerror: ${e.message}`));
     page.on('response', (r) => {
         // 400·409 는 규칙 위반·동시 수정 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
+        if (r.status() === 404 && expected404.some((u) => r.url().includes(u))) return;
         if (r.status() >= 500 || r.status() === 404) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
     });
 }
@@ -79,9 +130,48 @@ async function closeSheet(page) {
     await page.waitForSelector(SHEET, { state: 'detached' });
 }
 
+// 입력을 바꾼 시트를 닫는다: 닫기 → '작성 중인 내용을 버릴까요?' → 버리기
+async function discardSheet(page) {
+    await page.locator(SHEET + ' [data-close]').first().click();
+    await page.locator('dialog[open] [data-yes]', { hasText: '버리기' }).click();
+    await page.waitForSelector(SHEET, { state: 'detached' });
+}
+
+// 브라우저 현지 시각 표시(App.time)와 같은 형식을 주어진 시간대로 만든다
+function localTime(iso, timeZone) {
+    const fmt = (d) => Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(d).map((x) => [x.type, x.value]));
+    const t = fmt(new Date(iso));
+    const thisYear = fmt(new Date()).year;
+    return (t.year === thisYear ? '' : t.year + '-') + `${t.month}-${t.day} ${t.hour}:${t.minute}`;
+}
+
+function localDate(timeZone) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
 async function sheetError(page) {
     await page.waitForSelector(SHEET + ' .form-error:not([hidden])');
     return (await page.locator(SHEET + ' .sheet-body > .form-error').innerText()).trim();
+}
+
+// 업데이트 화면: '지금 확인' 응답에 "적용한 새 버전이 시작되지 않아 되돌린" 상태를 덧붙인다.
+// 실제로 서버를 죽였다 살리는 흐름은 tools/release/selftest.sh 가 확인하고, 여기서는 그 상태의 화면만 본다
+async function mockStartFailure(p) {
+    await p.route('**/Admin/Update?handler=Check', async (route) => {
+        const res = await route.fetch();
+        const body = await res.json();
+        const at = new Date().toISOString();
+        body.status.staged = { version: '99.0.1', at, origin: 'download', by: '자동', sha256: 'a'.repeat(64), notes: '', schemaChange: false };
+        body.status.skipAuto = '99.0.1';
+        body.status.startFailure = {
+            version: '99.0.1', from: body.status.version, rolledBack: true, at, retry: 'apply',
+            error: '새 버전(v99.0.1)이 시작되지 않아(시작하다 멈춤) 이전 버전(v' + body.status.version + ')으로 자동으로 되돌렸습니다.',
+            detail: '2026-10-11 02:10:00\nSystem.IO.InvalidDataException: Failed to load configuration from file \'C:\\GanttScheduler\\appsettings.json\'.\n ---> System.FormatException: Could not parse the JSON file.',
+        };
+        await route.fulfill({ response: res, json: body });
+    });
 }
 
 const stageRow = (page, name) => page.locator('#gantt .g-row.stage', { hasText: name }).locator('.g-name');
@@ -93,6 +183,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     // ── 데스크톱 ────────────────────────────────────────────────────
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
     const page = await desktop.newPage();
+    home = active = page;
     watch(page, 'desktop');
     page.setDefaultTimeout(10000);
 
@@ -167,6 +258,17 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await shot(page, 'd03-detail-gantt');
     });
 
+    await step('접근성 — 간트 이름 칸은 단추(키보드로 열기), 첫 포커스는 첫 입력칸, 요약은 aria-live 없음', async () => {
+        assert((await page.locator('#summary').getAttribute('aria-live')) === null, '요약에 aria-live 가 남아 있음');
+        const btn = page.locator('#gantt .g-row.work .g-name-btn').first();
+        await btn.focus();
+        await page.keyboard.press('Enter');
+        await page.waitForSelector(SHEET);
+        assert((await page.evaluate(() => document.activeElement && document.activeElement.name)) === 'title', '첫 포커스가 작업명이 아님');
+        await page.keyboard.press('Escape');      // 바꾼 것이 없으면 묻지 않고 닫힌다
+        await page.waitForSelector(SHEET, { state: 'detached' });
+    });
+
     await step('체크리스트 — 남은 항목이 있으면 단계 완료 거절, 체크·추가·삭제', async () => {
         await stageRow(page, '검수').click();
         await page.waitForSelector(SHEET + ' [data-checks] li');
@@ -229,6 +331,52 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(row.includes('70%'), '진행률이 70% 로 바뀌지 않음: ' + row);
     });
 
+    await step('편집 창 닫기 — 입력을 바꾸면 Esc·바깥 클릭에 버릴지 묻고, 글자를 끌어 선택해도 닫히지 않음', async () => {
+        await workRow(page, '주행 시험').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' textarea[name=note]', '현장 확인 메모');
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('dialog[open] [data-yes]');
+        assert((await page.locator('dialog[open]', { has: page.locator('[data-yes]') }).innerText()).includes('버릴까요'), '버릴지 묻는 창이 아님');
+        await shot(page, 'd34-sheet-discard-confirm', false);
+        await page.click('dialog[open] [data-no]');
+        assert((await page.inputValue(SHEET + ' textarea[name=note]')) === '현장 확인 메모', '취소했는데 입력이 사라짐');
+        // 입력칸에서 글자를 끌어 선택하다 바깥에서 손을 떼도 닫히지 않는다
+        const box = await page.locator(SHEET + ' textarea[name=note]').boundingBox();
+        await page.mouse.move(box.x + 8, box.y + 8);
+        await page.mouse.down();
+        await page.mouse.move(6, 6, { steps: 5 });
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+        assert((await page.locator('dialog[open]').count()) === 1, '끌어 선택하다 바깥에서 떼면 닫히거나 묻는 창이 뜸');
+        // 바깥을 누르면 묻고, 버리면 닫힌다
+        await page.mouse.click(6, 6);
+        await page.locator('dialog[open] [data-yes]', { hasText: '버리기' }).click();
+        await page.waitForSelector(SHEET, { state: 'detached' });
+        assert(!(await workRow(page, '주행 시험').innerText()).includes('현장 확인 메모'), '버린 내용이 저장됨');
+    });
+
+    await step('작성 중인 진행 내용 — 화면을 새로 고쳐도 다시 열면 복원 제안, 등록하면 지움', async () => {
+        await workRow(page, '주행 시험').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await page.fill(SHEET + ' [data-comment]', '센서 교정값 확인 중');
+        await page.waitForTimeout(500);     // 0.3초 뒤 임시 저장
+        await page.reload();
+        await page.waitForSelector('#summary .summary-meta');
+        await workRow(page, '주행 시험').locator('.g-name').click();
+        await page.waitForSelector(SHEET + ' [data-draft-note]:not([hidden])');
+        await shot(page, 'd35-draft-restore', false);
+        await page.click(SHEET + ' [data-draft-restore]');
+        assert((await page.inputValue(SHEET + ' [data-comment]')) === '센서 교정값 확인 중', '복원되지 않음');
+        await page.click(SHEET + ' [data-add-comment]');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-feed]').innerText.includes('센서 교정값 확인 중'));
+        await closeSheet(page);
+        await workRow(page, '주행 시험').locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        assert(await page.locator(SHEET + ' [data-draft-note]').isHidden(), '등록한 뒤에도 복원 제안이 뜸');
+        await closeSheet(page);
+    });
+
     await step('간트 드래그 — 작업 막대를 끌면 사유를 받고 일정 변경', async () => {
         await page.click('#zoom [data-zoom=day]');
         const bar = workRow(page, '검수 문서 검토').locator('.g-bar.draggable');
@@ -287,6 +435,18 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(feed.includes('연쇄 이동'), '연쇄 이동 이력이 없음');
         assert(feed.includes('기준선 다시 확정'), '기준선 이력이 없음');
         await shot(page, 'd10-detail-activity');
+    });
+
+    await step('진행 내용 등록 — 처리 중에는 다시 등록되지 않음', async () => {
+        await page.route((u) => u.href.includes('handler=Comment'), async (r) => { await new Promise((res) => setTimeout(res, 600)); await r.continue(); });
+        await page.fill('#comment-text', '중복 등록 확인용 메모');
+        // 단추를 두 번 누른 것과 같은 상황: 응답 전에 제출을 두 번 보낸다
+        await page.evaluate(() => { const f = document.getElementById('comment-form'); f.requestSubmit(); f.requestSubmit(); });
+        assert(await page.isDisabled('#comment-btn'), '처리 중인데 등록 단추가 눌림');
+        await page.waitForFunction(() => document.getElementById('feed').innerText.includes('중복 등록 확인용 메모'));
+        await page.unroute((u) => u.href.includes('handler=Comment'));
+        await page.waitForTimeout(800);
+        assert((await page.locator('#feed li', { hasText: '중복 등록 확인용 메모' }).count()) === 1, '같은 글이 두 번 등록됨');
     });
 
     await step('자료 — 올리기·미리보기·내려받기·삭제', async () => {
@@ -351,29 +511,234 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.click('#view-mode [data-view=gantt]');
     });
 
-    await step('동시 수정 — 다른 화면에서 먼저 고치면 저장을 막고 최신 내용으로 바꿈', async () => {
+    await step('동시 수정 — 다른 화면에서 먼저 고치면 바뀐 값을 보여 주고, 같은 시트에서 다시 저장', async () => {
         await stageRow(page, '설치').click();
         await page.waitForSelector(SHEET);
 
-        const other = await desktop.newPage();
+        const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
         await openProject(other, '광주 냉장고 3라인 AGV 도입');
         await other.locator('#stepper .step', { hasText: '설치' }).click();
         await other.waitForSelector(SHEET);
         await other.fill(SHEET + ' input[name=name]', '설치·시운전');
+        await other.fill(SHEET + ' input[name=targetDate]', kstToday(40));
+        await other.fill(SHEET + ' textarea[name=reason]', '설치 일정 조정');
         await submitSheet(other);
         await other.close();
+        active = page;
 
         await page.fill(SHEET + ' input[name=name]', '현장 설치');
         await page.locator(SHEET + ' button[type=submit]').click();
         assert((await sheetError(page)).includes('다른 사용자가 먼저'), '동시 수정 안내가 아님');
+        const note = await page.locator(SHEET + ' [data-field=name] [data-conflict-note]').innerText();
+        assert(note.includes('다른 사용자가 바꾼 값') && note.includes('설치·시운전'), '바뀐 값 안내가 없음: ' + note);
+        assert((await page.inputValue(SHEET + ' input[name=name]')) === '현장 설치', '입력한 값이 사라짐');
+        // 내가 손대지 않은 목표일은 그 사람이 바꾼 값으로 맞춘다 (그대로 저장하면 옛 값으로 되돌리므로)
+        assert((await page.inputValue(SHEET + ' input[name=targetDate]')) === kstToday(40), '손대지 않은 목표일이 최신 값으로 바뀌지 않음');
+        assert((await page.locator(SHEET + ' [data-field=targetDate] [data-conflict-note]').innerText()).includes('그 값으로 바꿨습니다'), '맞춘 값 안내가 없음');
         await shot(page, 'd12-conflict', false);
-        await closeSheet(page);
         const names = await page.locator('#stepper .step-name').allInnerTexts();
-        assert(names.some((n) => n.includes('설치·시운전')), '최신 내용으로 바뀌지 않음: ' + names.join(','));
+        assert(names.some((n) => n.includes('설치·시운전')), '화면이 최신 내용으로 바뀌지 않음: ' + names.join(','));
+        // 같은 시트에서 다시 저장하면 최신 버전으로 저장된다 (예전에는 몇 번을 눌러도 거절됐다)
+        await submitSheet(page);
+        const after = await page.locator('#stepper .step').allInnerTexts();
+        const installed = after.find((n) => n.includes('현장 설치')) || '';
+        assert(installed, '다시 저장되지 않음: ' + after.join(','));
+        assert(installed.includes(kstToday(40).slice(5)), '다른 사람이 바꾼 목표일이 되돌려짐: ' + installed);
+    });
+
+    await step('동시 수정 — 작업 시트를 연 뒤 다른 화면이 새 작업을 선행으로 걸어도, 목록을 다시 그려 다시 저장하면 그 연결이 남음', async () => {
+        const W = '안전 인증 서류 준비', X = '동시 추가 선행 작업';
+        await workRow(page, W).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        const wStart = await page.inputValue(SHEET + ' input[name=planStart]');
+        const wStage = await page.inputValue(SHEET + ' select[name=stageId]');
+        const xDay = new Date(Date.parse(wStart + 'T00:00:00Z') - 5 * 86400e3).toISOString().slice(0, 10);
+
+        // 다른 화면: 새 작업 X 를 만들고 W 의 선행으로 건다 (X 는 W 보다 먼저 끝난다)
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await other.click('#add-work');
+        await other.waitForSelector(SHEET);
+        await other.fill(SHEET + ' input[name=title]', X);
+        await other.selectOption(SHEET + ' select[name=stageId]', wStage);
+        await other.fill(SHEET + ' input[name=planStart]', xDay);
+        await other.fill(SHEET + ' input[name=planEnd]', xDay);
+        await submitSheet(other);
+        await workRow(other, W).locator('.g-name').click();
+        await other.waitForSelector(SHEET);
+        await other.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').check();
+        await submitSheet(other);
+        await other.close();
+        active = page;
+
+        // 시트를 연 뒤 생긴 작업이라 처음 목록에는 없다. 메모만 고쳐 저장 → 409 → 최신 과제로 목록을 다시 그린다
+        assert((await page.locator(SHEET + ' .pick-list label', { hasText: X }).count()) === 0, '시트를 연 뒤 생긴 작업이 처음부터 목록에 있음');
+        await page.fill(SHEET + ' textarea[name=note]', '동시 수정 확인');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('다른 사용자가 먼저'), '동시 수정 안내가 아님');
+        assert(await page.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').isChecked(), '다른 화면이 건 선행 작업이 목록에 없거나 체크되지 않음');
+        const note = await page.locator(SHEET + ' [data-field=predecessors] [data-conflict-note]').innerText();
+        assert(note.includes(X) && note.includes('그 값으로 바꿨습니다'), '선행 작업 안내가 다름: ' + note);
+        assert((await page.inputValue(SHEET + ' select[name=stageId]')) === wStage, '단계 선택이 비었거나 바뀜');
+        await page.locator(SHEET + ' [data-field=predecessors]').scrollIntoViewIfNeeded();
+        await shot(page, 'd12b-work-conflict', false);
+        await submitSheet(page);
+
+        // 다시 열면 연결과 내 메모가 모두 남아 있다
+        await workRow(page, W).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        assert(await page.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').isChecked(), '다시 저장한 뒤 선행 연결이 지워짐');
+        assert((await page.inputValue(SHEET + ' textarea[name=note]')) === '동시 수정 확인', '내 메모가 저장되지 않음');
+        await closeSheet(page);
+
+        // 정리: 추가한 작업을 지운다 (뒤 단계의 작업 수·의존선이 그대로이도록)
+        await workRow(page, X).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await page.click(SHEET + ' [data-danger]');
+        await page.click('dialog[open] [data-yes]');
+        await page.waitForSelector(SHEET, { state: 'detached' });
+        assert((await workRow(page, X).count()) === 0, '추가한 작업이 지워지지 않음');
+    });
+
+    await step('다른 사용자가 이 과제를 바꾸면 띠로 알리고 새로 고침하면 반영, 내 저장은 띠 없음, 날짜가 바뀌면 다시 읽음', async () => {
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForTimeout(500);
+        assert(await page.locator('#change-banner').isHidden(), '아무도 바꾸지 않았는데 띠가 뜸');
+
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await other.click('.tabs [data-tab=activity]');
+        await other.fill('#comment-text', '다른 화면에서 남긴 메모');
+        await other.click('#comment-form button[type=submit]');
+        await other.waitForFunction(() => document.getElementById('feed').innerText.includes('다른 화면에서 남긴 메모'));
+        await other.close();
+        active = page;
+
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForSelector('#change-banner:not([hidden])');
+        assert((await page.locator('#change-banner').innerText()).includes('다른 사용자가 이 과제를 바꿨습니다'), '띠 문구가 아님');
+        await shot(page, 'd37-change-banner', false);
+        await page.click('#change-banner [data-banner-refresh]');
+        await page.waitForSelector('#change-banner', { state: 'hidden' });
+        assert((await page.locator('#feed').innerText()).includes('다른 화면에서 남긴 메모'), '새로 고침해도 반영되지 않음');
+
+        // 내가 저장한 직후에는 띠가 뜨지 않는다
+        await page.click('.tabs [data-tab=activity]');
+        await page.fill('#comment-text', '내가 남긴 메모');
+        await page.click('#comment-form button[type=submit]');
+        await page.waitForFunction(() => document.getElementById('feed').innerText.includes('내가 남긴 메모'));
+        await page.evaluate(() => App.checkVersion());
+        await page.waitForTimeout(500);
+        assert(await page.locator('#change-banner').isHidden(), '내 저장 뒤에 띠가 뜸');
+
+        // 날짜가 바뀌면(자정을 넘겨 열어 둔 화면) 최신 과제를 다시 읽는다
+        const build = await page.evaluate(() => document.documentElement.getAttribute('data-build'));
+        await page.route('**/version', (r) => r.fulfill({ json: { ok: true, build, version: '0', updating: false, today: kstToday(1) } }));
+        await Promise.all([
+            page.waitForRequest((r) => r.url().includes('handler=Data')),
+            page.evaluate(() => App.checkVersion()),
+        ]);
+        await page.unroute('**/version');
+        await page.click('.tabs [data-tab=schedule]');
+    });
+
+    await step('뒤로 가면 목록 필터 유지, 탭은 주소에 남고, 작업 링크는 연 뒤 지움, 없는 과제는 안내 화면', async () => {
+        await page.goto(BASE + '/Projects?state=delayed');
+        await page.locator('.ptable-row').first().click();
+        await page.waitForSelector('#summary .summary-meta');
+        await page.click('.tabs [data-tab=files]');
+        assert(page.url().endsWith('#files'), '탭이 주소에 남지 않음: ' + page.url());
+        await page.reload();
+        await page.waitForSelector('#summary .summary-meta');
+        assert(await page.locator('#tab-files').isVisible(), '새로 고친 뒤 자료 탭이 아님');
+        assert((await page.locator('.tabs [data-tab=files]').getAttribute('aria-selected')) === 'true', '자료 탭이 선택되지 않음');
+        await page.click('#back-link');
+        await page.waitForURL(/state=delayed/);
+
+        await page.goto(BASE + '/My');
+        await page.locator('.row-link[href*="#w"]').first().click();
+        await page.waitForSelector(SHEET);
+        assert((await page.evaluate(() => window.location.hash)) === '', '작업 링크(#w)가 주소에 남음');
+        await closeSheet(page);
+        await page.reload();
+        await page.waitForSelector('#summary .summary-meta');
+        await page.waitForTimeout(300);
+        assert((await page.locator(SHEET).count()) === 0, '새로 고치면 작업 창이 다시 뜸');
+
+        const res = await page.goto(BASE + '/Projects/Detail?id=999999');
+        assert(res.status() === 404, '없는 과제가 404 가 아님: ' + res.status());
+        assert((await page.locator('main').innerText()).includes('찾는 화면이 없습니다'), '404 안내 문구가 없음');
+        await shot(page, 'd36-not-found');
+    });
+
+    await step('해외 PC — 오늘 시작은 그 나라 날짜, 시각은 그 나라 시각', async () => {
+        const zone = 'America/Mexico_City';
+        const abroad = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ko-KR', timezoneId: zone });
+        const p2 = active = await abroad.newPage();
+        watch(p2, 'abroad');
+        p2.setDefaultTimeout(10000);
+        await openProject(p2, '광주 냉장고 3라인 AGV 도입');
+        await workRow(p2, '안전 인증 서류 준비').locator('.g-name').click();
+        await p2.waitForSelector(SHEET);
+        await p2.click(SHEET + ' [data-start-today]');
+        const value = await p2.inputValue(SHEET + ' input[name=actualStart]');
+        assert(value === localDate(zone), `오늘 시작이 그 나라 날짜가 아님: ${value} (현지 ${localDate(zone)}, 한국 ${kstToday()})`);
+        await discardSheet(p2);
+        await p2.goto(BASE + '/Insights/History');
+        const t = p2.locator('.history time').first();
+        const iso = await t.getAttribute('datetime');
+        assert(iso.endsWith('Z'), '변경 이력 시각이 UTC 가 아님: ' + iso);
+        const text = (await t.innerText()).trim();
+        assert(text === localTime(iso, zone), `변경 이력 시각이 현지 시각이 아님: ${text} (기대 ${localTime(iso, zone)})`);
+        await shot(p2, 'd41-abroad-history');
+        await abroad.close();
+    });
+
+    await step('인쇄 — 메뉴·도구 없이, 간트는 월 배율로 종이 한 폭에 (상세·대시보드·내 할 일)', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        assert(await page.locator('#summary [data-print]').isVisible(), '상세에 인쇄 단추가 없음');
+        const zoomBefore = await page.evaluate(() => document.querySelector('#gantt').dataset.zoom);
+        await page.emulateMedia({ media: 'print' });
+        await page.waitForFunction(() => document.querySelector('#gantt').dataset.zoom === 'month');
+        assert(await page.locator('.top').isHidden(), '인쇄에 머리 메뉴가 보임');
+        assert(await page.locator('#tab-schedule .toolbar').isHidden(), '인쇄에 도구 모음이 보임');
+        assert((await page.evaluate(() => getComputedStyle(document.querySelector('#gantt .g-scroll')).overflowX)) === 'visible', '간트가 스크롤 안에 갇힘');
+        // 화면 흉내(emulateMedia)는 창 폭이 그대로라 실제 종이 폭 대신 간트가 계산한 폭(이름 칸 + 일정)을 본다
+        const width = await page.evaluate(() => {
+            const h = document.querySelector('#gantt');
+            return parseFloat(h.style.getPropertyValue('--g-width')) + parseFloat(getComputedStyle(h).getPropertyValue('--g-left'));
+        });
+        assert(width <= 1047, '간트가 종이 폭(A4 가로)보다 넓음: ' + width);
+        await shot(page, 'd38-print-detail');
+        await page.pdf({ path: path.join(EXPORTS, '인쇄_과제상세.pdf'), format: 'A4', landscape: true, printBackground: true });
+        await page.emulateMedia({ media: 'screen' });
+        await page.waitForFunction((z) => document.querySelector('#gantt').dataset.zoom === z, zoomBefore);
+
+        await page.goto(BASE + '/');
+        assert(await page.locator('.page-head [data-print]').isVisible(), '대시보드에 인쇄 단추가 없음');
+        await page.emulateMedia({ media: 'print' });
+        await page.waitForFunction(() => document.querySelector('#gantt').dataset.zoom === 'month');
+        await shot(page, 'd39-print-dashboard');
+        await page.pdf({ path: path.join(EXPORTS, '인쇄_대시보드.pdf'), format: 'A4', landscape: true, printBackground: true });
+        await page.emulateMedia({ media: 'screen' });
+
+        await page.goto(BASE + '/My');
+        assert(await page.locator('.page-head [data-print]').isVisible(), '내 할 일에 인쇄 단추가 없음');
+        await page.emulateMedia({ media: 'print' });
+        assert(await page.locator('.bottom-nav, .top').first().isHidden(), '인쇄에 메뉴가 보임');
+        await shot(page, 'd40-print-my');
+        await page.emulateMedia({ media: 'screen' });
+        for (const f of ['인쇄_과제상세.pdf', '인쇄_대시보드.pdf']) {
+            const size = fs.statSync(path.join(EXPORTS, f)).size;
+            assert(size > 3000, f + ' 이 너무 작음: ' + size);
+        }
     });
 
     await step('과제 복제', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
         await page.click('#btn-clone');
         await page.waitForSelector(SHEET);
         await page.fill(SHEET + ' input[name=title]', '광주 냉장고 5라인 AGV 도입');
@@ -531,6 +896,35 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert((await page.locator('#tab-info').innerText()).includes('한성로보틱스'), '협력사가 저장되지 않음');
     });
 
+    await step('과제 수정 화면 — 동시 수정 뒤 손대지 않은 항목은 최신 값으로 맞추고 같은 화면에서 다시 저장', async () => {
+        const id = new URL(page.url()).searchParams.get('id');
+        await page.goto(BASE + '/Projects/Edit?id=' + id);
+        await page.waitForSelector('#edit-form');
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await other.goto(BASE + '/Projects/Edit?id=' + id);
+        await other.fill('textarea[name="Form.Description"]', '다른 화면에서 쓴 설명');
+        await other.click('#edit-form button[type=submit]');
+        await other.waitForSelector('#summary .summary-meta');
+        await other.close();
+        active = page;
+
+        await page.fill('input[name="Form.Vendor"]', '대성물류');
+        await page.click('#edit-form button[type=submit]');
+        await page.waitForSelector('#edit-form .form-error');
+        assert((await page.locator('#edit-form .form-error').innerText()).includes('다른 사용자가 이 과제를 먼저 수정했습니다'), '충돌 안내가 아님');
+        const note = await page.locator('#edit-form [data-field=description] [data-conflict-note]').innerText();
+        assert(note.includes('다른 화면에서 쓴 설명') && note.includes('그 값으로 바꿨습니다'), '바뀐 값 안내가 아님: ' + note);
+        assert((await page.inputValue('textarea[name="Form.Description"]')) === '다른 화면에서 쓴 설명', '손대지 않은 설명이 최신 값이 아님');
+        assert((await page.inputValue('input[name="Form.Vendor"]')) === '대성물류', '입력한 협력사가 사라짐');
+        await shot(page, 'd42-edit-conflict');
+        await page.click('#edit-form button[type=submit]');
+        await page.waitForSelector('#summary .summary-meta');
+        await page.click('.tabs [data-tab=info]');
+        const info = await page.locator('#tab-info').innerText();
+        assert(info.includes('대성물류') && info.includes('다른 화면에서 쓴 설명'), '다시 저장한 내용이 아님');
+    });
+
     await step('내 할 일', async () => {
         await page.goto(BASE + '/My');
         const text = await page.locator('main').innerText();
@@ -680,6 +1074,39 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await shot(page, 'd24-update');
     });
 
+    await step('업데이트 — 서명 검증 표시, 시작되지 않아 되돌린 버전 안내·다시 시도·안내 닫기', async () => {
+        await page.goto(BASE + '/Admin/Update');
+        await page.waitForSelector('.update-version');
+        // 서명 검증 표시는 빌드에 공개키(update-key.pub)가 들었는지에 따라 다르다. 서버 상태를 먼저 읽어 그에 맞는 표시인지 본다
+        // (공개키를 커밋하면 켜짐·공개키 지문, 없으면 출처를 확인하지 않는다는 안내)
+        const sig = await page.evaluate(async () => {
+            const r = await fetch(App.url('/Admin/Update?handler=Status'), { headers: { 'Accept': 'application/json' } });
+            const s = (await r.json()).status;
+            return { on: s.signatureCheck, keyId: s.keyId || '', canApply: s.canApply };
+        });
+        const sigText = await page.locator('.update-body dl').innerText();
+        if (sig.on) assert(sigText.includes('켜짐') && sigText.includes(sig.keyId), '서명 검증 켜짐·공개키 표시가 없음: ' + sigText);
+        else assert(sigText.includes('서명 검증 꺼짐'), '서명 검증 꺼짐 안내가 없음: ' + sigText);
+        assert((await page.locator('#upload-form input[type=file]').getAttribute('multiple')) !== null, '배포 정보·서명 파일을 함께 고를 수 없음');
+        await mockStartFailure(page);
+        await page.click('[data-act=check]');
+        await page.waitForSelector('.start-failure');
+        const text = await page.locator('.start-failure').innerText();
+        assert(text.includes('자동으로 되돌렸습니다') && text.includes('InvalidDataException'), '시작 실패 안내·원인이 없음: ' + text);
+        assert(text.includes('자동으로 다시 받거나 적용하지 않습니다'), '자동 적용 제외 안내가 없음');
+        assert(await page.locator('.start-failure [data-act=retry]').isVisible(), '다시 시도 단추가 없음');
+        // 받아 둔 파일로 다시 적용하는 단추는 '지금 적용'과 같이 막힌다 (화면 점검은 로컬 빌드라 적용할 수 없다)
+        assert((await page.locator('.start-failure [data-act=retry]').isDisabled()) === !sig.canApply,
+            '다시 시도 단추가 적용 가능 여부와 다름 (적용 가능: ' + sig.canApply + ')');
+        assert((await page.locator('[data-act=apply]').isDisabled()) === !sig.canApply, '지금 적용 단추가 적용 가능 여부와 다름');
+        assert((await page.locator('.update-body').innerText()).includes('시작되지 않아 되돌렸던 버전이라'), '받아 둔 버전의 자동 적용 안내가 다름');
+        await shot(page, 'd24b-update-start-failure');
+        // 안내 닫기 → 서버에 기록된 안내가 없어지고(실제 응답) 화면에서도 사라진다
+        await page.unroute('**/Admin/Update?handler=Check');
+        await page.click('.start-failure [data-act=dismiss-failure]');
+        await page.waitForSelector('.start-failure', { state: 'detached' });
+    });
+
     await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
         await page.goto(BASE + '/Projects');
         const build = await page.evaluate(() => document.documentElement.getAttribute('data-build'));
@@ -718,8 +1145,12 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForFunction(() => !document.querySelector('.notice'));
     });
 
-    await step('과제 삭제', async () => {
+    await step('과제 삭제 — 열려 있던 다른 화면은 삭제됨 띠', async () => {
         await openProject(page, '베트남 냉장고 1라인 컨베이어 개선');
+        const other = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await other.goto(page.url());
+        await other.waitForSelector('#summary .summary-meta');
         await page.click('.tabs [data-tab=info]');
         await page.click('#btn-delete');
         await page.waitForSelector(SHEET + ' [data-yes]');
@@ -727,6 +1158,11 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForURL(/\/Projects(\?|$)/);
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 0, '삭제되지 않음');
+        active = other;
+        await other.evaluate(() => App.checkVersion());
+        await other.waitForSelector('#change-banner.alarm:not([hidden])');
+        assert((await other.locator('#change-banner').innerText()).includes('삭제'), '삭제됨 안내가 아님');
+        await other.close();
     });
 
     await desktop.close();
@@ -738,6 +1174,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
     });
     const m = await mobile.newPage();
+    home = active = m;
     watch(m, 'mobile');
     m.setDefaultTimeout(10000);
 
@@ -753,6 +1190,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.waitForSelector('.kpis');
         assert(await m.locator('.bottom-nav').isVisible(), '하단 탭이 보이지 않음');
         assert((await m.locator('.bottom-nav a').count()) === 5, '하단 탭이 5개가 아님');
+        assert((await m.locator('.bottom-nav a[aria-current=page]').innerText()).includes('대시보드'), '하단 탭에 지금 화면 표시(aria-current)가 없음');
         await noOverflow('대시보드');
         await shot(m, 'm01-dashboard');
     });
@@ -783,6 +1221,8 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         const item = m.locator('#schedule-list .work-item', { has: m.locator('.work-title', { hasText: '제어기 조립' }) });
         await item.click();
         await m.waitForSelector(SHEET);
+        // 모바일은 시트를 열자마자 입력칸에 포커스를 주지 않는다 (가상 키보드가 내용을 가리지 않게)
+        assert((await m.evaluate(() => document.activeElement && document.activeElement.tagName)) !== 'INPUT', '모바일 시트가 입력칸에 포커스를 줌');
         await shot(m, 'm05-work-sheet', false);
         await setRange(m, SHEET + ' input[name=progress]', 85);
         await submitSheet(m);
@@ -810,7 +1250,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(await option.isVisible(), '작업 포함 선택지가 보이지 않음');
         await noOverflow('단계 시트');
         await shot(m, 'm07b-stage-cascade-works', false);
-        await closeSheet(m);
+        await discardSheet(m);
         await openProject(m, '베트남 세탁기 2라인 AMR 확대');     // 다음 단계(자료 탭)는 원래 과제에서 본다
     });
 
@@ -833,11 +1273,22 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.goto(BASE + '/Admin');
         await m.waitForSelector('.columns .node');
         await noOverflow('관리');
+        await shot(m, 'm11-admin');
         await m.goto(BASE + '/Admin/Update');
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
         await shot(m, 'm11-update');
-        await shot(m, 'm11-admin');
+    });
+
+    await step('모바일 업데이트 — 시작되지 않아 되돌린 버전 안내', async () => {
+        await m.goto(BASE + '/Admin/Update');
+        await m.waitForSelector('.update-version');
+        await mockStartFailure(m);
+        await m.click('[data-act=check]');
+        await m.waitForSelector('.start-failure');
+        await noOverflow('업데이트 시작 실패 안내');
+        await shot(m, 'm11d-update-start-failure');
+        await m.unroute('**/Admin/Update?handler=Check');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
@@ -859,20 +1310,31 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     await browser.close();
 
     // ── 결과 정리 ───────────────────────────────────────────────────
-    const failed = results.filter((r) => !r.ok);
+    const ran = results.filter((r) => !r.skipped);
+    const failed = ran.filter((r) => !r.ok);
+    const code = (t) => '`' + String(t).replace(/`/g, "'") + '`';
     const lines = [
         `# 화면 점검 결과`,
         ``,
         `- 대상: ${BASE}`,
-        `- 단계: ${results.length - failed.length} / ${results.length} 통과`,
+        `- 단계: ${ran.length - failed.length} / ${ran.length} 통과` + (ran.length < results.length ? ` (ONLY=${ONLY.join('|')}, ${results.length - ran.length}개 건너뜀)` : ''),
         `- 콘솔·서버 오류: ${problems.length}건`,
         ``,
-        ...results.map((r) => `- ${r.ok ? '통과' : '**실패**'} — ${r.name}${r.ok ? '' : ` — \`${r.error}\``}`),
+        ...ran.flatMap((r) => r.ok ? [`- 통과 — ${r.name}`] : [
+            `- **실패** — ${r.name} — ${code(r.error)}`,
+            ...(r.url ? [`  - 주소: ${code(r.url)}`] : []),
+            ...(r.texts && r.texts.length ? [`  - 화면 문구: ${r.texts.map(code).join(' / ')}`] : []),
+            ...(r.screen ? [`  - 화면: [${r.screen}](${r.screen})`] : []),
+        ]),
     ];
-    if (problems.length) lines.push('', '## 콘솔·서버 오류', '', ...problems.map((p) => '- `' + p.replace(/`/g, "'") + '`'));
+    if (problems.length) lines.push('', '## 콘솔·서버 오류', '', ...problems.map((p) => '- ' + code(p)));
+    if (process.env.APP_LOG) {
+        const summary = appLogSummary(process.env.APP_LOG);
+        lines.push('', '## 앱 로그 경고·오류', '', ...(summary.length ? summary : ['- 없음']));
+    }
     fs.writeFileSync(path.join(OUT, 'report.md'), lines.join('\n') + '\n');
 
-    console.log(`\n${results.length - failed.length}/${results.length} passed, ${problems.length} console/server problems`);
+    console.log(`\n${ran.length - failed.length}/${ran.length} passed, ${problems.length} console/server problems`);
     process.exit(failed.length || problems.length ? 1 : 0);
 })().catch((err) => {
     console.error(err);
