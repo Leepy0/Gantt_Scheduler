@@ -1052,3 +1052,54 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 @media (max-width: 767px) {
     .year-chip { min-height: var(--tap); }
 }
+/* ── 조기 경보·대시보드/목록 정리·빠른 갱신 ─────────────────────────── */
+/* 지연 위험 KPI: 두 숫자(위험·정체)가 각각 목록 탭으로 간다. 노랑은 임박·위험 전용 */
+.kpi.warn { box-shadow: var(--shadow-1), inset 0 0 0 1px var(--warn-mid); }
+.kpi.warn .kpi-label { color: var(--warn); }
+.kpi-pair { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.kpi-pair a { display: inline-flex; align-items: baseline; gap: 4px; min-height: var(--tap); color: var(--text); }
+.kpi.warn .kpi-pair a[data-kpi-risk] { color: var(--warn); }
+.kpi-pair-label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); }
+.row-note { font-style: normal; color: var(--text-2); }
+.risk-reasons { color: var(--warn); }
+.dash-filters { margin-top: -8px; }
+.sort-pick { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; }
+.sort-pick select { width: auto; min-width: 128px; }
+/* 목록 머리글 정렬 링크 */
+.sort-link { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; color: inherit; }
+.sort-link:hover { color: var(--accent); }
+[aria-sort=ascending] .sort-link, [aria-sort=descending] .sort-link { color: var(--accent); }
+.list-sort { display: none; }
+.ptable-row .c-state { gap: 4px; }
+@media (max-width: 1023px) {
+    .list-sort { display: inline-flex; }
+}
+/* 내 할 일 빠른 갱신 · 작업 시트 '빠른 갱신' 블록 */
+.quick { display: flex; flex-direction: column; gap: 8px; }
+.quick-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.quick-chip {
+    min-width: 48px; min-height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 16px;
+    background: var(--surface); color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; cursor: pointer;
+}
+.quick-chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent-weak); color: var(--accent); }
+.quick-chip:disabled { opacity: .5; cursor: default; }
+.quick-custom { width: 72px; min-height: 32px; padding: 0 8px; }
+.quick-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.quick-note { flex: 1 1 200px; min-width: 0; min-height: 32px; }
+.my-row { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.my-row:first-child { border-top: 0; }
+.my-row .row-link { border-radius: var(--r-sm); }
+.my-row .quick { padding: 0 8px 4px; }
+.my-row.saved { animation: my-saved 1.2s ease-out; }
+@keyframes my-saved { from { background: var(--accent-weak); } to { background: transparent; } }
+.my-row .form-error { margin: 0 8px; }
+.sheet-more { border-top: 1px solid var(--line); padding-top: 8px; }
+.sheet-more > summary { min-height: var(--tap); display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: var(--text-2); }
+.sheet-more[open] > summary { margin-bottom: 8px; }
+.sheet-more > .more-body { display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 767px) {
+    .quick-chip, .quick-custom, .quick-note { min-height: 48px; }
+    .quick-chip { min-width: 52px; }
+    .my-row .quick .btn { min-height: 48px; }
+}
+@media (prefers-reduced-motion: reduce) { .my-row.saved { animation: none; } }

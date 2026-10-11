@@ -161,7 +161,8 @@ public class DataAccessHttpTests : IClassFixture<CountingApp>
         var (dash, dashCommands) = await CountAsync(client, new HttpRequestMessage(HttpMethod.Get, "/"), "dashboard");
         Assert.Equal(HttpStatusCode.OK, dash.StatusCode);
         // 사용자 1 + 과제 그래프(분할) 3 + 위치·공휴일 2 = 6
-        AssertAtMost(10, dashCommands, "대시보드");
+        // + 조기 경보(S7): 작업 의존(분할 1)·과제 간 연결 1(있으면 단계 1)·최근 사유 1, 새 활동 1 ≈ 11
+        AssertAtMost(14, dashCommands, "대시보드");
     }
 
     [Fact]

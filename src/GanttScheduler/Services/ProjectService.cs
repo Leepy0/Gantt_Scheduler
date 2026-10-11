@@ -109,9 +109,11 @@ public partial class ProjectService
 
     // 과제(단계·작업 포함) — 대시보드/목록/보고 집계용. 규모가 작아 메모리에서 계산한다(DESIGN 6장).
     // filter: 두 DB 에서 똑같이 번역되는 단순 조건만 붙인다(상태 같음, 기간 안 활동 존재 등). 판정 규칙(지연 등)은 메모리에서
-    public async Task<List<Project>> AllAsync(Func<IQueryable<Project>, IQueryable<Project>>? filter = null)
+    // withLinks: 작업 의존(Links)도 읽는다 — 대시보드·목록의 위험 판정(전진 계산)이 쓴다
+    public async Task<List<Project>> AllAsync(Func<IQueryable<Project>, IQueryable<Project>>? filter = null, bool withLinks = false)
     {
         IQueryable<Project> q = Graph();
+        if (withLinks) q = q.Include(p => p.Links);
         if (filter != null) q = filter(q);
         return await q.AsNoTracking().AsSplitQuery().ToListAsync();
     }
@@ -876,11 +878,7 @@ public partial class ProjectService
             throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart");
         if (input.PlanStart.Value > input.PlanEnd.Value)
             throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
-        if (input.ActualEnd != null && input.ActualStart == null)
-            throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
-        if (input.ActualStart != null && input.ActualEnd != null && input.ActualStart.Value > input.ActualEnd.Value)
-            throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
-        Rules.ValidateProgress(input.Progress);
+        Rules.ValidateActuals(input.ActualStart, input.ActualEnd, input.Progress);
 
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
@@ -893,10 +891,8 @@ public partial class ProjectService
         var coOwner = await _users.ResolveAsync(input.CoOwner, "coOwner", current?.CoOwnerId);
         if (ReferenceEquals(owner, coOwner)) coOwner = null;
 
-        var progress = input.Progress;
-        var actualStart = input.ActualStart;
-        if (input.ActualEnd != null) progress = 100;                          // 종료일이 있으면 100%
-        else if (progress > 0 && actualStart == null) actualStart = Rules.UserToday(input.ClientToday, _clock.Today); // 진행률만 올렸으면 (접속자의) 오늘 시작한 것으로
+        // 종료일이 있으면 100%, 진행률만 올렸으면 (접속자의) 오늘 시작한 것으로 — 내 할 일의 빠른 갱신(UpdateWorkProgressAsync)과 같은 규칙
+        var (progress, actualStart) = Rules.WorkActuals(input.Progress, input.ActualStart, input.ActualEnd, input.ClientToday, _clock.Today);
 
         WorkItem w;
         var batch = Guid.NewGuid();
