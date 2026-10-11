@@ -11,7 +11,8 @@ public record MasterNode(
     string? Country = null, int? OceanLeadDays = null, string? Kind = null,
     string? Org = null, int? OrgUnitId = null, bool? IsAdmin = null, DateOnly? Date = null, List<string>? Ips = null,
     DateOnly? LastSeen = null, List<UserIpView>? Addresses = null,
-    int? DefaultWorkDays = null, StageLeadHint? Lead = null, string? Email = null);
+    int? DefaultWorkDays = null, StageLeadHint? Lead = null, string? Email = null,
+    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null);
 
 // 사용자에 연결된 접속 IP. LastSeen 은 한국 날짜, Current 는 지금 이 화면을 연 기기
 public record UserIpView(string Ip, DateOnly LastSeen, bool Current);
@@ -22,13 +23,15 @@ public record MasterIp(int UserId, string? Ip);
 public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
     string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date,
-    int? DefaultWorkDays = null, string? Email = null);
+    int? DefaultWorkDays = null, string? Email = null,
+    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null);
 
 // Active: 사용 중지/다시 사용에서 원하는 상태. 서버는 뒤집지 않고 이 값으로 맞춘다(같으면 아무 일도 하지 않는다) —
 // 두 번 누르거나 오래 열어 둔 화면에서 눌러도 반대로 동작하지 않게(퇴사자 사용 중지가 풀리는 일 등)
 public record MasterRef(string Kind, int Level, int Id, int Dir, bool? Active = null);
 
-// 기준 정보(계층·유형·단계 템플릿·체크리스트·기기·용기·협력사·조직·사용자·공휴일) 관리
+// 기준 정보(계층·유형·단계 템플릿·체크리스트·기기·용기·협력사·조직·사용자·공휴일) 관리.
+// 유형 트리는 1 유형 → 2 단계 템플릿 → 3 체크 항목이고, 단계 템플릿 아래의 작업 템플릿은 4 로 둔다(관리 화면은 단계 아래 따로 그린다)
 public class MasterService
 {
     public const int LocationDepth = 4;
@@ -61,7 +64,8 @@ public class MasterService
 
             case "category":
             {
-                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery().ToListAsync();
+                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems)
+                    .Include(c => c.StageTemplates).ThenInclude(t => t.Works).AsSplitQuery().ToListAsync();
                 var hints = await LeadHintsAsync();
                 var nodes = new List<MasterNode>();
                 foreach (var c in cats.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
@@ -73,6 +77,9 @@ public class MasterService
                             DefaultWorkDays: t.DefaultWorkDays, Lead: hints.GetValueOrDefault((c.Id, t.Name))));
                         foreach (var k in t.CheckItems.OrderBy(k => k.SortOrder).ThenBy(k => k.Id))
                             nodes.Add(new MasterNode(k.Id, t.Id, 3, k.Text, true, k.SortOrder));
+                        foreach (var w in t.Works.OrderBy(w => w.SortOrder).ThenBy(w => w.Id))
+                            nodes.Add(new MasterNode(w.Id, t.Id, 4, w.Title, true, w.SortOrder,
+                                OffsetWorkDays: w.OffsetWorkDays, DurationWorkDays: w.DurationWorkDays, PredecessorId: w.PredecessorTemplateWorkId));
                     }
                 }
                 return nodes;
@@ -92,6 +99,11 @@ public class MasterService
             case "vendor":
                 return (await _db.Vendors.AsNoTracking().ToListAsync())
                     .OrderBy(e => e.SortOrder).ThenBy(e => e.Name)
+                    .Select(e => new MasterNode(e.Id, null, 1, e.Name, e.IsActive, e.SortOrder)).ToList();
+
+            case "reason":
+                return (await _db.DelayReasons.AsNoTracking().ToListAsync())
+                    .OrderBy(e => e.SortOrder).ThenBy(e => e.Id)
                     .Select(e => new MasterNode(e.Id, null, 1, e.Name, e.IsActive, e.SortOrder)).ToList();
 
             case "holiday":
@@ -126,17 +138,18 @@ public class MasterService
     public static int NameLimit(string kind, int level) => kind switch
     {
         "location" => Limits.LocationName,
-        "category" => level switch { 1 => Limits.CategoryName, 2 => Limits.StageName, _ => Limits.CheckText },
+        "category" => level switch { 1 => Limits.CategoryName, 2 => Limits.StageName, 4 => Limits.WorkTitle, _ => Limits.CheckText },
         "equipment" => Limits.EquipmentName,
         "container" => Limits.ContainerName,
         "vendor" => Limits.VendorName,
         "org" => Limits.OrgName,
         "user" => Limits.UserName,
         "holiday" => Limits.HolidayName,
+        "reason" => Limits.DelayReasonName,
         _ => Limits.CategoryName,
     };
 
-    public static readonly string[] Kinds = { "location", "category", "equipment", "container", "vendor", "org", "user", "holiday" };
+    public static readonly string[] Kinds = { "location", "category", "equipment", "container", "vendor", "org", "user", "holiday", "reason" };
 
     public async Task SaveAsync(MasterSave input)
     {
@@ -203,6 +216,10 @@ public class MasterService
                 e.Kind = kind;
                 break;
             }
+
+            case "category" when input.Level == 4:
+                await SaveTemplateWorkAsync(input, name);
+                break;
 
             case "category" when input.Level == 3:
             {
@@ -282,6 +299,20 @@ public class MasterService
                     _db.Vendors.Add(e);
                 }
                 else e = await _db.Vendors.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                e.Name = name;
+                break;
+            }
+
+            case "reason":
+            {
+                DelayReason e;
+                if (input.Id == null)
+                {
+                    var all = await _db.DelayReasons.ToListAsync();
+                    e = new DelayReason { SortOrder = NextSort(all.Select(s => s.SortOrder)) };
+                    _db.DelayReasons.Add(e);
+                }
+                else e = await _db.DelayReasons.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
                 e.Name = name;
                 break;
             }
@@ -397,9 +428,21 @@ public class MasterService
                 _db.TemplateCheckItems.Remove(e);
                 break;
             }
+            case "category" when r.Level == 4:
+            {
+                var e = await _db.TemplateWorks.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                // 이 작업을 선행으로 둔 형제는 선행 없이 남긴다 (자기 참조 FK 는 cascade 가 없다)
+                foreach (var next in await _db.TemplateWorks.Where(x => x.PredecessorTemplateWorkId == e.Id).ToListAsync())
+                    next.PredecessorTemplateWorkId = null;
+                _db.TemplateWorks.Remove(e);
+                break;
+            }
             case "category":
             {
-                var e = await _db.StageTemplates.Include(x => x.CheckItems).FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var e = await _db.StageTemplates.Include(x => x.CheckItems).Include(x => x.Works).FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                // 작업 템플릿끼리의 선행을 먼저 끊고 함께 지운다 (DB 의 자기 참조 FK 는 cascade 가 없다)
+                foreach (var w in e.Works) w.PredecessorTemplateWorkId = null;
+                _db.TemplateWorks.RemoveRange(e.Works);
                 _db.StageTemplates.Remove(e);
                 break;
             }
@@ -424,6 +467,12 @@ public class MasterService
             case "vendor":
             {
                 var e = await _db.Vendors.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                e.IsActive = Wanted();
+                break;
+            }
+            case "reason":
+            {
+                var e = await _db.DelayReasons.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 e.IsActive = Wanted();
                 break;
             }
@@ -578,6 +627,13 @@ public class MasterService
                 Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
                 break;
             }
+            case "category" when r.Level == 4:
+            {
+                var e = await _db.TemplateWorks.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                var siblings = await _db.TemplateWorks.Where(x => x.StageTemplateId == e.StageTemplateId).ToListAsync();
+                Swap(siblings.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                break;
+            }
             case "category":
             {
                 var e = await _db.StageTemplates.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
@@ -613,6 +669,13 @@ public class MasterService
                 Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
                 break;
             }
+            case "reason":
+            {
+                var all = await _db.DelayReasons.ToListAsync();
+                var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
+                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                break;
+            }
             default:
                 throw new RuleException("순서를 바꿀 수 없는 항목입니다.");
         }
@@ -626,6 +689,41 @@ public class MasterService
         if (i < 0 || j < 0 || j >= ordered.Count) return;
         (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
         for (var k = 0; k < ordered.Count; k++) setSort(ordered[k], k + 1);
+    }
+
+    // 단계 템플릿 아래 작업 템플릿 추가·수정. 선행은 같은 단계 템플릿의 다른 작업만 — 순환은 막는다
+    private async Task SaveTemplateWorkAsync(MasterSave input, string title)
+    {
+        var offset = input.OffsetWorkDays ?? 0;
+        var duration = input.DurationWorkDays ?? 1;
+        Rules.ValidateTemplateWork(offset, duration);
+        TemplateWork e;
+        if (input.Id == null)
+        {
+            if (input.ParentId == null) throw new RuleException("단계를 먼저 선택해 주세요.");
+            await RequireParentAsync(_db.StageTemplates.Where(t => t.Id == input.ParentId.Value), "단계");
+            var siblings = await _db.TemplateWorks.Where(t => t.StageTemplateId == input.ParentId.Value).ToListAsync();
+            e = new TemplateWork { StageTemplateId = input.ParentId.Value, SortOrder = NextSort(siblings.Select(s => s.SortOrder)) };
+            _db.TemplateWorks.Add(e);
+        }
+        else e = await _db.TemplateWorks.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+
+        if (input.PredecessorId is int pred)
+        {
+            var family = await _db.TemplateWorks.AsNoTracking().Where(t => t.StageTemplateId == e.StageTemplateId)
+                .Select(t => new { t.Id, t.PredecessorTemplateWorkId }).ToListAsync();
+            if (pred == e.Id || family.All(t => t.Id != pred))
+                throw new RuleException("선행 작업은 같은 단계의 다른 작업 템플릿에서 골라 주세요.", "predecessorId");
+            // 고른 선행에서 거슬러 올라가 이 작업이 나오면 순환이다
+            var edges = family.Where(t => t.Id != e.Id && t.PredecessorTemplateWorkId != null)
+                .Select(t => (From: t.PredecessorTemplateWorkId!.Value, To: t.Id)).ToList();
+            if (e.Id != 0 && Rules.Reaches(edges, e.Id, pred))
+                throw new RuleException("선행으로 두면 작업 템플릿의 순서가 순환합니다.", "predecessorId");
+        }
+        e.Title = title;
+        e.OffsetWorkDays = offset;
+        e.DurationWorkDays = duration;
+        e.PredecessorTemplateWorkId = input.PredecessorId;
     }
 
     // 단계 템플릿 기본 기간 옆의 참고값 — 완료된 과제의 같은 유형·같은 이름 단계 리드타임(근무일). 완료 과제만 읽는다

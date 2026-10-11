@@ -189,6 +189,99 @@ async function projectData(p) {
 }
 const worksOf = (P) => P.stages.flatMap((s) => s.works);
 
+// ── 가져오기 양식 채우기 ─────────────────────────────────────────
+// 내려받은 양식(xlsx = zip)의 시트에 줄을 채워 다시 묶는다. 외부 라이브러리 없이 zip 을 풀고(STORE·DEFLATE) STORE 로 다시 묶는다.
+// 섀도 빌드(FAKE_EXPORT)의 양식은 '# 시트명' 줄과 TAB 칸의 글자라 그 형식에 줄을 붙인다
+const zlib = require('zlib');
+const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+})();
+function crc32(buf) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function unzip(buf) {
+    let eocd = buf.length - 22;
+    while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+    if (eocd < 0) throw new Error('zip 이 아님');
+    const count = buf.readUInt16LE(eocd + 10);
+    let p = buf.readUInt32LE(eocd + 16);
+    const files = [];
+    for (let i = 0; i < count; i++) {
+        const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
+        const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+        const local = buf.readUInt32LE(p + 42);
+        const name = buf.subarray(p + 46, p + 46 + nameLen).toString('utf8');
+        const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+        const raw = buf.subarray(start, start + size);
+        files.push({ name, data: method === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw) });
+        p += 46 + nameLen + extraLen + commentLen;
+    }
+    return files;
+}
+function zip(files) {
+    const locals = [], centrals = [];
+    let offset = 0;
+    for (const f of files) {
+        const name = Buffer.from(f.name, 'utf8'), crc = crc32(f.data);
+        const h = Buffer.alloc(30);
+        h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0x0800, 6); h.writeUInt16LE(0, 8);
+        h.writeUInt32LE(crc, 14); h.writeUInt32LE(f.data.length, 18); h.writeUInt32LE(f.data.length, 22); h.writeUInt16LE(name.length, 26);
+        const c = Buffer.alloc(46);
+        c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8);
+        c.writeUInt32LE(crc, 16); c.writeUInt32LE(f.data.length, 20); c.writeUInt32LE(f.data.length, 24); c.writeUInt16LE(name.length, 28);
+        c.writeUInt32LE(offset, 42);
+        locals.push(h, name, f.data);
+        centrals.push(c, name);
+        offset += 30 + name.length + f.data.length;
+    }
+    const central = Buffer.concat(centrals);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+    end.writeUInt32LE(central.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, central, end]);
+}
+const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function colName(i) { let s = ''; for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; }
+// sheets: { '과제': [[칸, …], …], '작업': [...] } — 2행부터 채운다(1행은 양식 머리글)
+function fillTemplate(template, sheets) {
+    if (template.subarray(0, 2).toString('latin1') !== 'PK') {
+        // 섀도 빌드의 글자 양식
+        let text = template.toString('utf8');
+        for (const [name, rows] of Object.entries(sheets)) {
+            const lines = rows.map((r) => r.join('\t')).join('\n');
+            text = text.replace(new RegExp('(# ' + name + '\\n[^\\n]*\\n)'), '$1' + lines + '\n');
+        }
+        return Buffer.from(text, 'utf8');
+    }
+    const files = unzip(template);
+    const get = (n) => files.find((f) => f.name === n);
+    const workbook = get('xl/workbook.xml').data.toString('utf8');
+    const rels = get('xl/_rels/workbook.xml.rels').data.toString('utf8');
+    for (const [name, rows] of Object.entries(sheets)) {
+        // ClosedXML 은 'x:' 같은 이름공간 접두사를 붙여 쓴다 — 접두사가 있든 없든 찾는다
+        const rid = new RegExp('<(?:\\w+:)?sheet [^>]*name="' + name + '"[^>]*r:id="([^"]+)"').exec(workbook)[1];
+        const rel = (rels.match(/<(?:\w+:)?Relationship [^>]*>/g) || []).find((r) => r.includes('Id="' + rid + '"'));
+        let target = /Target="([^"]+)"/.exec(rel)[1].replace(/^\//, '');
+        if (!target.startsWith('xl/')) target = 'xl/' + target;
+        const f = get(target);
+        let xml = f.data.toString('utf8');
+        const ns = (/<(\w+:)?sheetData/.exec(xml)[1]) || '';
+        // 서식만 걸린 빈 줄(2행부터)은 지우고 채운 줄을 넣는다
+        xml = xml.replace(/<(\w+:)?row r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/(?:\w+:)?row>)/g, (m, p, r) => (+r >= 2 ? '' : m));
+        const body = rows.map((cells, i) => '<' + ns + 'row r="' + (i + 2) + '">' + cells.map((v, j) => v === '' ? '' :
+            '<' + ns + 'c r="' + colName(j) + (i + 2) + '" t="inlineStr"><' + ns + 'is><' + ns + 't xml:space="preserve">' + xmlEsc(v) + '</' + ns + 't></' + ns + 'is></' + ns + 'c>').join('') +
+            '</' + ns + 'row>').join('');
+        xml = xml.replace('<' + ns + 'sheetData />', '<' + ns + 'sheetData></' + ns + 'sheetData>').replace('<' + ns + 'sheetData/>', '<' + ns + 'sheetData></' + ns + 'sheetData>')
+            .replace('</' + ns + 'sheetData>', body + '</' + ns + 'sheetData>');
+        f.data = Buffer.from(xml, 'utf8');
+    }
+    return zip(files);
+}
+
 (async () => {
     const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
     // 작업 시트의 '작업 정보·일정·선행·메모'는 기본으로 접혀 있고 펼침을 기억한다(App.pref). 여러 단계가 그 칸을 직접 고치므로
@@ -291,13 +384,13 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         const bar = page.locator('[data-bar-category]').first();
         const total = +(await bar.locator('.bar-num').innerText());
         await bar.click();
-        await page.waitForURL(/state=all&category=\d+/);
+        await page.waitForURL(/state=all&current=true&category=\d+/);
         assert((await page.locator('.ptable-row').count()) === total, '유형 막대 건수와 목록 건수가 다름');
         await page.goto(BASE + '/');
         const corp = page.locator('[data-bar-corp]').first();
         const corpTotal = +(await corp.locator('.bar-num').innerText());
         await corp.click();
-        await page.waitForURL(/state=all&corp=\d+/);
+        await page.waitForURL(/state=all&current=true&corp=\d+/);
         assert((await page.locator('.ptable-row').count()) === corpTotal, '법인 막대 건수와 목록 건수가 다름');
     });
 
@@ -1281,6 +1374,107 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await shot(page, 'd17-insights-history');
     });
 
+    await step('사유 분류 — 단계 목표일을 바꿀 때 분류를 고르면 변경 분석의 원인 파레토에 오름', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await stageRow(page, '안정화').click();
+        await page.waitForSelector(SHEET);
+        const cur = await page.inputValue(SHEET + ' input[name=targetDate]');
+        assert(cur, '안정화 목표일이 없음');
+        const next = new Date(Date.parse(cur + 'T00:00:00Z') + 3 * 86400e3).toISOString().slice(0, 10);
+        await page.fill(SHEET + ' input[name=targetDate]', next);
+        await page.fill(SHEET + ' textarea[name=reason]', '설비 부품 입고 지연');
+        const options = await page.locator(SHEET + ' select[name=reasonCode] option').allInnerTexts();
+        assert(options.includes('자재·납품 지연'), '사유 분류 선택지가 없음: ' + options.join(','));
+        await page.selectOption(SHEET + ' select[name=reasonCode]', { label: '자재·납품 지연' });
+        await shot(page, 'd15c-reason-code');
+        await submitSheet(page);
+        await page.goto(BASE + '/Insights/Changes');
+        await page.waitForSelector('[data-pareto]');
+        assert((await page.locator('[data-pareto-row="자재·납품 지연"]').count()) === 1, '파레토에 분류가 없음');
+        assert(+(await page.locator('[data-kpi=decisions] .kpi-value').innerText()) > 0, '결정 수가 0');
+        assert((await page.locator('[data-replan-top] tbody tr').count()) > 0, '재계획 상위 과제가 없음');
+        assert((await page.locator('[data-changes-group=category] tbody tr').count()) > 0, '유형별 월간 결정 표가 없음');
+        await shot(page, 'd15d-changes');
+    });
+
+    await step('추세·부하·단계 병목 — 스냅샷 추이와 법인 × 기기 수량, 사람 × 주 부하, 칸을 누르면 그 사람의 할 일(읽기 전용)', async () => {
+        await page.goto(BASE + '/Insights/Trend');
+        await page.waitForSelector('[data-trend-note]');
+        assert((await page.locator('[data-trend] svg path.series').count()) >= 4, '추세 그래프가 없음(시작 직후 스냅샷)');
+        assert((await page.locator('[data-equipment] tbody tr').count()) >= 1, '법인 × 기기 수량 표가 없음');
+        await shot(page, 'd15e-trend');
+        await page.click('[data-range-year]');
+        await page.waitForURL(/range=1y/);
+        await page.waitForSelector('[data-trend-note]');
+
+        await page.goto(BASE + '/Insights/Load');
+        await page.waitForSelector('[data-load-note]');
+        assert((await page.locator('[data-load-person]').count()) >= 2, '부하 표에 사람이 부족함');
+        assert((await page.locator('[data-load] thead th').count()) === 9, '부하 표가 8주가 아님');
+        await shot(page, 'd15f-load');
+        const other = page.locator('[data-load-person]').filter({ hasNotText: '평영' }).locator('.load-cell a').first();
+        const who = await other.locator('xpath=ancestor::tr').getAttribute('data-load-person');
+        await other.click();
+        await page.waitForSelector('[data-my-readonly]');
+        assert((await page.locator('h1').innerText()).includes(who), '다른 사람의 할 일 제목이 아님');
+        assert((await page.locator('[data-quick]').count()) === 0 && (await page.locator('#news').count()) === 0, '읽기 전용인데 바로 갱신·새 소식이 보임');
+        await shot(page, 'd15g-my-readonly');
+
+        await page.goto(BASE + '/Insights/LeadTime');
+        assert((await page.locator('.lead-table thead').first().innerText()).includes('진행 중 · 평균 초과'), '단계 병목 열이 없음');
+        assert((await page.locator('[data-lead-active]').allInnerTexts()).some((t) => t.includes('진행 중')), '진행 중 과제 수가 없음');
+    });
+
+    await step('기간 보고 — 월·직접 지정 기간, 조직·변동만 조건, 지연·위험 요약, 변경 이력 Excel', async () => {
+        await page.goto(BASE + '/Insights/Weekly');
+        await page.waitForSelector('[data-delay-summary]');
+        assert((await page.locator('[data-delay-summary] tbody tr').count()) >= 2, '지연·위험 요약이 부족함');
+        await page.click('[data-period-month]');
+        await page.waitForURL(/period=month/);
+        assert((await page.locator('.weekly dt').allInnerTexts()).some((t) => t.includes('다음 달 계획')) || (await page.locator('.weekly').count()) === 0, '월간 보고 문구가 아님');
+        assert((await page.locator('a[aria-label="이전 달"]').count()) === 1, '이전 달 단추가 없음');
+        await shot(page, 'd16c-report-month');
+        await page.click('[data-period-custom]');
+        await page.waitForURL(/period=custom/);
+        await page.fill('#report-filters input[name=from]', kstToday(-20));
+        await page.fill('#report-filters input[name=to]', kstToday(0));
+        await page.selectOption('#report-filters select[name=org]', { label: '물류기술그룹' });
+        await page.check('#report-filters input[name=changed]');
+        await page.click('#report-filters button[type=submit]');
+        await page.waitForURL(/changed=true/);
+        assert((await page.locator('[data-report-range]').innerText()).includes(kstToday(-20)), '직접 지정 기간이 아님');
+        assert((await page.locator('[data-weekly-quiet]').count()) === 0, '변동 있는 과제만인데 접힌 표가 있음');
+        await shot(page, 'd16d-report-custom');
+        const xlsx = await desktop.request.get(BASE + '/Insights/Weekly?handler=Excel&period=month');
+        assert(xlsx.ok(), '월간 보고 Excel 실패 ' + xlsx.status());
+        fs.writeFileSync(path.join(EXPORTS, '월간보고.xlsx'), await xlsx.body());
+
+        await page.goto(BASE + '/Insights/History?kind=schedule');
+        await page.waitForSelector('#history-excel');
+        const href = await page.getAttribute('#history-excel', 'href');
+        assert(href.includes('handler=Excel') && href.includes('kind=schedule'), '이력 Excel 링크에 조건이 없음: ' + href);
+        const res = await desktop.request.get(BASE + href);
+        assert(res.ok(), '변경 이력 Excel 실패 ' + res.status());
+        const body = await res.body();
+        fs.writeFileSync(path.join(EXPORTS, '변경이력.xlsx'), body);
+        if (!process.env.FAKE_EXPORT) assert(body.subarray(0, 2).toString('latin1') === 'PK', '변경 이력 Excel 형식이 아님');
+
+        // 대시보드: 조직 조건과 막대 범위 안내
+        await page.goto(BASE + '/?scope=focus');
+        await page.waitForSelector('#dash-filters select[name=org]');
+        assert((await page.locator('[data-bars-scope]').count()) === 1, '막대 범위 안내가 없음');
+        const bar = await page.getAttribute('[data-bar-category]', 'href');
+        assert(bar.includes('current=true'), '막대 링크가 같은 범위가 아님: ' + bar);
+        await page.goto(BASE + bar);
+        await page.waitForSelector('[data-special-note]');
+        await page.goto(BASE + '/?reset=1');
+
+        await page.goto(BASE + '/Admin#reason');
+        await page.waitForSelector('.columns .node');
+        assert((await page.locator('.columns .node').count()) >= 7, '지연 사유 분류가 부족함');
+        await shot(page, 'd18e-admin-reason');
+    });
+
     await step('활동 더 보기 — 최근 50건만 먼저 싣고 나머지는 나눠 받음, 이 과제 전체 이력으로 이동', async () => {
         await openProject(page, '광주 냉장고 3라인 AGV 도입');
         // 활동을 50건 넘게 쌓는다: 미완료 단계의 체크를 켜고 끄기(짝수 번이라 원래 상태로 돌아온다). 주간 보고에 오르지 않는 활동이다
@@ -2187,6 +2381,163 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         }
     });
 
+    // ── 입력 부담 줄이기·Excel 가져오기 ──
+    // 이 단계들은 '광주 냉장고 5라인 AGV 도입'(복제본)에 담당 없는 작업을 더하고(내 할 일이 바뀌지 않게), 관리 > 유형 '물류' 의 '검토'에
+    // 작업 템플릿 2개를 더하며, 과제 'e2e 가져오기 과제'(담당 e2e가져오기담당)와 복제본 'e2e 베트남 복제'(담당 김물류)를 만든다
+    const PASTE = '광주 냉장고 5라인 AGV 도입';
+    let importTemplate = null;     // 내려받은 가져오기 양식 (모바일 단계도 쓴다)
+
+    await step('작업 여러 개 추가 — 붙여넣으면 서버가 해석한 표(문제 줄은 오류 모양)를 보이고, 고치면 n개를 한 번에 저장', async () => {
+        await openProject(page, PASTE);
+        await page.click('#view-mode [data-view=list]');
+        const before = await projectData(page);
+        const stage = before.stages.find((s) => !s.completedDate);
+        await page.click('[data-add-works="' + stage.id + '"]');
+        await page.waitForSelector(SHEET + ' textarea[name=text]');
+        const good = ['작업명\t담당\t목표 시작\t목표 종료\t선행 작업명',
+            '자재 입고 확인\t\t' + kstToday(40) + '\t' + kstToday(41),
+            '설치 준비\t\t' + kstToday(50).replace(/-/g, '.') + '\t' + kstToday(52) + '\t자재 입고 확인'];
+        await page.fill(SHEET + ' textarea[name=text]', good.concat(['틀린 줄\t\t언젠가\t']).join('\n'));
+        await page.click(SHEET + ' [data-paste-check]');
+        await page.waitForSelector(SHEET + ' [data-paste-table] tbody tr');
+        assert((await page.locator(SHEET + ' [data-paste-table] tr.row-bad').count()) === 1, '문제 줄 표시가 1개가 아님');
+        assert((await page.locator(SHEET + ' .row-issue').innerText()).includes('목표 시작'), '문제 칸 이름이 없음');
+        assert(!(await page.locator(SHEET + ' [data-paste-table] .chip.alarm').count()), '문제 줄에 지연(빨강) 칩을 씀');
+        assert((await page.locator(SHEET + ' button[type=submit]').innerText()).trim() === '추가', '문제가 있는데 n개 추가로 보임');
+        await shot(page, 'd60-paste-works', false);
+        // 저장을 눌러도 문제가 있으면 막는다
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('문제 있는 줄'), '문제 있는 줄 안내가 없음');
+        // 고치면 다시 확인되고 'n개 추가'
+        await page.fill(SHEET + ' textarea[name=text]', good.join('\n'));
+        await page.waitForFunction(() => /2개 추가/.test(document.querySelector('dialog.sheet[open] button[type=submit]').textContent));
+        assert(!(await page.locator(SHEET + ' tr.row-bad').count()), '고쳤는데 문제 줄이 남음');
+        await submitSheet(page);
+        const after = await projectData(page);
+        const works = worksOf(after);
+        const a = works.find((w) => w.title === '자재 입고 확인'), b = works.find((w) => w.title === '설치 준비');
+        assert(a && b && a.stageId === stage.id && b.planStart === kstToday(50), '붙여넣은 작업이 저장되지 않음');
+        assert(after.links.some((l) => l.from === a.id && l.to === b.id), '선행 연결이 없음');
+        assert(!a.owner && !b.owner, '담당을 비웠는데 담당이 들어감');
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForFunction(() => document.getElementById('feed').textContent.includes('작업 추가: 설치 준비 (여러 개 추가)'));
+        await page.click('.tabs [data-tab=schedule]');
+    });
+
+    await step('저장 후 계속 추가 — 작업명만 비우고 담당·날짜는 그대로, 포커스는 작업명', async () => {
+        await openProject(page, PASTE);
+        await page.click('#view-mode [data-view=list]');
+        const stage = (await projectData(page)).stages.find((s) => !s.completedDate);
+        await page.click('[data-add-work="' + stage.id + '"]');
+        await page.waitForSelector(SHEET + ' [data-continue]');
+        await page.fill(SHEET + ' input[name=title]', '연속 추가 1');
+        await page.fill(SHEET + ' input[name=owner]', '');
+        await page.fill(SHEET + ' input[name=planStart]', kstToday(60));
+        await page.fill(SHEET + ' input[name=planEnd]', kstToday(61));
+        await page.click(SHEET + ' [data-continue]');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] input[name=title]').value === '');
+        assert(await page.locator(SHEET).isVisible(), '저장 후 계속인데 시트가 닫힘');
+        assert((await page.inputValue(SHEET + ' input[name=planStart]')) === kstToday(60), '목표 시작이 유지되지 않음');
+        assert((await page.inputValue(SHEET + ' input[name=owner]')) === '', '담당이 유지되지 않음');
+        assert(await page.evaluate(() => document.activeElement && document.activeElement.name === 'title'), '포커스가 작업명이 아님');
+        assert((await page.locator(SHEET + ' .pick-list label', { hasText: '연속 추가 1' }).count()) === 1, '방금 만든 작업이 선행 후보에 없음');
+        await shot(page, 'd61-work-continue', false);
+        await page.fill(SHEET + ' input[name=title]', '연속 추가 2');
+        await submitSheet(page);
+        const titles = worksOf(await projectData(page)).map((w) => w.title);
+        assert(titles.includes('연속 추가 1') && titles.includes('연속 추가 2'), '연속 추가한 작업이 없음');
+    });
+
+    await step('관리 — 단계 아래 작업 템플릿 추가·선행, 등록 화면에 템플릿 작업 n개 함께 만들기', async () => {
+        await page.goto(BASE + '/Admin#category');
+        await page.waitForSelector('.columns .node');
+        await page.locator('.column').first().locator('.node-main', { hasText: /^물류$/ }).click();
+        await page.locator('.column').nth(1).locator('.node-main', { hasText: '검토' }).click();
+        await page.waitForSelector('[data-template-works]');
+        assert((await page.locator('[data-template-works] .column-head').innerText()).includes('검토'), '작업 템플릿 판에 단계 이름이 없음');
+        for (const [name, offset, days, pred] of [['현장 조사', '0', '3', ''], ['개선안 작성', '3', '4', '현장 조사']]) {
+            await page.click('[data-template-works] [data-tw-add]');
+            await page.waitForSelector(SHEET + ' input[name=offsetWorkDays]');
+            await page.fill(SHEET + ' input[name=name]', name);
+            await page.fill(SHEET + ' input[name=offsetWorkDays]', offset);
+            await page.fill(SHEET + ' input[name=durationWorkDays]', days);
+            if (pred) await page.selectOption(SHEET + ' select[name=predecessorId]', { label: pred });
+            await submitSheet(page);
+        }
+        const rows = page.locator('[data-template-works] .node');
+        assert((await rows.count()) === 2, '작업 템플릿이 2개가 아님');
+        assert((await rows.nth(1).innerText()).includes('선행: 현장 조사'), '선행 표시가 없음');
+        assert((await rows.nth(1).innerText()).includes('시작 +3근무일'), '시작 표시가 없음');
+        await shot(page, 'd62-admin-template-works');
+        await page.goto(BASE + '/Projects/Edit');
+        await page.locator('.choice').filter({ has: page.getByText('물류', { exact: true }) }).click();
+        await page.waitForSelector('#template-works-field:not([hidden])');
+        assert((await page.locator('#template-works-label').innerText()) === '템플릿 작업 2개 함께 만들기', '템플릿 작업 수 안내가 다름');
+        assert(await page.isChecked('#template-works'), '템플릿 작업 함께 만들기가 기본으로 켜져 있지 않음');
+        await page.locator('.choice', { hasText: 'Simulation' }).click();
+        assert(await page.locator('#template-works-field').isHidden(), '템플릿 작업이 없는 유형인데 보임');
+    });
+
+    await step('과제 복제 — 위치(법인 → 하위)와 담당을 정함', async () => {
+        await openProject(page, PASTE);
+        await page.click('#btn-clone');
+        await page.waitForSelector(SHEET + ' [data-location-picker] select');
+        assert((await page.inputValue(SHEET + ' input[name=owner]')) !== '', '담당 기본값(나)이 없음');
+        await page.fill(SHEET + ' input[name=title]', 'e2e 베트남 복제');
+        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="1"]', { label: '베트남' });
+        await page.selectOption(SHEET + ' [data-location-picker] select[data-level="2"]', { label: '세탁기' });
+        // 하위가 하나뿐인 라인은 저절로 고른다
+        assert((await page.inputValue(SHEET + ' [data-location-picker] select[data-level="3"]')) !== '', '라인이 자동 선택되지 않음');
+        await page.fill(SHEET + ' input[name=owner]', '김물류');
+        await page.uncheck(SHEET + ' input[name=works]');
+        await shot(page, 'd63-clone-location', false);
+        await page.locator(SHEET + ' button[type=submit]').click();
+        await page.waitForFunction(() => document.getElementById('p-title').textContent === 'e2e 베트남 복제');
+        const P = await projectData(page);
+        assert(P.corporation === '베트남' && P.locationPath.includes('2라인') && P.owner === '김물류', '위치·담당이 반영되지 않음: ' + P.corporation + ' ' + P.locationPath + ' ' + P.owner);
+    });
+
+    await step('가져오기 — 양식 받기·올리기·미리보기(오류 행)·고쳐서 가져오기', async () => {
+        await page.goto(BASE + '/Projects');
+        await page.click('#btn-import');
+        await page.waitForSelector('#import-form');
+        const res = await desktop.request.get(BASE + '/Projects/Import?handler=Template');
+        assert(res.ok(), '양식 응답 ' + res.status());
+        importTemplate = await res.body();
+        fs.writeFileSync(path.join(EXPORTS, '과제_가져오기_양식' + (process.env.FAKE_EXPORT ? '.txt' : '.xlsx')), importTemplate);
+        if (!process.env.FAKE_EXPORT) assert(importTemplate.subarray(0, 2).toString('latin1') === 'PK', '양식이 xlsx 가 아님');
+        const good = ['e2e 가져오기 과제', '물류', '한국', '냉장고>3라인', 'e2e가져오기담당', kstToday(7), '', 'Excel 로 가져온 과제', '보고=' + kstToday(40)];
+        const bad = ['e2e 가져오기 오류', '없는 유형', '한국', '', '', '언젠가'];
+        const works = [['e2e 가져오기 과제', '적용', '현장 적용', '', kstToday(60), kstToday(62)]];
+        const file = (rows) => ({ name: '가져오기.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fillTemplate(importTemplate, rows) });
+
+        await page.setInputFiles('#import-file', file({ '과제': [good, bad], '작업': works }));
+        await page.click('#import-check');
+        await page.waitForSelector('#import-result:not([hidden]) [data-import-projects]');
+        assert((await page.locator('[data-import-projects] tr.row-bad').count()) === 1, '오류 행 표시가 1개가 아님');
+        assert((await page.locator('[data-import-projects] .row-issue').allInnerTexts()).join(' ').includes('유형'), '유형 오류 안내가 없음');
+        assert(await page.locator('#import-actions').isHidden(), '오류가 있는데 가져오기 단추가 보임');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await shot(page, 'd64-import-errors');
+
+        await page.setInputFiles('#import-file', file({ '과제': [good], '작업': works }));
+        await page.click('#import-check');
+        await page.waitForSelector('#import-actions:not([hidden])');
+        assert((await page.locator('[data-import-new-users]').innerText()).includes('e2e가져오기담당'), '새 담당자 안내가 없음');
+        assert(await page.locator('#import-run').isDisabled(), '새 담당자를 확인하기 전에 가져오기를 누를 수 있음');
+        await page.check('#import-confirm');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await shot(page, 'd64b-import-ready');
+        await page.click('#import-run');
+        await page.waitForFunction(() => document.getElementById('p-title') && document.getElementById('p-title').textContent === 'e2e 가져오기 과제');
+        const P = await projectData(page);
+        assert(P.owner === 'e2e가져오기담당' && P.locationPath.includes('3라인'), '가져온 과제의 담당·위치가 다름');
+        assert(worksOf(P).map((w) => w.title).join(',') === '현장 적용', '작업 시트의 작업만 만들어야 함: ' + worksOf(P).map((w) => w.title));
+        assert(P.stages.find((s) => s.name === '보고').targetDate === kstToday(40), '단계 목표일이 들어가지 않음');
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForFunction(() => document.getElementById('feed').textContent.includes('Excel 가져오기'));
+    });
+
     await desktop.close();
 
     // ── 모바일 ──────────────────────────────────────────────────────
@@ -2421,6 +2772,20 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await shot(m, 'm11-update');
     });
 
+    await step('모바일 분석 확장 — 추세·변경 분석·부하·기간 보고가 화면 안에 들어옴', async () => {
+        for (const [url, name, shotName] of [['/Insights/Trend', '추세', 'm09b-trend'], ['/Insights/Changes', '변경 분석', 'm09c-changes'],
+            ['/Insights/Load', '부하', 'm09d-load'], ['/Insights/Weekly?period=month', '월간 보고', 'm09e-report-month']]) {
+            await m.goto(BASE + url);
+            await m.waitForSelector('.tabs');
+            await noOverflow(name);
+            await shot(m, shotName);
+        }
+        // 조건 고르기 칸은 터치 크기
+        await m.goto(BASE + '/Insights/Trend');
+        const sel = await m.locator('[data-analytics-filter] select').first().boundingBox();
+        assert(sel && sel.height >= 40, '모바일 조건 칸이 작음: ' + JSON.stringify(sel));
+    });
+
     await step('모바일 활동 더 보기·과제 전체 이력', async () => {
         await m.goto(BASE + '/Projects?state=all');
         await m.locator('.ptable-row', { hasText: '광주 냉장고 3라인 AGV 도입' }).first().click();
@@ -2515,6 +2880,66 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         const vw = m.viewportSize().width;
         assert(purged && purged.x >= 0 && purged.x + purged.width <= vw + 1, '모바일 영구 삭제 기록의 영구 삭제 칸이 화면 밖에 있음');
         await shot(m, 'm14c-trash-log');
+    });
+
+    await step('모바일 작업 여러 개 추가 — 하단 시트, 줄마다 이름표로 쌓은 표', async () => {
+        await openProject(m, PASTE);
+        const stage = (await projectData(m)).stages.find((x) => !x.completedDate);
+        await m.click('[data-add-works="' + stage.id + '"]');
+        await m.waitForSelector(SHEET + ' textarea[name=text]');
+        await m.fill(SHEET + ' textarea[name=text]', '모바일 점검\t\t' + kstToday(70) + '\t' + kstToday(71) + '\n틀린 줄\t\t모름\t');
+        await m.click(SHEET + ' [data-paste-check]');
+        await m.waitForSelector(SHEET + ' [data-paste-table] tr.row-bad');
+        await noOverflow('작업 여러 개 추가');
+        const btn = await m.locator(SHEET + ' [data-paste-check]').boundingBox();
+        assert(btn && btn.height >= 40, '확인 단추가 너무 작음');
+        await shot(m, 'm19-paste-works', false);
+        await discardSheet(m);
+    });
+
+    await step('모바일 작업 시트 — 저장 후 계속 추가 단추가 하단에서 넘치지 않음', async () => {
+        await openProject(m, PASTE);
+        const stage = (await projectData(m)).stages.find((x) => !x.completedDate);
+        await m.click('[data-add-work="' + stage.id + '"]');
+        await m.waitForSelector(SHEET + ' [data-continue]');
+        const foot = await m.evaluate(() => {
+            const f = document.querySelector('dialog.sheet[open] .sheet-foot');
+            return { scroll: f.scrollWidth, client: f.clientWidth, buttons: [...f.querySelectorAll('button')].map((b) => b.getBoundingClientRect().right) };
+        });
+        assert(foot.scroll <= foot.client && foot.buttons.every((r) => r <= 390), '시트 하단 단추가 넘침: ' + JSON.stringify(foot));
+        await shot(m, 'm19b-work-continue', false);
+        await closeSheet(m);
+    });
+
+    await step('모바일 가져오기·관리 작업 템플릿·복제 시트', async () => {
+        await m.goto(BASE + '/Projects');
+        await m.click('#btn-import');
+        await m.waitForSelector('#import-form');
+        if (importTemplate) {
+            await m.setInputFiles('#import-file', { name: '가져오기.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                buffer: fillTemplate(importTemplate, { '과제': [['모바일 가져오기', '없는 유형', '한국', '', '', kstToday(3)]] }) });
+            await m.click('#import-check');
+            await m.waitForSelector('[data-import-projects] tr.row-bad');
+        }
+        await noOverflow('가져오기');
+        await m.evaluate(() => window.scrollTo(0, 0));
+        await shot(m, 'm20-import');
+        await m.goto(BASE + '/Admin#category');
+        await m.waitForSelector('.columns .node');
+        await m.locator('.column').first().locator('.node-main', { hasText: /^물류$/ }).click();
+        await m.locator('.column').nth(1).locator('.node-main', { hasText: '검토' }).click();
+        await m.waitForSelector('[data-template-works] .node');
+        await m.locator('[data-template-works]').scrollIntoViewIfNeeded();
+        await noOverflow('관리 작업 템플릿');
+        await shot(m, 'm21-admin-template-works', false);
+        await openProject(m, PASTE);
+        await m.click('#btn-clone');
+        await m.waitForSelector(SHEET + ' [data-location-picker] select');
+        await noOverflow('복제 시트');
+        const sel = await m.locator(SHEET + ' [data-location-picker] select').first().boundingBox();
+        assert(sel && sel.height >= 44, '위치 고르기 칸이 터치 크기가 아님: ' + JSON.stringify(sel));
+        await shot(m, 'm22-clone-location', false);
+        await closeSheet(m);
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {

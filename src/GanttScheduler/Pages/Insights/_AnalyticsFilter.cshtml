@@ -1,0 +1,38 @@
+@model GanttScheduler.Pages.Insights.AnalyticsFilterForm
+@* 분석 화면 공통 조건: 유형·법인·조직(그룹을 고르면 그 아래 파트까지 — 과제 담당자의 소속 기준) *@
+<form method="get" class="filters" asp-page="@Model.Page" data-analytics-filter>
+    @foreach (var (key, value) in Model.Hidden.Where(h => h.Value != null))
+    {
+        <input type="hidden" name="@key" value="@value" />
+    }
+    <div class="filter-row">
+        @if (Model.ShowCategory)
+        {
+            <select name="category" aria-label="유형">
+                <option value="">유형 전체</option>
+                @foreach (var c in Model.Categories)
+                {
+                    <option value="@c.Id" selected="@(Model.Filter.CategoryId == c.Id)">@c.Name@(c.Active ? "" : " (사용 중지)")</option>
+                }
+            </select>
+        }
+        @if (Model.ShowCorporation)
+        {
+            <select name="corp" aria-label="법인">
+                <option value="">법인 전체</option>
+                @foreach (var c in Model.Corporations)
+                {
+                    <option value="@c.Id" selected="@(Model.Filter.CorporationId == c.Id)">@c.Name</option>
+                }
+            </select>
+        }
+        <select name="org" aria-label="조직">
+            <option value="">조직 전체</option>
+            @foreach (var o in Model.Orgs)
+            {
+                <option value="@o.Id" selected="@(Model.Filter.OrgUnitId == o.Id)">@(o.Level == 2 ? "· " : "")@o.Name</option>
+            }
+        </select>
+        <button type="submit" class="btn">조회</button>
+    </div>
+</form>

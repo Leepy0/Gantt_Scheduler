@@ -259,7 +259,14 @@ public class UserService
         if (name.Length > 50) throw new RuleException("담당자 이름은 50자 이내로 입력해 주세요.", field);
         if (_pending.TryGetValue(name, out var pending)) return pending;
 
+        // 대소문자만 다른 이름은 같은 사람으로 본다 — SQL Server 기본 콜레이션은 구분하지 않고 SQLite 는 구분하므로,
+        // 두 DB 에서 결과가 같도록 정확히 같은 이름을 먼저 찾고 없으면 소문자로 비교한다(작업 붙여넣기·가져오기 미리보기와 같은 규칙)
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Name == name);
+        if (user == null)
+        {
+            var lower = name.ToLowerInvariant();
+            user = await _db.Users.OrderBy(u => u.Id).FirstOrDefaultAsync(u => u.Name.ToLower() == lower);
+        }
         if (user != null)
         {
             if (!user.IsActive && user.Id != keepId)

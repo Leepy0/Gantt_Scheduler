@@ -1135,3 +1135,119 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
     .my-row .quick .btn { min-height: 48px; }
 }
 @media (prefers-reduced-motion: reduce) { .my-row.saved { animation: none; } }
+
+/* ── 입력 부담 줄이기·Excel 가져오기 ────────────────────────────── */
+/* 관리 > 유형: 단계 아래 작업 템플릿 (체크 항목 열과 따로 단계 밑에 둔다) */
+.tw-panel { margin-top: 16px; min-height: 0; border-right: 0; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-1); overflow: hidden; }
+.tw-panel > .hint { padding: 8px 16px 0; }
+.tw-foot { padding: 8px 16px 16px; }
+/* 작업 템플릿은 시작·기간·선행 설명이 길다 — 이름을 가리지 않게 설명을 다음 줄로 넘긴다 */
+.tw-panel .node-main { flex-wrap: wrap; gap: 0 8px; padding-top: 6px; padding-bottom: 6px; }
+.tw-panel .node-name { flex: none; max-width: 100%; }
+.tw-panel .node-extra { white-space: normal; }
+/* 붙여넣기·가져오기 미리보기 표: 문제 있는 줄은 기존 오류 모양(form-error)으로 그 줄 아래에 적는다 — 지연 칩(빨강)과 헷갈리지 않게 칩을 쓰지 않는다 */
+.paste-preview { display: flex; flex-direction: column; gap: 8px; }
+.paste-preview:empty { display: none; }
+.paste-preview[aria-busy=true] { opacity: .5; }
+.rows-table td { vertical-align: top; }
+.rows-table .num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rows-table tr.row-bad > td { border-bottom: 0; }
+.rows-table td:first-child { padding-left: 12px; }
+.rows-table tr.row-bad > td:first-child { box-shadow: inset 3px 0 0 var(--alarm); }
+.rows-table tr.row-bad-detail > td { padding-top: 0; }
+.row-issue { padding: 4px 8px; font-weight: 400; font-size: var(--fs-xs); }
+.row-issue + .row-issue { margin-top: 4px; }
+.row-issue b { font-weight: 600; }
+/* 과제 가져오기 화면 */
+.import { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+.import-step .card-head h2 { display: flex; align-items: center; gap: 8px; }
+.step-no { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 12px; background: var(--accent-weak); color: var(--accent); font-size: var(--fs-xs); }
+.form-actions.start { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
+.import-sub { margin: 16px 0 8px; }
+#import-preview { display: flex; flex-direction: column; gap: 8px; }
+#import-actions { margin-top: 16px; }
+@media (max-width: 767px) {
+    /* 좁은 화면: 줄마다 이름표(data-label)를 붙인 카드로 쌓는다 */
+    .rows-table thead { display: none; }
+    .rows-table, .rows-table tbody, .rows-table tr, .rows-table td { display: block; }
+    .rows-table tr { padding: 8px 0; border-top: 1px solid var(--line); }
+    .rows-table tr.row-bad-detail { border-top: 0; padding-top: 0; }
+    .rows-table td { display: flex; gap: 8px; padding: 2px 0; border: 0; }
+    .rows-table td[data-label]::before { content: attr(data-label); flex: 0 0 72px; color: var(--text-3); font-size: var(--fs-xs); }
+    .rows-table td:first-child { padding-left: 0; }
+    .rows-table tr.row-bad > td:first-child { box-shadow: none; }
+    .rows-table tr.row-bad { box-shadow: inset 3px 0 0 var(--alarm); padding-left: 8px; }
+    .rows-table tr.row-bad-detail td { display: block; }
+    .form-actions.start .btn { min-height: 48px; }
+}
+
+/* ── 분석 확장: 추세·변경 분석·부하 (S10) ───────────────────── */
+.line-chart { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.line-chart figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.line-chart svg { width: 100%; height: auto; display: block; }
+.line-chart .grid { stroke: var(--line); stroke-width: 1; }
+/* 눈금은 SVG 밖 HTML(그림이 줄어도 글자 크기 토큰 그대로). 세로축 글자는 왼쪽 칸, 가로축 글자는 그림 아래 줄 */
+.line-chart .chart-plot { display: flex; gap: 4px; min-width: 0; }
+.line-chart .chart-area { flex: 1; min-width: 0; }
+.line-chart .chart-y, .line-chart .chart-x { font-size: var(--fs-xs); }
+.line-chart .chart-y { position: relative; flex: none; width: 5ch; }
+.line-chart .chart-x { position: relative; height: 1.5em; margin-left: calc(5ch + 4px); }
+.line-chart .tick { position: absolute; color: var(--text-3); font-size: var(--fs-xs); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.line-chart .chart-y .tick { right: 0; transform: translateY(-50%); }
+.line-chart .chart-x .tick { top: 0; transform: translateX(-50%); }
+.line-chart .chart-x .tick.start { transform: none; }
+.line-chart .chart-x .tick.end { transform: translateX(-100%); }
+.line-chart .series { fill: none; stroke-width: 2; }
+.legend.inline { padding-top: 0; }
+.legend-line { display: inline-block; width: 16px; height: 0; border-top: 3px solid currentColor; }
+.series-active { stroke: var(--accent); color: var(--accent); }
+.series-delayed { stroke: var(--alarm); color: var(--alarm); }
+.series-risk { stroke: var(--warn-mid); color: var(--warn-mid); }
+.series-progress { stroke: var(--ok); color: var(--ok); }
+.legend-line.series-risk { border-top-style: dashed; }
+.series.series-risk { stroke-dasharray: 6 3; }
+.series-dot { stroke: var(--surface); stroke-width: 1; }
+.series-dot.series-active { fill: var(--accent); }
+.series-dot.series-delayed { fill: var(--alarm); }
+.series-dot.series-risk { fill: var(--warn-mid); }
+.series-dot.series-progress { fill: var(--ok); }
+.trend-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.trend-table { margin-top: 16px; }
+.trend-table summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.hbar { display: inline-block; vertical-align: middle; width: 96px; height: 8px; margin-right: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.hbar i { display: block; height: 100%; background: var(--accent-mid); }
+.hbar.warn i { background: var(--warn-mid); }
+.month-grid th, .month-grid td { white-space: nowrap; }
+.equipment-table th, .equipment-table td { white-space: nowrap; }
+.load-table th, .load-table td { white-space: nowrap; }
+.load-table thead th { padding-left: 8px; }
+.load-avail { display: block; font-weight: 400; }
+
+.load-table .load-section th { background: var(--surface-2); color: var(--text-2); font-size: var(--fs-xs); padding: 4px 16px; }
+.load-table .load-section.lv2 th { padding-left: 32px; background: var(--surface); }
+.load-table .load-name { padding-left: 16px; font-weight: 400; color: var(--text); border-top: 1px solid var(--line); }
+.load-name .chip { margin-left: 8px; }
+.load-cell a { display: inline-flex; flex-direction: column; align-items: flex-end; color: var(--text); padding: 4px 8px; border-radius: var(--r-sm); min-width: 56px; }
+.load-cell a:hover { background: var(--accent-weak); text-decoration: none; }
+.load-cell.over a { background: var(--warn-weak); color: var(--warn); }
+.load-cell.over .ic { width: 12px; height: 12px; }
+.load-days { font-size: var(--fs-xs); color: var(--text-3); }
+.load-cell.over .load-days { color: var(--warn); }
+.lead-active a { white-space: nowrap; }
+.bottleneck { margin-top: 12px; }
+.bottleneck summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.report-period { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.kpi-delta { font-size: var(--fs-xs); color: var(--text-3); }
+.kpi-delta.up { color: var(--alarm); }
+.progress-gain { font-size: var(--fs-xs); color: var(--ok); font-weight: 600; }
+/* 진척이 내려간 과제는 좋아진 것처럼 보이지 않게 흐린 글자(빨강은 지연 전용이라 쓰지 않는다) */
+.progress-gain.down { color: var(--text-2); }
+.readonly-banner { display: flex; gap: 8px; align-items: center; }
+@media (max-width: 767px) {
+    .trend-charts { grid-template-columns: minmax(0, 1fr); }
+    .hbar { width: 56px; }
+    .load-cell a { min-width: 48px; padding: 4px; }
+}
+.lead-active a.warn { color: var(--warn); font-weight: 600; }
+.analysis-note { margin: 0; }
+.load-table tr.in-lv2 .load-name { padding-left: 40px; }

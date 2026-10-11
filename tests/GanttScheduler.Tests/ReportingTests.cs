@@ -74,6 +74,21 @@ public class WeeklyReportTests
         return (new List<Project> { a, b, c, d, e, f }, acts);
     }
 
+    [Theory]
+    [InlineData(2026, 10, 2026, 11, 30)]   // 31일인 달: 그다음 달 1일이 끼지 않는다
+    [InlineData(2026, 2, 2026, 3, 31)]     // 28일인 달: 다음 달 끝 며칠이 빠지지 않는다
+    [InlineData(2026, 12, 2027, 1, 31)]
+    public void 한_달_보고의_다음_기간은_다음_달_1일부터_말일까지다(int y, int m, int ny, int nm, int nd)
+    {
+        var from = new DateOnly(y, m, 1);
+        var to = from.AddMonths(1).AddDays(-1);
+        var r = Reporting.Weekly(new List<Project>(), new List<Activity>(), Locations, from, to, to);
+        Assert.Equal(new DateOnly(ny, nm, nd), r.NextTo);
+        // 주·직접 지정은 같은 길이
+        var week = Reporting.Weekly(new List<Project>(), new List<Activity>(), Locations, From, To, To);
+        Assert.Equal(To.AddDays(7), week.NextTo);
+    }
+
     [Fact]
     public void 일정_변경은_결정_단위로_세고_묶음_안_대상은_접는다()
     {

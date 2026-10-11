@@ -426,7 +426,8 @@ public class DataAccessTests : IClassFixture<TestDb>
         var acts = await c.Db.Activities.AsNoTracking().Include(a => a.User).Where(a => a.At >= start && a.At < end).ToListAsync();
         var wantWeekly = Reporting.Weekly(all, acts, locations, from, to, Today, risk.Calendar);
         var gotWeekly = await c.Insights.WeeklyAsync(null, false);
-        Assert.Equal(JsonSerializer.Serialize(wantWeekly), JsonSerializer.Serialize(gotWeekly));
+        // 지연·위험 요약의 최근 사유는 서비스가 덧붙인다(DB 조회) — 순수 계산과 견줄 때는 그 칸을 같게 둔다
+        Assert.Equal(JsonSerializer.Serialize(wantWeekly), JsonSerializer.Serialize(gotWeekly with { DelaySummary = wantWeekly.DelaySummary }));
         Assert.Contains(gotWeekly.Projects, p => p.Id == doneId);
 
         // 내 할 일·리드타임
@@ -434,7 +435,7 @@ public class DataAccessTests : IClassFixture<TestDb>
         var cal = await c.Projects.CalendarAsync();
         var firsts = await c.Insights.FirstTargetsAsync();
         foreach (var excludeZero in new[] { false, true })
-            Assert.Equal(JsonSerializer.Serialize(Reporting.LeadTimes(all, cal, firsts, excludeZero)), JsonSerializer.Serialize(await c.Insights.LeadTimesAsync(excludeZero)));
+            Assert.Equal(JsonSerializer.Serialize(Reporting.LeadTimes(all, cal, firsts, excludeZero, Today)), JsonSerializer.Serialize(await c.Insights.LeadTimesAsync(excludeZero)));
     }
 
     [Fact]

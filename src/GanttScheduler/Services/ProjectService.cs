@@ -7,15 +7,16 @@ namespace GanttScheduler.Services;
 public record ItemInput(int TypeId, int Quantity, string? Note);
 
 // StageTargets: 등록할 때 함께 정하는 단계 목표일(단계 템플릿 Id 별 — 등록 화면의 목표일 초안을 사람이 고친 값). 수정에서는 쓰지 않는다
+// WithTemplateWorks: 등록할 때 유형 템플릿 작업을 함께 만든다(없으면 만든다). 수정에서는 쓰지 않는다
 public record ProjectInput(
     string? Title, int CategoryId, int LocationId, string? Owner, DateOnly? StartDate,
     string? Vendor, string? Description, List<ItemInput>? Equipments, List<ItemInput>? Containers, int? Version = null,
-    List<StageTargetInput>? StageTargets = null);
+    List<StageTargetInput>? StageTargets = null, bool? WithTemplateWorks = null);
 
 // CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다
 public record StageInput(
     int ProjectId, int? Id, string? Name, DateOnly? TargetDate, DateOnly? CompletedDate, string? Reason, bool Cascade,
-    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false);
+    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false, int? ReasonCode = null);
 
 // ClientToday: 화면(접속한 PC)의 오늘 날짜. 진행률만 올렸을 때 넣는 실적 시작에 쓴다(Rules.UserToday)
 // Links: 선행 작업마다 유형·간격(LinkInput). 없으면 Predecessors(id 목록 — 새 연결은 '끝나면 시작'·간격 0, 있던 연결은 유형·간격 유지)를 쓴다
@@ -23,7 +24,7 @@ public record WorkInput(
     int? Id, int StageId, string? Title, string? Owner, string? CoOwner,
     DateOnly? PlanStart, DateOnly? PlanEnd, DateOnly? ActualStart, DateOnly? ActualEnd,
     int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null,
-    List<LinkInput>? Links = null);
+    List<LinkInput>? Links = null, int? ReasonCode = null);
 
 // Mentions: 알릴 사람(사용자 Id). 이름은 공백이 있을 수 있어 본문을 파싱하지 않고 화면이 목록에서 고른 Id 를 보낸다
 public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text, List<int>? Mentions = null);
@@ -31,7 +32,8 @@ public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Tex
 // Version: 체크 항목이 속한 단계의 버전 (체크리스트도 단계의 일부라 단계 버전으로 동시 수정을 가린다)
 public record CheckInput(int StageId, int? Id, string? Text, int? Version = null);
 
-public record CloneInput(int ProjectId, string? Title, DateOnly? StartDate, bool IncludeWorks);
+// LocationId·Owner: 새 과제의 위치(법인 아래 어디든)와 담당. 없으면 원본 위치, 담당은 나
+public record CloneInput(int ProjectId, string? Title, DateOnly? StartDate, bool IncludeWorks, int? LocationId = null, string? Owner = null);
 
 public record HolidayView(DateOnly Date, string Name);
 
@@ -251,9 +253,19 @@ public partial class ProjectService
 
     public async Task<int> CreateAsync(ProjectInput input)
     {
+        var p = await BuildProjectAsync(input);
+        _db.Projects.Add(p);
+        await _db.SaveChangesAsync();
+        return p.Id;
+    }
+
+    // 새 과제를 만들되 저장하지 않는다 — 등록(CreateAsync)과 Excel 가져오기(ImportAsync)가 같은 검증·규칙을 쓴다.
+    // 호출한 쪽이 _db.Projects.Add 하고 SaveChanges 한다(가져오기는 여러 과제를 한 번에 저장해 하나라도 틀리면 아무것도 남지 않게).
+    // createdText: 등록 활동 문구(가져오기는 출처를 적는다)
+    private async Task<Project> BuildProjectAsync(ProjectInput input, string createdText = "과제 등록")
+    {
         var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
-        var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery()
-                           .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
+        var category = await CategoryForCreateAsync(input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
         if (input.StartDate != null) Rules.ValidateStartDate(input.StartDate.Value, _clock.Today);
@@ -282,7 +294,8 @@ public partial class ProjectService
         // 등록 화면에서 정한 목표일(초안을 사람이 확인한 값)이 있으면 함께 넣는다
         var targets = InitialTargets(input.StageTargets);
         var targeted = new List<Stage>();
-        foreach (var t in category.StageTemplates.OrderBy(t => t.SortOrder))
+        var templates = category.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).ToList();
+        foreach (var t in templates)
         {
             var stage = new Stage { Name = t.Name, Kind = t.Kind, SortOrder = t.SortOrder };
             foreach (var c in t.CheckItems.OrderBy(c => c.SortOrder))
@@ -297,15 +310,79 @@ public partial class ProjectService
         }
 
         await ApplyItemsAsync(p, category.Kind, input);
-        p.Activities.Add(NewActivity(ActivityType.Created, "과제 등록"));
+        p.Activities.Add(NewActivity(ActivityType.Created, createdText));
         // 처음 정하는 목표일이므로 사유 없이 기록만 남긴다(규칙 5). 단계 Id 는 저장 뒤에 정해지므로 단계명으로 남긴다
         var initial = Guid.NewGuid();
         foreach (var stage in targeted)
             p.Activities.Add(NewActivity(ActivityType.Edited, $"[{stage.Name}] 목표일 설정 {Fmt(stage.TargetDate)}", newValue: Fmt(stage.TargetDate), batch: initial));
 
-        _db.Projects.Add(p);
-        await _db.SaveChangesAsync();
-        return p.Id;
+        if (input.WithTemplateWorks ?? true)
+            await AddTemplateWorksAsync(p, templates, owner, initial);
+        return p;
+    }
+
+    // 등록할 때 읽는 유형(단계 템플릿·체크리스트·템플릿 작업). 가져오기는 여러 과제가 같은 유형을 쓰므로 요청 안에서 한 번만 읽는다
+    private readonly Dictionary<int, Category?> _createCategories = new();
+
+    private async Task<Category?> CategoryForCreateAsync(int id)
+    {
+        if (_createCategories.TryGetValue(id, out var cached)) return cached;
+        var category = await _db.Categories.AsNoTracking()
+            .Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems)
+            .Include(c => c.StageTemplates).ThenInclude(t => t.Works)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(c => c.Id == id);
+        return _createCategories[id] = category;
+    }
+
+    // 유형 템플릿 작업을 단계마다 만든다(규칙 9 — 등록 시점 복사). 시작은 단계 시작 기준일(Rules.StageStarts — 첫 단계는 착수일,
+    // 이후는 앞 단계 목표일 다음 근무일)에서 시작 근무일만큼 뒤, 기간은 근무일. 앞 단계 목표일은 등록에서 정한 값이고, 정하지 않았으면
+    // 기본 기간 초안(DraftTargets)을 쓴다 — 목표일을 비워 둔 과제도 작업이 착수일에 몰리지 않게. 담당은 과제 담당.
+    // 템플릿 선행은 '끝나면 시작' 연결이 되고, 템플릿 값이 서로 어긋나 생기는 위반은 밀기로 정리한다(복제와 같다)
+    private async Task AddTemplateWorksAsync(Project p, List<StageTemplate> templates, AppUser owner, Guid batch)
+    {
+        if (!templates.Any(t => t.Works.Count > 0)) return;
+        var cal = await CalendarAsync();
+        var stages = p.Stages.OrderBy(s => s.SortOrder).ToList();
+        var fixedAt = new Dictionary<int, DateOnly?>();
+        for (var i = 0; i < stages.Count; i++)
+            if (stages[i].TargetDate != null) fixedAt[i] = stages[i].TargetDate;
+        var targets = Rules.DraftTargets(p.StartDate, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt);
+        var starts = Rules.StageStarts(p.StartDate, targets, cal);
+
+        var created = new List<WorkItem>();
+        var map = new Dictionary<int, WorkItem>();
+        for (var i = 0; i < templates.Count; i++)
+        {
+            foreach (var tw in templates[i].Works.OrderBy(w => w.SortOrder).ThenBy(w => w.Id))
+            {
+                var (start, end) = Rules.PlaceTemplateWork(starts[i], tw.OffsetWorkDays, tw.DurationWorkDays, cal);
+                var w = new WorkItem { Title = tw.Title, PlanStart = start, PlanEnd = end, CreatedAt = _clock.UtcNow };
+                if (owner.Id == 0) w.Owner = owner; else w.OwnerId = owner.Id;
+                stages[i].Works.Add(w);
+                map[tw.Id] = w;
+                created.Add(w);
+            }
+        }
+        foreach (var t in templates)
+            foreach (var tw in t.Works)
+                if (tw.PredecessorTemplateWorkId is int pred && map.TryGetValue(pred, out var from) && map.TryGetValue(tw.Id, out var to) && from != to)
+                    p.Links.Add(new WorkLink { Predecessor = from, Successor = to, Type = LinkType.FS, LagDays = 0 });
+
+        var fixes = Rules.Reschedule(p, cal);
+        foreach (var m in fixes)
+        {
+            m.Work.PlanStart = m.NewStart;
+            m.Work.PlanEnd = m.NewEnd;
+        }
+        foreach (var w in created)
+        {
+            Rules.ValidateDate(w.PlanStart, p.StartDate, $"템플릿 작업 '{w.Title}' 의 목표 시작일", "templateWorks");
+            Rules.ValidateDate(w.PlanEnd, p.StartDate, $"템플릿 작업 '{w.Title}' 의 목표 종료일", "templateWorks");
+        }
+        foreach (var s in stages)
+            foreach (var w in s.Works)
+                p.Activities.Add(NewActivity(ActivityType.WorkAdded, $"[{s.Name}] 작업 추가: {w.Title} (유형 템플릿)", batch: batch));
     }
 
     public async Task UpdateAsync(int id, ProjectInput input)
@@ -374,7 +451,8 @@ public partial class ProjectService
 
     private async Task ApplyItemsAsync(Project p, CategoryKind kind, ProjectInput input)
     {
-        if (kind == CategoryKind.Automation)
+        // 내역이 없으면(가져오기 등) 종류 목록을 읽지 않는다
+        if (kind == CategoryKind.Automation && input.Equipments is { Count: > 0 })
         {
             var valid = (await _db.EquipmentTypes.AsNoTracking().ToListAsync()).Select(t => t.Id).ToHashSet();
             foreach (var item in input.Equipments ?? new())
@@ -385,7 +463,7 @@ public partial class ProjectService
                 p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, Limits.ItemNote, "비고", "equipments") });
             }
         }
-        else if (kind == CategoryKind.Container)
+        else if (kind == CategoryKind.Container && input.Containers is { Count: > 0 })
         {
             var valid = (await _db.ContainerTypes.AsNoTracking().ToListAsync()).Select(t => t.Id).ToHashSet();
             foreach (var item in input.Containers ?? new())
@@ -492,17 +570,28 @@ public partial class ProjectService
         var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var start = input.StartDate ?? _clock.Today;
         Rules.ValidateStartDate(start, _clock.Today);
+        // 다른 라인·법인에 같은 과제를 펼치는 일이 많다 — 위치·담당을 함께 정한다(사용 중지된 위치는 고를 수 없다)
+        var (corpId, locId) = (src.CorporationId, src.LocationId);
+        if (input.LocationId is int wanted && wanted != src.LocationId)
+        {
+            var (corp, loc) = await ResolveLocationAsync(wanted);
+            if (!loc.IsActive || !corp.IsActive) throw new RuleException("사용 중지된 위치입니다. 다른 위치를 골라 주세요.", "locationId");
+            (corpId, locId) = (corp.Id, loc.Id);
+        }
+        var owner = string.IsNullOrWhiteSpace(input.Owner) ? _me.User! : (await _users.ResolveAsync(input.Owner))!;
         var cal = await CalendarAsync();
         var now = _clock.UtcNow;
         DateOnly Shift(DateOnly d) => cal.Shift(d, cal.NextWorkingDay(src.StartDate), cal.NextWorkingDay(start));
 
         var p = new Project
         {
-            Title = title, CategoryId = src.CategoryId, CorporationId = src.CorporationId, LocationId = src.LocationId,
-            OwnerId = _me.Id, State = ProjectState.Active, StartDate = start,
+            Title = title, CategoryId = src.CategoryId, CorporationId = corpId, LocationId = locId,
+            OwnerId = owner.Id, State = ProjectState.Active, StartDate = start,
             Vendor = src.Vendor, Description = src.Description,
             CreatedAt = now, CreatedById = _me.Id, UpdatedAt = now,
         };
+        // 저장 전인 새 담당자(Id 0)는 내비게이션으로 연결해 함께 저장한다
+        if (owner.Id == 0) p.Owner = owner;
 
         var map = new Dictionary<int, WorkItem>();
         foreach (var s in Rules.Ordered(src))
@@ -559,6 +648,7 @@ public partial class ProjectService
     {
         var name = Text(input.Name, Limits.StageName, "단계명", "name", required: true)!;
         var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
         var p = await RequireAsync(input.ProjectId);
 
         if (input.Id == null)
@@ -689,14 +779,17 @@ public partial class ProjectService
         var reopened = false;
         if (s.CompletedDate == null)
         {
+            // 완료 직전 단계 진행률(OldValue) — 기간 보고의 '진척 +n%p'가 단계 완료로 오른 몫(→ 100)을 센다. 닫는 작업의 진행률 변경은 이 몫에 들어 있다
             p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(completed)})", stageId: s.Id,
-                newValue: Fmt(completed), batch: batch));
+                oldValue: ProgressText(Rules.StageProgress(s)), newValue: Fmt(completed), batch: batch));
             if (closeWorks) CloseOpenWorks(p, s, completed!.Value, batch);
         }
         else if (completed == null)
         {
             reopened = true;
-            p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate), batch: batch));
+            // 완료를 취소한 뒤의 단계 진행률(NewValue, 100 에서 떨어진 값) — 기간 보고의 진척 증감이 내려간 몫을 센다
+            p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate),
+                newValue: ProgressText(Rules.WorksProgress(s)), batch: batch));
         }
         else
             p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(completed)}", stageId: s.Id, batch: batch));
@@ -731,6 +824,7 @@ public partial class ProjectService
             w.ActualEnd = end;
             w.Progress = 100;
             w.Version++;
+            // 진행률 이전·새 값은 남기지 않는다 — 단계 완료 활동이 단계 진행률이 100 이 된 몫으로 함께 센다(두 번 세지 않게)
             p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
                 stageId: s.Id, workId: w.Id, batch: batch));
         }
@@ -887,6 +981,7 @@ public partial class ProjectService
         if (input.PlanStart.Value > input.PlanEnd.Value)
             throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
         Rules.ValidateActuals(input.ActualStart, input.ActualEnd, input.Progress);
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
 
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
@@ -952,6 +1047,7 @@ public partial class ProjectService
             }
 
             var changed = new List<string>();
+            var oldProgress = w.Progress;
             if (w.Title != title) { changed.Add($"작업명 → {title}"); w.Title = title; }
             if (w.StageId != stage.Id)
             {
@@ -972,6 +1068,7 @@ public partial class ProjectService
             if (changed.Count > 0)
             {
                 var edited = NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
+                SetProgressValues(edited, oldProgress, progress, stage);
                 p.Activities.Add(edited);
                 // 이번에 맡게 된 사람 — 저장 전 담당(이전 담당자)은 작업으로 찾아 알린다
                 InvolveOwners(edited, w.OwnerId, w.CoOwnerId);
@@ -1238,9 +1335,14 @@ public partial class ProjectService
     }
 
     // 활동은 모두 ActivityLog 한 곳에서 만든다(누가·언제, 그리고 저장할 때 알림을 함께 계산한다)
+    // 일정 변경(목표일·작업 일정)에 사유를 남길 때는 이 요청에서 고른 사유 분류(UseReasonCodeAsync)도 함께 남긴다
     public Activity NewActivity(ActivityType type, string text, string? reason = null, int? stageId = null, int? workId = null,
-                                string? oldValue = null, string? newValue = null, Guid? batch = null) =>
-        _log.New(type, text, reason, stageId, workId, oldValue, newValue, batch);
+                                string? oldValue = null, string? newValue = null, Guid? batch = null)
+    {
+        var a = _log.New(type, text, reason, stageId, workId, oldValue, newValue, batch);
+        if (reason != null && _reasonCode != null && type is ActivityType.TargetChanged or ActivityType.WorkPlanChanged) a.ReasonCode = _reasonCode;
+        return a;
+    }
 
     public static string Fmt(DateOnly? d) => d == null ? "미정" : d.Value.ToString("yyyy-MM-dd");
 

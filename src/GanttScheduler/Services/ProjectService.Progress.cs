@@ -36,6 +36,7 @@ public partial class ProjectService
 
         // 작업 저장과 같은 문구로 남긴다 — 변경 이력·주간 보고가 같은 활동으로 본다
         var changed = new List<string>();
+        var oldProgress = w.Progress;
         if (w.Progress != progress) { changed.Add($"진행률 {w.Progress}% → {progress}%"); w.Progress = progress; }
         if (w.ActualStart != start) { changed.Add($"실적 시작 {Fmt(start)}"); w.ActualStart = start; }
         if (w.ActualEnd != wantEnd) { changed.Add($"실적 종료 {Fmt(wantEnd)}"); w.ActualEnd = wantEnd; }
@@ -44,6 +45,7 @@ public partial class ProjectService
         if (changed.Count > 0)
         {
             var edited = NewActivity(ActivityType.WorkEdited, $"[{w.Title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
+            SetProgressValues(edited, oldProgress, progress, stage);
             p.Activities.Add(edited);
             InvolveOwners(edited, w.OwnerId, w.CoOwnerId);
             w.Version++;

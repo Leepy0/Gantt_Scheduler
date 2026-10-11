@@ -38,6 +38,9 @@ public class AppDb : DbContext
     public DbSet<Baseline> Baselines => Set<Baseline>();
     public DbSet<BaselineItem> BaselineItems => Set<BaselineItem>();
     public DbSet<DeletedProjectLog> DeletedProjectLogs => Set<DeletedProjectLog>();
+    public DbSet<TemplateWork> TemplateWorks => Set<TemplateWork>();
+    public DbSet<ProjectSnapshot> ProjectSnapshots => Set<ProjectSnapshot>();
+    public DbSet<DelayReason> DelayReasons => Set<DelayReason>();
 
     // 휴지통에 있지 않은 과제와 그 활동. 지운 과제는 모든 조회에서 이것으로 뺀다 — 전역 필터(HasQueryFilter)는 섀도 빌드의 가짜 EF 에 없어
     // 조회마다 명시적으로 고른다. 휴지통·영구 삭제·이전 작업만 Projects 를 그대로 쓴다
@@ -301,6 +304,29 @@ public class AppDb : DbContext
             e.Property(x => x.PurgedBy).HasMaxLength(Limits.UserName).IsRequired();
             e.HasIndex(x => x.PurgedAt);
         });
+
+        // ── 유형 템플릿 작업 ──
+        b.Entity<TemplateWork>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(Limits.WorkTitle).IsRequired();
+            e.HasOne(x => x.StageTemplate).WithMany(t => t.Works).HasForeignKey(x => x.StageTemplateId).OnDelete(DeleteBehavior.Cascade);
+            // 같은 표를 가리키는 선행은 cascade 를 걸 수 없다(SQL Server 다중 경로). 지울 때는 서비스가 먼저 끊는다.
+            // NoAction: 단계 템플릿 삭제로 함께 지워지는 행끼리의 참조는 문장 끝에 검사되므로 막히지 않는다
+            e.HasOne(x => x.PredecessorTemplateWork).WithMany().HasForeignKey(x => x.PredecessorTemplateWorkId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        // ── 분석: 일별 진척 스냅샷·지연 사유 분류 ──
+        b.Entity<ProjectSnapshot>(e =>
+        {
+            e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.CurrentStage).HasMaxLength(Limits.StageName);
+            // 과제 → 스냅샷 한 길로만 cascade (영구 삭제하면 함께 지운다). 유형·법인·담당·조직은 그날 값을 적은 FK 없는 참조
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.ProjectId, x.Date }).IsUnique();
+            e.HasIndex(x => x.Date);
+        });
+
+        b.Entity<DelayReason>(e => e.Property(x => x.Name).HasMaxLength(Limits.DelayReasonName).IsRequired());
     }
 }
 

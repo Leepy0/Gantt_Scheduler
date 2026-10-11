@@ -37,9 +37,9 @@ public class IndexModel : PageModel
 
     public async Task OnGetAsync() => NoAdmin = !await _users.HasAdminAsync();
 
-    // 종류별·단계별 이름 길이 상한 (입력칸 maxlength) — 서버 검사·DB 열 길이와 같은 값(MasterService.NameLimit → Limits)
+    // 종류별·단계별 이름 길이 상한 (입력칸 maxlength) — 서버 검사·DB 열 길이와 같은 값(MasterService.NameLimit → Limits). 유형의 4 는 작업 템플릿
     public string LimitsJson => AppJson.Serialize(MasterService.Kinds.ToDictionary(k => k,
-        k => Enumerable.Range(1, k switch { "location" => MasterService.LocationDepth, "category" => 3, "equipment" or "org" => 2, _ => 1 })
+        k => Enumerable.Range(1, k switch { "location" => MasterService.LocationDepth, "category" => 4, "equipment" or "org" => 2, _ => 1 })
             .Select(level => MasterService.NameLimit(k, level)).ToArray()));
 
     // 이름 외 입력칸(국가·메일·IP)의 길이 상한 — 같은 이유로 Limits 에서 준다
