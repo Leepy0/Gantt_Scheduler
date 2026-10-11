@@ -31,6 +31,9 @@ public class IndexModel : PageModel
     [BindProperty(SupportsGet = true)] public int? Corp { get; set; }
     [BindProperty(SupportsGet = true)] public string? State { get; set; }
     [BindProperty(SupportsGet = true)] public bool Mine { get; set; }
+    // 대시보드 숫자에서 온 조건: 그 해에 끝난 완료 과제(올해 완료), 미완료 단계 목표일이 n일 안인 진행 과제(n일 내 목표·다가오는 일정)
+    [BindProperty(SupportsGet = true)] public int? DoneYear { get; set; }
+    [BindProperty(SupportsGet = true)] public int? Due { get; set; }
 
     public List<ProjectView> Rows { get; private set; } = new();
     // 과제별 '새 활동' 수(다른 사람이 마지막 방문 뒤에 남긴 것)와 내 관심 과제 — 한 번씩만 읽는다
@@ -62,10 +65,30 @@ public class IndexModel : PageModel
     public async Task<IActionResult> OnGetExcelAsync()
     {
         var rows = await _dash.ListAsync(Filter());
-        var label = States.FirstOrDefault(x => x.Key == StateKey).Label ?? "전체";
-        var filter = "상태: " + label + (string.IsNullOrWhiteSpace(Q) ? "" : $" · 검색: {Q.Trim()}") + (Mine ? " · 내 과제" : "");
-        return File(_excel.ProjectList(rows, _clock.Today, filter), ExcelExporter.ContentType, $"과제목록_{_clock.Today:yyyyMMdd}.xlsx");
+        // 제목의 조건은 화면에서 고른 것 전부 (유형·법인 포함) — 내려받은 파일만 보고도 어떤 목록인지 알 수 있게
+        var category = Category == null ? null : (await _db.Categories.AsNoTracking().Where(c => c.Id == Category.Value).Select(c => c.Name).FirstOrDefaultAsync());
+        var corp = Corp == null ? null : (await _projects.LocationsAsync()).Get(Corp.Value)?.Name;
+        return File(_excel.ProjectList(rows, _clock.Today, FilterText(category, corp)), ExcelExporter.ContentType, $"과제목록_{_clock.Today:yyyyMMdd}.xlsx");
     }
 
-    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine);
+    // 조건 설명 (Excel 제목·화면 안내)
+    public string FilterText(string? category, string? corp)
+    {
+        var label = States.FirstOrDefault(x => x.Key == StateKey).Label ?? "전체";
+        var parts = new List<string> { "상태: " + label };
+        if (category != null) parts.Add("유형: " + category);
+        if (corp != null) parts.Add("법인: " + corp);
+        if (!string.IsNullOrWhiteSpace(Q)) parts.Add("검색: " + Q.Trim());
+        if (SpecialText is { } special) parts.Add(special);
+        if (Mine) parts.Add("내 과제");
+        return string.Join(" · ", parts);
+    }
+
+    // 대시보드 숫자에서 온 조건의 설명 (없으면 null)
+    public string? SpecialText =>
+        DoneYear != null ? $"{DoneYear}년 완료"
+        : Due != null ? $"단계 목표일 {Math.Clamp(Due.Value, 0, Dashboard.MaxDueDays)}일 안"
+        : null;
+
+    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due);
 }

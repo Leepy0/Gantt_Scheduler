@@ -1012,3 +1012,43 @@ a.chip:hover { text-decoration: none; filter: brightness(.96); }
     .ptable.watchable .ptable-head, .ptable.watchable .ptable-row { padding-left: 20px; }
     .feed > li.new, .feed > li.hit { box-shadow: none; background: none; }
 }
+
+/* ── 보고 정확성·기준 정보 ───────────────────────────────────── */
+/* 주간 보고: 요약 칸이 6개라 폭에 맞춰 줄을 나눈다 */
+.kpis.wide { grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
+.weekly-count { display: block; color: var(--text-3); font-weight: 400; font-size: var(--fs-xs); }
+.weekly-fold { margin-top: 4px; }
+.weekly-fold > summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-xs); min-height: 24px; }
+.weekly-fold > .bullets { margin-top: 4px; color: var(--text-2); }
+.weekly-late { display: flex; flex-direction: column; gap: 4px; }
+.weekly-late > li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; overflow-wrap: anywhere; }
+.weekly-quiet { min-width: 640px; }
+.weekly-quiet td { vertical-align: top; }
+.weekly-quiet td .bullets { font-size: var(--fs-xs); }
+@media (max-width: 767px) {
+    .kpis.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* 리드타임: 열이 늘어 표 최소 폭을 넓힌다 */
+.lead-table { min-width: 960px; }
+.lead-note { flex: 1 1 480px; margin: 0; }
+/* 대시보드: 막대·KPI 를 누르면 같은 조건의 목록으로 */
+a.bar-row { color: var(--text); border-radius: var(--r-sm); }
+a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
+.card-foot-link { display: inline-flex; align-items: center; gap: 4px; align-self: flex-end; min-height: var(--tap); margin-top: 8px; font-weight: 600; }
+/* 과제 목록: 대시보드 숫자에서 온 조건(완료 연도·목표일 n일 안) */
+.filter-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+/* 관리 > 공휴일: 연도 칩·여러 줄 붙여넣기 */
+.year-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.year-chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
+.year-chip {
+    display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong);
+    border-radius: 16px; background: var(--surface); color: var(--text-2); font-weight: 600; font-size: var(--fs-xs); cursor: pointer;
+}
+.year-chip .ic { width: 12px; height: 12px; }
+.year-chip[aria-pressed=true] { border-color: var(--accent); background: var(--accent-weak); color: var(--accent); }
+.year-chip.warn { border-color: var(--warn-mid); color: var(--warn); }
+.year-chip .num { color: inherit; opacity: .8; }
+.admin-body > .form-warn, .admin-body > .form-note { margin-bottom: 12px; }
+@media (max-width: 767px) {
+    .year-chip { min-height: var(--tap); }
+}

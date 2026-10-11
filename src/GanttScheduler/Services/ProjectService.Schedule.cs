@@ -113,7 +113,7 @@ public partial class ProjectService
     // - 모든 변경(목표일·완료·작업 밀기)을 BatchId 하나로 묶는다. 검사를 모두 통과한 뒤에만 값을 바꾼다
     public async Task SaveStageScheduleAsync(StageScheduleInput input)
     {
-        var reason = Text(input.Reason, 500, "사유", "reason");
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
         var p = await RequireAsync(input.ProjectId);
         var rows = input.Rows ?? new();
         if (rows.Select(r => r.StageId).Distinct().Count() != rows.Count)

@@ -5,6 +5,10 @@
     var esc = App.esc, icon = App.icon;
     var body = document.getElementById('admin-body');
     var isAdmin = body.dataset.admin === '1';
+    // 종류별·단계별 이름 길이 상한 — 서버 검사·DB 열 길이와 같은 값(서버가 data-limits 로 준다)
+    var limits = {};
+    try { limits = JSON.parse(body.dataset.limits || '{}'); } catch (e) { limits = {}; }
+    function maxLen(level) { var l = limits[kind]; return (l && l[level - 1]) || 50; }
 
     var CATEGORY_KINDS = { general: '일반', automation: '물류 자동화 (기기 내역 입력)', container: '용기 (용기 내역 입력)' };
     var STAGE_KINDS = { normal: '일반', inspection: '검수 (입고 추천일 기준)', inbound: '입고 (추천일 표시)' };
@@ -24,6 +28,8 @@
     var kind = 'location';
     var nodes = [];
     var selected = {};      // level → 선택한 노드 id
+    var holidayYear = null; // 공휴일 탭에서 보고 있는 연도
+    var holidayNotice = null; // 마지막 공휴일 변경의 일정 영향 안내 (서버 문구)
 
     function url(handler) { return App.url('/Admin?handler=' + handler); }
 
@@ -31,7 +37,62 @@
     function removable(level) { return (conf().removable || []).indexOf(level) >= 0; }
 
     function childrenOf(level, parentId) {
-        return nodes.filter(function (n) { return n.level === level && (level === 1 || n.parentId === parentId); });
+        return nodes.filter(function (n) {
+            if (kind === 'holiday') return +n.date.slice(0, 4) === holidayYear;   // 공휴일은 연도별로 본다
+            return n.level === level && (level === 1 || n.parentId === parentId);
+        });
+    }
+
+    // ── 공휴일: 연도 칩·여러 줄 붙여넣기 ──
+    // 올해·내년은 항상 칩을 보인다. 공휴일이 하나도 없는 해는 근무일 계산이 주말만 빼고 세므로 노랑(위험)으로 알린다
+    // (내년은 정부 발표가 나오는 10월부터 — 서버의 관리자 알림과 같은 기준)
+    function holidayYears() {
+        var y = +App.today.slice(0, 4), month = +App.today.slice(5, 7);
+        var counts = {};
+        counts[y] = 0;
+        counts[y + 1] = 0;
+        nodes.forEach(function (n) { var k = +n.date.slice(0, 4); counts[k] = (counts[k] || 0) + 1; });
+        var years = Object.keys(counts).map(Number).sort(function (a, b) { return a - b; });
+        function missing(k) { return counts[k] === 0 && (k === y || (k === y + 1 && month >= 10)); }
+        return { years: years, counts: counts, thisYear: y, missing: missing };
+    }
+
+    function holidayBarHtml() {
+        var h = holidayYears();
+        if (holidayYear == null || h.years.indexOf(holidayYear) < 0) holidayYear = h.thisYear;
+        var html = '<div class="year-bar"><div class="year-chips" role="group" aria-label="연도">';
+        h.years.forEach(function (y) {
+            html += '<button type="button" class="year-chip' + (h.missing(y) ? ' warn' : '') + '" data-year="' + y + '" aria-pressed="' + (y === holidayYear) + '">' +
+                (h.missing(y) ? icon('alert') : '') + y + '년 <span class="num">' + h.counts[y] + '</span></button>';
+        });
+        html += '</div>';
+        if (isAdmin) html += '<button type="button" class="btn small" data-paste>' + icon('plus') + '여러 날 붙여넣기</button>';
+        html += '</div>';
+        var gaps = h.years.filter(h.missing);
+        if (gaps.length) {
+            html += '<p class="form-warn" data-holiday-missing>' + icon('alert') + '<span>' + gaps.join('·') + '년 공휴일이 없습니다. 그 해 일정의 근무일 계산(일정 이동·지연 일수)이 주말만 빼고 셉니다.' +
+                (isAdmin ? ' 정부 발표(월력요항)를 \'여러 날 붙여넣기\'로 한 번에 넣을 수 있습니다.' : '') + '</span></p>';
+        }
+        if (holidayNotice) html += '<p class="form-note" data-holiday-notice>' + icon('calendar') + '<span>' + esc(holidayNotice) + '</span></p>';
+        return html;
+    }
+
+    function openPaste() {
+        App.sheet({
+            title: '공휴일 여러 날 붙여넣기',
+            primary: '추가',
+            html: field('text', '공휴일 목록', '<textarea name="text" rows="10" placeholder="2028-01-01\t신정&#10;2028-01-26\t설날"></textarea>') +
+                '<span class="hint">한 줄에 날짜와 이름 하나씩입니다. 날짜와 이름은 TAB(Excel·표에서 복사)이나 공백으로 나눕니다. ' +
+                '2028-01-01 · 2028.1.1 · 2028년 1월 1일 모두 됩니다. 이미 있는 날짜는 건너뜁니다.</span>',
+            onSubmit: async function (form) {
+                var before = holidayYears().counts;
+                await change('PasteHolidays', { text: form.elements.text.value });
+                // 새로 들어간 해 중 가장 이른 해를 보인다
+                var after = holidayYears();
+                var grown = after.years.filter(function (y) { return after.counts[y] > (before[y] || 0); });
+                if (grown.length) { holidayYear = grown[0]; render(); }
+            }
+        });
     }
 
     function extraText(n) {
@@ -48,7 +109,8 @@
 
     function render() {
         var c = conf();
-        var html = '<div class="columns">';
+        var html = kind === 'holiday' ? holidayBarHtml() : '';
+        html += '<div class="columns">';
         var parentId = null;
         for (var level = 1; level <= c.levels.length; level++) {
             var list = level === 1 || parentId != null ? childrenOf(level, parentId) : [];
@@ -82,7 +144,7 @@
             if (canAdd) {
                 html += '<form class="add-row" data-add="' + level + '">' +
                     (kind === 'holiday' ? '<input type="date" name="date" required aria-label="날짜" />' : '') +
-                    '<input name="name" maxlength="100" required placeholder="' + c.levels[level - 1] + ' 이름" aria-label="' + c.levels[level - 1] + ' 이름" />' +
+                    '<input name="name" maxlength="' + maxLen(level) + '" required placeholder="' + c.levels[level - 1] + ' 이름" aria-label="' + c.levels[level - 1] + ' 이름" />' +
                     '<button type="submit" class="btn">' + icon('plus') + '<span class="hide-sm">추가</span></button></form>';
             }
             html += '</div>';
@@ -105,10 +167,14 @@
         }
     }
 
+    // 변경 → 최신 목록. 서버 안내(notice — 공휴일이 걸린 진행 과제 등)가 있으면 알리고 공휴일 탭에는 남겨 둔다
     async function change(handler, payload) {
         var r = await App.post(url(handler), payload);
         nodes = r.nodes;
+        holidayNotice = kind === 'holiday' ? (r.notice || null) : null;
         render();
+        if (r.notice) App.toast(r.notice);
+        return r;
     }
 
     function find(level, id) {
@@ -147,7 +213,7 @@
             catch (err) { App.toast(err.message, 'error'); return; }
         }
         var c = conf();
-        var html = field('name', '이름', '<input name="name" maxlength="100" required value="' + esc(n.name) + '"' + (isAdmin ? '' : ' disabled') + ' />');
+        var html = field('name', '이름', '<input name="name" maxlength="' + maxLen(level) + '" required value="' + esc(n.name) + '"' + (isAdmin ? '' : ' disabled') + ' />');
         if (kind === 'location' && level === 1) {
             html += field('country', '국가', '<input name="country" maxlength="50" value="' + esc(n.country || '') + '" />') +
                 field('oceanLeadDays', '해상 운송 소요일', '<input name="oceanLeadDays" type="number" min="0" max="365" inputmode="numeric" value="' + (n.oceanLeadDays || 0) + '" />') +
@@ -198,9 +264,10 @@
                         if (!ok) return;
                     }
                     try {
-                        await change('Toggle', { kind: kind, level: level, id: id, dir: 0 });
+                        // 원하는 상태를 실어 보낸다 — 서버는 뒤집지 않고 그 값으로 맞춘다(두 번 눌러도·오래된 화면에서 눌러도 반대로 되지 않게)
+                        var r = await change('Toggle', { kind: kind, level: level, id: id, dir: 0, active: isRemovable ? null : !n.active });
                         sheet.close();
-                        App.toast(isRemovable ? '삭제했습니다.' : (n.active ? '사용 중지했습니다. 기존 과제에는 그대로 표시됩니다.' : '다시 사용합니다.'));
+                        if (!r.notice) App.toast(isRemovable ? '삭제했습니다.' : (n.active ? '사용 중지했습니다. 기존 과제에는 그대로 표시됩니다.' : '다시 사용합니다.'));
                     } catch (err) { sheet.setError(err.message, err.field); }
                 }
             },
@@ -234,7 +301,7 @@
                     bad.field = 'defaultWorkDays';
                     throw bad;
                 }
-                await change('Save', {
+                var saved = await change('Save', {
                     kind: kind, level: level, id: id, parentId: n.parentId,
                     name: f.name.value,
                     country: f.country ? f.country.value : null,
@@ -246,7 +313,7 @@
                     defaultWorkDays: days === '' ? null : +days,
                     email: f.email ? f.email.value : null
                 });
-                App.toast('저장했습니다.');
+                if (!saved.notice) App.toast('저장했습니다.');
             }
         });
     }
@@ -293,6 +360,7 @@
         b.addEventListener('click', function () {
             kind = b.dataset.kind;
             selected = {};
+            holidayNotice = null;
             document.querySelectorAll('#admin-tabs [data-kind]').forEach(function (x) {
                 x.classList.toggle('on', x === b);
                 x.setAttribute('aria-selected', x === b ? 'true' : 'false');
@@ -303,6 +371,12 @@
 
     body.addEventListener('click', async function (e) {
         var t;
+        if ((t = e.target.closest('[data-year]'))) {
+            holidayYear = +t.dataset.year;
+            render();
+            return;
+        }
+        if (e.target.closest('[data-paste]')) { openPaste(); return; }
         if ((t = e.target.closest('[data-move]'))) {
             var m = t.dataset.move.split(':');
             try { await change('Move', { kind: kind, level: +m[0], id: +m[1], dir: +m[2] }); }
@@ -333,6 +407,8 @@
         if (!form) return;
         e.preventDefault();
         var level = +form.dataset.add;
+        // 공휴일은 넣은 날의 연도를 보인다 (다른 해에 넣으면 지금 칩에서는 안 보인다)
+        if (kind === 'holiday' && form.elements.date && form.elements.date.value) holidayYear = +form.elements.date.value.slice(0, 4);
         try {
             await change('Save', {
                 kind: kind, level: level, id: null,

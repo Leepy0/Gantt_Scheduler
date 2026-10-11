@@ -197,7 +197,7 @@ public partial class ProjectService
 
     public async Task<int> EditCommentAsync(CommentEditInput input)
     {
-        var text = Text(input.Text, 1000, "내용", "text", required: true)!;
+        var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
         var (p, c) = await RequireOwnCommentAsync(input.Id, "고칠");
         var mentions = await ValidateMentionsAsync(input.Mentions);
         var current = await _db.ActivityMentions.Where(m => m.ActivityId == c.Id).ToListAsync();

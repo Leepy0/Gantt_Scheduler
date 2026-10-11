@@ -28,7 +28,8 @@ public record WorkInput(
 // Mentions: 알릴 사람(사용자 Id). 이름은 공백이 있을 수 있어 본문을 파싱하지 않고 화면이 목록에서 고른 Id 를 보낸다
 public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text, List<int>? Mentions = null);
 
-public record CheckInput(int StageId, int? Id, string? Text);
+// Version: 체크 항목이 속한 단계의 버전 (체크리스트도 단계의 일부라 단계 버전으로 동시 수정을 가린다)
+public record CheckInput(int StageId, int? Id, string? Text, int? Version = null);
 
 public record CloneInput(int ProjectId, string? Title, DateOnly? StartDate, bool IncludeWorks);
 
@@ -155,7 +156,8 @@ public partial class ProjectService
         // 활동은 과제 그래프에 싣지 않고 따로 센다·읽는다. 오래된 대형 과제는 활동이 수천 건이라 변경할 때마다 전부 보내면 응답이 무겁다
         var acts = _db.Activities.AsNoTracking().Where(a => a.ProjectId == id);
         var total = await acts.CountAsync();
-        var targetChanges = await acts.CountAsync(a => a.Type == ActivityType.TargetChanged);
+        // 목표일 변경은 결정 단위로 센다(연쇄 이동 묶음은 1회 — Rules.DecisionCount). 묶음 번호만 읽는다
+        var targetChanges = Rules.DecisionCount(await acts.Where(a => a.Type == ActivityType.TargetChanged).Select(a => a.BatchId).ToListAsync());
         var recent = await DecorateAsync(id, await ActivityRowsAsync(acts, activityLimit), since);
         // 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서비스의 검사와 같은 판정(Rules.CanDelete…)을 지금 사용자로 계산해 싣는다
         var userId = _me.User?.Id;
@@ -163,6 +165,7 @@ public partial class ProjectService
         return view with
         {
             CanDelete = Rules.CanDeleteProject(p, userId, _me.IsAdmin),
+            CanRebaseline = Rules.CanRebaseline(p, userId, _me.IsAdmin),
             Attachments = view.Attachments?.Select(a => a with
             {
                 CanDelete = files.TryGetValue(a.Id, out var f) && Rules.CanDeleteAttachment(f, p.OwnerId, userId, _me.IsAdmin),
@@ -241,7 +244,7 @@ public partial class ProjectService
 
     public async Task<int> CreateAsync(ProjectInput input)
     {
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery()
                            .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
@@ -259,8 +262,8 @@ public partial class ProjectService
             OwnerId = owner.Id,
             State = ProjectState.Active,
             StartDate = input.StartDate ?? _clock.Today,
-            Vendor = Text(input.Vendor, 100, "협력사", "vendor"),
-            Description = Text(input.Description, 2000, "설명", "description"),
+            Vendor = Text(input.Vendor, Limits.VendorName, "협력사", "vendor"),
+            Description = Text(input.Description, Limits.Description, "설명", "description"),
             CreatedAt = now,
             CreatedById = _me.Id,
             UpdatedAt = now,
@@ -300,10 +303,12 @@ public partial class ProjectService
 
     public async Task UpdateAsync(int id, ProjectInput input)
     {
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);
         var p = await RequireAsync(id, withItems: true);
         CheckVersion(input.Version, p.Version, p.Id);
+        // 수정 화면에서 비운 담당자·착수일은 '그대로 두기'가 아니라 입력 누락이다 — 예전에는 아무 말 없이 무시해 저장된 줄 알았다
+        if (input.StartDate == null) throw new RuleException("착수일을 입력해 주세요.", "startDate");
         if (input.StartDate != null && p.StartDate != input.StartDate.Value)
         {
             // 착수일이 일정 범위의 기준이므로, 옮긴 착수일 기준으로 기존 일정이 범위 밖이 되면 막는다(연도 오타를 여기서 잡는다)
@@ -314,6 +319,7 @@ public partial class ProjectService
                 throw new RuleException($"착수일을 {Fmt(input.StartDate)}(으)로 바꾸면 기존 일정 {Fmt(outside)} 이(가) 허용 범위({Fmt(min)} ~ {Fmt(max)})를 벗어납니다.", "startDate");
             }
         }
+        if (string.IsNullOrWhiteSpace(input.Owner)) throw new RuleException("담당자를 입력해 주세요.", "owner");
         var owner = await _users.ResolveAsync(input.Owner, keepId: p.OwnerId);
 
         var changed = new List<string>();
@@ -321,17 +327,25 @@ public partial class ProjectService
         if (p.LocationId != loc.Id) { changed.Add("위치"); p.CorporationId = corp.Id; p.LocationId = loc.Id; }
         if (owner != null && p.OwnerId != owner.Id) { changed.Add($"담당자 → {owner.Name}"); p.Owner = owner; if (owner.Id != 0) p.OwnerId = owner.Id; }
         if (input.StartDate != null && p.StartDate != input.StartDate.Value) { changed.Add($"착수일 → {Fmt(input.StartDate)}"); p.StartDate = input.StartDate.Value; }
-        var vendor = Text(input.Vendor, 100, "협력사", "vendor");
+        var vendor = Text(input.Vendor, Limits.VendorName, "협력사", "vendor");
         if (p.Vendor != vendor) { changed.Add("협력사"); p.Vendor = vendor; }
-        var desc = Text(input.Description, 2000, "설명", "description");
+        var desc = Text(input.Description, Limits.Description, "설명", "description");
         if (p.Description != desc) { changed.Add("설명"); p.Description = desc; }
 
+        // 지금 유형의 성격 쪽 내역만 바꾼다. 화면은 그 쪽 내역만 보이고 보내므로, 반대쪽(예전 성격의 내역)이나 일반 유형의 내역을
+        // 지우면 아무도 모르게 사라진다 — 그대로 둔다
         var before = ItemsSignature(p);
         var kind = p.Category?.Kind ?? CategoryKind.General;
-        _db.ProjectEquipments.RemoveRange(p.Equipments);
-        _db.ProjectContainers.RemoveRange(p.Containers);
-        p.Equipments.Clear();
-        p.Containers.Clear();
+        if (kind == CategoryKind.Automation)
+        {
+            _db.ProjectEquipments.RemoveRange(p.Equipments);
+            p.Equipments.Clear();
+        }
+        else if (kind == CategoryKind.Container)
+        {
+            _db.ProjectContainers.RemoveRange(p.Containers);
+            p.Containers.Clear();
+        }
         await ApplyItemsAsync(p, kind, input);
         if (before != ItemsSignature(p)) changed.Add(kind == CategoryKind.Container ? "용기 내역" : "기기 내역");
 
@@ -361,7 +375,7 @@ public partial class ProjectService
                 if (item.TypeId == 0 && item.Quantity == 0) continue;   // 빈 행은 건너뜀
                 if (!valid.Contains(item.TypeId)) throw new RuleException("기기 종류를 선택해 주세요.", "equipments");
                 if (item.Quantity < 1) throw new RuleException("기기 수량은 1 이상으로 입력해 주세요.", "equipments");
-                p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, 200, "비고", "equipments") });
+                p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, Limits.ItemNote, "비고", "equipments") });
             }
         }
         else if (kind == CategoryKind.Container)
@@ -372,7 +386,7 @@ public partial class ProjectService
                 if (item.TypeId == 0 && item.Quantity == 0) continue;
                 if (!valid.Contains(item.TypeId)) throw new RuleException("용기 종류를 선택해 주세요.", "containers");
                 if (item.Quantity < 1) throw new RuleException("용기 수량은 1 이상으로 입력해 주세요.", "containers");
-                p.Containers.Add(new ProjectContainer { ContainerTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, 200, "비고", "containers") });
+                p.Containers.Add(new ProjectContainer { ContainerTypeId = item.TypeId, Quantity = item.Quantity, Note = Text(item.Note, Limits.ItemNote, "비고", "containers") });
             }
         }
     }
@@ -393,7 +407,7 @@ public partial class ProjectService
             throw new RuleException("완료 상태는 모든 단계를 완료하면 자동으로 바뀝니다.");
         if (p.State == state) return;
 
-        reason = Text(reason, 500, "사유", "reason");
+        reason = Text(reason, Limits.Reason, "사유", "reason");
         if ((state == ProjectState.Hold || state == ProjectState.Dropped) && reason == null)
             throw new RuleException("보류·중단은 사유를 입력해 주세요.", "reason");
 
@@ -424,11 +438,23 @@ public partial class ProjectService
         await _db.SaveChangesAsync();
     }
 
-    // 지금의 목표 일정을 기준선으로 고정한다. 이후의 변경은 기준선 대비 며칠 밀렸는지로 보여 준다
-    public async Task SetBaselineAsync(int id)
+    // 지금의 목표 일정을 기준선으로 고정한다. 이후의 변경은 기준선 대비 며칠 밀렸는지로 보여 준다.
+    // 다시 확정하면 '기준선 대비 +n일'이 0 으로 돌아가 지연 기록이 사라지므로 담당자·관리자만, 사유를 받아서 하고
+    // 직전·새 종료일을 OldValue/NewValue 로 남긴다(누가 언제 무엇을 지웠는지 이력으로 추적)
+    public async Task SetBaselineAsync(int id, string? reason = null, int? version = null)
     {
         var p = await RequireAsync(id);
+        CheckVersion(version, p.Version, p.Id);
         var again = p.BaselineAt != null;
+        reason = Text(reason, Limits.Reason, "사유", "reason");
+        if (again)
+        {
+            if (!Rules.CanRebaseline(p, _me.User?.Id, _me.IsAdmin))
+                throw new RuleException("기준선 다시 확정은 과제 담당자 또는 관리자만 할 수 있습니다.");
+            if (reason == null) throw new RuleException("기준선을 다시 확정하는 사유를 입력해 주세요.", "reason");
+        }
+        var oldEnd = Rules.BaselineEnd(p);
+        var newEnd = Rules.EndTarget(p);
         foreach (var s in p.Stages)
         {
             s.BaselineDate = s.TargetDate;
@@ -439,7 +465,10 @@ public partial class ProjectService
             }
         }
         p.BaselineAt = _clock.UtcNow;
-        p.Activities.Add(NewActivity(ActivityType.BaselineSet, again ? "기준선 다시 확정" : "기준선 확정"));
+        p.Activities.Add(NewActivity(ActivityType.BaselineSet,
+            again ? $"기준선 다시 확정 (목표 종료 {Fmt(oldEnd)} → {Fmt(newEnd)})" : $"기준선 확정 (목표 종료 {Fmt(newEnd)})", reason,
+            oldValue: again ? Fmt(oldEnd) : null, newValue: Fmt(newEnd)));
+        p.Version++;
         Touch(p);
         await _db.SaveChangesAsync();
     }
@@ -450,7 +479,7 @@ public partial class ProjectService
     public async Task<int> CloneAsync(CloneInput input)
     {
         var src = await RequireAsync(input.ProjectId, withItems: true);
-        var title = Text(input.Title, 200, "과제명", "title", required: true)!;
+        var title = Text(input.Title, Limits.ProjectTitle, "과제명", "title", required: true)!;
         var start = input.StartDate ?? _clock.Today;
         Rules.ValidateStartDate(start, _clock.Today);
         var cal = await CalendarAsync();
@@ -518,8 +547,8 @@ public partial class ProjectService
 
     public async Task SaveStageAsync(StageInput input)
     {
-        var name = Text(input.Name, 50, "단계명", "name", required: true)!;
-        var reason = Text(input.Reason, 500, "사유", "reason");
+        var name = Text(input.Name, Limits.StageName, "단계명", "name", required: true)!;
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
         var p = await RequireAsync(input.ProjectId);
 
         if (input.Id == null)
@@ -697,26 +726,42 @@ public partial class ProjectService
         }
     }
 
-    // dir: -1 위로, +1 아래로
-    public async Task<int> MoveStageAsync(int stageId, int dir)
+    // dir: -1 위로, +1 아래로. 순서는 현재 단계 판정과 연쇄 이동 범위를 정하므로 두 단계의 버전을 확인하고 올리며 활동을 남긴다.
+    // otherId: 화면이 본 맞바꿀 이웃 단계 — 그 사이 다른 사람이 순서를 바꿨으면 엉뚱한 단계와 바뀌지 않게 409 로 알린다
+    public async Task<int> MoveStageAsync(int stageId, int dir, int? version = null, int? otherId = null, int? otherVersion = null)
     {
         var p = await RequireByStageAsync(stageId);
         var ordered = Rules.Ordered(p).ToList();
         var i = ordered.FindIndex(s => s.Id == stageId);
         var j = i + (dir < 0 ? -1 : 1);
-        if (i < 0 || j < 0 || j >= ordered.Count) return p.Id;
+        CheckVersion(version, ordered[i].Version, p.Id);
+        if (j < 0 || j >= ordered.Count)
+        {
+            if (otherId != null) throw new ConflictException(p.Id);
+            return p.Id;
+        }
+        if (otherId != null && ordered[j].Id != otherId.Value) throw new ConflictException(p.Id);
+        CheckVersion(otherVersion, ordered[j].Version, p.Id);
 
+        var (moved, other) = (ordered[i], ordered[j]);
         (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
         for (var k = 0; k < ordered.Count; k++) ordered[k].SortOrder = k + 1;
+        moved.Version++;
+        other.Version++;
+        // 바뀌기 전 순서대로 적는다 (앞 단계 ↔ 뒤 단계)
+        var (before, after) = dir < 0 ? (other, moved) : (moved, other);
+        p.Activities.Add(NewActivity(ActivityType.Edited, $"단계 순서: {before.Name} ↔ {after.Name}", stageId: moved.Id));
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
     }
 
-    public async Task<int> DeleteStageAsync(int stageId)
+    // version: 화면이 본 단계 버전 — 그 사이 다른 사람이 바꾼 단계(작업이 늘었을 수 있다)를 모르고 지우지 않게
+    public async Task<int> DeleteStageAsync(int stageId, int? version = null)
     {
         var p = await RequireByStageAsync(stageId);
         var s = p.Stages.First(x => x.Id == stageId);
+        CheckVersion(version, s.Version, p.Id);
         var works = s.Works.Count;
         RemoveLinksOf(p, s.Works.Select(w => w.Id).ToHashSet());
         await RemoveStageLinksAsync(p, new[] { s.Id }, removedProject: false);
@@ -740,11 +785,14 @@ public partial class ProjectService
 
     // ── 체크리스트 ───────────────────────────────────────────────────────
 
+    // 체크리스트는 단계의 완료 조건이라 단계의 일부로 본다: 화면이 보낸 단계 버전을 확인하고, 바꾸면 단계 버전을 올린다
+    // (다른 사람이 문구를 바꾼 항목을 옛 문구로 알고 체크하지 않게)
     public async Task<int> SaveCheckAsync(CheckInput input)
     {
-        var text = Text(input.Text, 200, "체크 항목", "check", required: true)!;
+        var text = Text(input.Text, Limits.CheckText, "체크 항목", "check", required: true)!;
         var p = await RequireByStageAsync(input.StageId);
         var s = p.Stages.First(x => x.Id == input.StageId);
+        CheckVersion(input.Version, s.Version, p.Id);
 
         if (input.Id == null)
         {
@@ -756,17 +804,25 @@ public partial class ProjectService
         }
         else
         {
-            var c = s.Checks.FirstOrDefault(x => x.Id == input.Id.Value) ?? throw new RuleException("체크 항목을 찾을 수 없습니다.");
+            var c = s.Checks.FirstOrDefault(x => x.Id == input.Id.Value) ?? throw new RuleException("체크 항목을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
+            // 완료한 단계의 완료 조건 문구를 바꾸면 무엇을 확인하고 완료했는지가 달라진다
+            if (s.CompletedDate != null)
+                throw new RuleException("완료한 단계의 체크 항목은 고칠 수 없습니다. 먼저 완료를 취소해 주세요.", "check");
+            if (c.Text == text) return p.Id;
+            p.Activities.Add(NewActivity(ActivityType.CheckChanged, $"[{s.Name}] 체크 항목 수정: {c.Text} → {text}", stageId: s.Id));
             c.Text = text;
         }
+        s.Version++;
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
     }
 
-    public async Task<int> ToggleCheckAsync(int checkId, bool done)
+    // version: 체크 항목이 속한 단계의 버전
+    public async Task<int> ToggleCheckAsync(int checkId, bool done, int? version = null)
     {
         var (p, s, c) = await RequireCheckAsync(checkId);
+        CheckVersion(version, s.Version, p.Id);
         if (c.IsDone == done) return p.Id;
         if (!done && s.CompletedDate != null)
             throw new RuleException("완료한 단계의 체크는 해제할 수 없습니다. 먼저 완료를 취소해 주세요.", "check");
@@ -776,14 +832,17 @@ public partial class ProjectService
         c.DoneBy = done ? _me.User : null;
         c.DoneAt = done ? _clock.UtcNow : null;
         p.Activities.Add(NewActivity(ActivityType.CheckChanged, $"[{s.Name}] {(done ? "체크" : "체크 해제")}: {c.Text}", stageId: s.Id));
+        s.Version++;
         Touch(p);
         await _db.SaveChangesAsync();
         return p.Id;
     }
 
-    public async Task<int> DeleteCheckAsync(int checkId)
+    public async Task<int> DeleteCheckAsync(int checkId, int? version = null)
     {
         var (p, s, c) = await RequireCheckAsync(checkId);
+        CheckVersion(version, s.Version, p.Id);
+        s.Version++;
         s.Checks.Remove(c);
         _db.CheckItems.Remove(c);
         p.Activities.Add(NewActivity(ActivityType.CheckChanged, $"[{s.Name}] 체크 항목 삭제: {c.Text}", stageId: s.Id));
@@ -807,9 +866,9 @@ public partial class ProjectService
 
     public async Task<int> SaveWorkAsync(WorkInput input)
     {
-        var title = Text(input.Title, 200, "작업명", "title", required: true)!;
-        var note = Text(input.Note, 1000, "메모", "note");
-        var reason = Text(input.Reason, 500, "사유", "reason");
+        var title = Text(input.Title, Limits.WorkTitle, "작업명", "title", required: true)!;
+        var note = Text(input.Note, Limits.WorkNote, "메모", "note");
+        var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
         if (input.PlanStart == null || input.PlanEnd == null)
             throw new RuleException("목표 시작일과 종료일을 입력해 주세요.", "planStart");
         if (input.PlanStart.Value > input.PlanEnd.Value)
@@ -1086,13 +1145,15 @@ public partial class ProjectService
         _db.WorkLinks.RemoveRange(links);
     }
 
-    public async Task<int> DeleteWorkAsync(int workId)
+    // version: 화면이 본 작업 버전 — 그 사이 다른 사람이 실적·일정을 적은 작업을 모르고 지우지 않게
+    public async Task<int> DeleteWorkAsync(int workId, int? version = null)
     {
         var stageId = await _db.WorkItems.Where(w => w.Id == workId).Select(w => w.StageId).FirstOrDefaultAsync();
         if (stageId == 0) throw new RuleException("작업을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
         var p = await RequireByStageAsync(stageId);
         var stage = p.Stages.First(s => s.Id == stageId);
         var w = stage.Works.First(x => x.Id == workId);
+        CheckVersion(version, w.Version, p.Id);
         RemoveLinksOf(p, new HashSet<int> { w.Id });
         stage.Works.Remove(w);
         _db.WorkItems.Remove(w);
@@ -1109,9 +1170,10 @@ public partial class ProjectService
     // 댓글은 과제 행만 읽어(있는지 확인·변경 시각) 활동을 더한다 — 단계·작업 그래프는 필요 없다
     public async Task CommentAsync(CommentInput input)
     {
-        var text = Text(input.Text, 1000, "내용", "text", required: true)!;
+        var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
         var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
+        await RequireOwnedAsync(p.Id, input.StageId, input.WorkId);
         var mentions = await ValidateMentionsAsync(input.Mentions);
         var comment = NewActivity(ActivityType.Comment, text, stageId: input.StageId, workId: input.WorkId);
         foreach (var userId in mentions)
@@ -1124,6 +1186,20 @@ public partial class ProjectService
         await _db.SaveChangesAsync();
     }
 
+    // 댓글이 가리키는 단계·작업이 그 과제 것인지 (다른 과제의 단계·작업 Id 로 남기면 그 과제의 활동 탭·작업 진행 내용에 섞인다).
+    // 둘 다 주면 작업이 그 단계에 있어야 한다
+    private async Task RequireOwnedAsync(int projectId, int? stageId, int? workId)
+    {
+        if (stageId != null && !await _db.Stages.AnyAsync(s => s.Id == stageId.Value && s.ProjectId == projectId))
+            throw new RuleException("단계를 찾을 수 없습니다. 화면을 새로고침해 주세요.", "stageId");
+        if (workId != null)
+        {
+            var work = await _db.WorkItems.Where(w => w.Id == workId.Value).Select(w => new { w.StageId, w.Stage!.ProjectId }).FirstOrDefaultAsync();
+            if (work == null || work.ProjectId != projectId || (stageId != null && work.StageId != stageId.Value))
+                throw new RuleException("작업을 찾을 수 없습니다. 화면을 새로고침해 주세요.", "workId");
+        }
+    }
+
     // ── 공통 ─────────────────────────────────────────────────────────────
 
     // 화면이 보낸 버전이 지금과 다르면, 그 사이 다른 사람이 같은 항목을 고친 것이다
@@ -1134,6 +1210,10 @@ public partial class ProjectService
 
     private void Touch(Project p) => p.UpdatedAt = _clock.UtcNow;
 
+    // 자동 상태 전환 활동의 문구. 주간 보고가 사람이 바꾼 상태와 구별해 '과제 완료'로 따로 센다(Reporting.IsAutoState) — 문구를 바꾸면 옛 기록도 함께 봐야 한다
+    public const string AutoDoneText = "상태 변경: 진행 → 완료 (모든 단계 완료)";
+    public const string AutoReopenText = "상태 변경: 완료 → 진행 (미완료 단계 있음)";
+
     // 모든 단계가 끝나면 완료로, 완료 과제에 미완료 단계가 생기면 다시 진행으로
     private void SyncState(Project p)
     {
@@ -1141,12 +1221,12 @@ public partial class ProjectService
         if (p.State == ProjectState.Active && allDone)
         {
             p.State = ProjectState.Done;
-            p.Activities.Add(NewActivity(ActivityType.StateChanged, "상태 변경: 진행 → 완료 (모든 단계 완료)"));
+            p.Activities.Add(NewActivity(ActivityType.StateChanged, AutoDoneText));
         }
         else if (p.State == ProjectState.Done && !allDone)
         {
             p.State = ProjectState.Active;
-            p.Activities.Add(NewActivity(ActivityType.StateChanged, "상태 변경: 완료 → 진행 (미완료 단계 있음)"));
+            p.Activities.Add(NewActivity(ActivityType.StateChanged, AutoReopenText));
         }
     }
 

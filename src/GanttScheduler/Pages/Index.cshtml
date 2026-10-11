@@ -7,6 +7,7 @@
     var catMax = Math.Max(1, d.ByCategory.Select(s => s.Total).DefaultIfEmpty(0).Max());
     var corpMax = Math.Max(1, d.ByCorporation.Select(s => s.Total).DefaultIfEmpty(0).Max());
     string Pct(int v, int max) => (v * 100.0 / max).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    var mine = Model.Mine ? "true" : null;
 }
 
 <div class="page-head">
@@ -23,22 +24,23 @@
 </div>
 
 <section class="kpis">
-    <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@(Model.Mine ? "true" : null)">
+    <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@mine">
         <span class="kpi-label">진행 과제</span>
         <span class="kpi-value">@d.Kpi.Active</span>
         <span class="kpi-sub">보류 @d.Kpi.Hold</span>
     </a>
-    <a class="kpi @(d.Kpi.Delayed > 0 ? "alarm" : "")" asp-page="/Projects/Index" asp-route-state="delayed" asp-route-mine="@(Model.Mine ? "true" : null)">
+    <a class="kpi @(d.Kpi.Delayed > 0 ? "alarm" : "")" asp-page="/Projects/Index" asp-route-state="delayed" asp-route-mine="@mine">
         <span class="kpi-label">@if (d.Kpi.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span>
         <span class="kpi-value">@d.Kpi.Delayed</span>
         <span class="kpi-sub">목표일 초과</span>
     </a>
-    <div class="kpi">
+    @* 숫자를 누르면 같은 판정으로 거른 목록으로 간다 (목록의 due·doneYear 조건 — Rules.HasStageDueWithin·CompletedOn) *@
+    <a class="kpi" data-kpi="due" asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Rules.SoonDays" asp-route-mine="@mine">
         <span class="kpi-label">@(Rules.SoonDays)일 내 목표</span>
         <span class="kpi-value">@d.Kpi.DueThisWeek</span>
         <span class="kpi-sub">단계 기준</span>
-    </div>
-    <a class="kpi" asp-page="/Projects/Index" asp-route-state="done" asp-route-mine="@(Model.Mine ? "true" : null)">
+    </a>
+    <a class="kpi" data-kpi="done" asp-page="/Projects/Index" asp-route-state="done" asp-route-doneYear="@d.Today.Year" asp-route-mine="@mine">
         <span class="kpi-label">올해 완료</span>
         <span class="kpi-value">@d.Kpi.DoneThisYear</span>
         <span class="kpi-sub">@d.Today.Year 년</span>
@@ -93,6 +95,10 @@
                     </li>
                 }
             </ul>
+            @if (d.UpcomingTotal > d.Upcoming.Count)
+            {
+                <a class="card-foot-link" data-upcoming-all asp-page="/Projects/Index" asp-route-state="active" asp-route-due="@Dashboard.UpcomingDays" asp-route-mine="@mine">전체 @(d.UpcomingTotal)건 보기<svg class="ic"><use href="#i-right" /></svg></a>
+            }
         }
     </section>
 </div>
@@ -133,7 +139,7 @@
         <div class="bars">
             @foreach (var s in d.ByCategory)
             {
-                <div class="bar-row">
+                <a class="bar-row" data-bar-category="@s.Id" asp-page="/Projects/Index" asp-route-state="all" asp-route-category="@s.Id" asp-route-mine="@mine">
                     <span class="bar-name">@s.Name</span>
                     <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
                         @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, catMax)"></i>}
@@ -142,7 +148,7 @@
                         @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, catMax)"></i>}
                     </span>
                     <span class="bar-num">@s.Total</span>
-                </div>
+                </a>
             }
             @if (d.ByCategory.Count == 0) {<p class="empty">과제가 없습니다.</p>}
         </div>
@@ -161,7 +167,7 @@
             @for (var i = 0; i < d.ByCorporation.Count; i++)
             {
                 var s = d.ByCorporation[i];
-                <div class="bar-row @(i >= 5 ? "extra" : "")">
+                <a class="bar-row @(i >= 5 ? "extra" : "")" data-bar-corp="@s.Id" asp-page="/Projects/Index" asp-route-state="all" asp-route-corp="@s.Id" asp-route-mine="@mine">
                     <span class="bar-name">@s.Name</span>
                     <span class="bar-track" title="진행 @s.OnTrack · 지연 @s.Delayed · 완료 @s.Done · 보류/중단 @s.Paused">
                         @if (s.OnTrack > 0) {<i class="b on" style="width:@Pct(s.OnTrack, corpMax)"></i>}
@@ -170,7 +176,7 @@
                         @if (s.Paused > 0) {<i class="b paused" style="width:@Pct(s.Paused, corpMax)"></i>}
                     </span>
                     <span class="bar-num">@s.Total</span>
-                </div>
+                </a>
             }
             @if (d.ByCorporation.Count == 0) {<p class="empty">과제가 없습니다.</p>}
         </div>

@@ -100,7 +100,8 @@ public class PdfExporter
 
         Heading(sec, "주간 보고", $"{report.From:yyyy-MM-dd} ~ {report.To:yyyy-MM-dd} · 작성일 {report.Today:yyyy-MM-dd}(한국 시간)");
 
-        var sum = NewTable(sec, 9, ("진행 과제", 4.5), ("지연", 4.5), ("이번 주 완료", 4.5), ("일정 변경", 4.5));
+        // 일정 변경은 결정 단위(묶음은 1건)로 세고 옮겨진 대상 수를 함께 적는다. 상태·기준선과 자동 완료는 따로 센다
+        var sum = NewTable(sec, 9, ("진행 과제", 3.0), ("지연", 3.0), ("이번 주 완료", 3.0), ("일정 변경", 3.0), ("상태·기준선", 3.0), ("과제 완료", 3.0));
         var sr = sum.AddRow();
         sr.Format.Font.Size = 14;
         sr.Format.Font.Bold = true;
@@ -108,9 +109,22 @@ public class PdfExporter
         Cell(sr, 1, report.Delayed.ToString(), center: true, color: report.Delayed > 0 ? Alarm : Text);
         Cell(sr, 2, report.DoneCount + "건", center: true);
         Cell(sr, 3, report.ChangeCount + "건", center: true);
+        Cell(sr, 4, report.StateCount + "건", center: true);
+        Cell(sr, 5, report.Completed + "건", center: true);
+        var subRow = sum.AddRow();
+        subRow.Format.Font.Size = 7.5;
+        subRow.Format.Font.Color = Muted;
+        Cell(subRow, 3, $"대상 {report.ChangeTargets}건", center: true);
+        if (report.Past && report.AsOf != null)
+        {
+            var note = sec.AddParagraph($"지연·밀린 항목은 {report.AsOf.Value:yyyy-MM-dd}(그 주 마지막 날) 기준입니다. 진행률·현재 단계는 작성일 기준입니다.");
+            note.Format.Font.Size = 8;
+            note.Format.Font.Color = Muted;
+            note.Format.SpaceBefore = Unit.FromPoint(4);
+        }
         sec.AddParagraph().Format.SpaceAfter = Unit.FromPoint(4);
 
-        foreach (var p in report.Projects)
+        foreach (var p in report.Cards())
         {
             var head = sec.AddParagraph();
             head.Format.SpaceBefore = Unit.FromPoint(10);
@@ -140,12 +154,39 @@ public class PdfExporter
             t.AddColumn(Unit.FromCentimeter(2.8));
             t.AddColumn(Unit.FromCentimeter(15.2));
 
-            var any = false;
-            any |= Block(t, "이번 주 실적", p.Done.Select(x => $"{x.Text}  ({x.Date:MM-dd})"));
-            any |= Block(t, "일정 변경", p.Changes.Select(x => x.Text + (x.Reason == null ? "" : $"\n사유: {x.Reason}") + $"  ({x.User})"));
-            any |= Block(t, "진행 내용", p.Comments.Select(x => $"{x.Text}  ({x.User} {x.Date:MM-dd})"));
-            any |= Block(t, "다음 주 계획", p.Next);
-            if (!any) Block(t, "변동", new[] { "이번 주 기록된 변동이 없습니다." });
+            if (p.Quiet) Block(t, "변동", new[] { "이번 주 기록된 변동이 없습니다." });
+            Block(t, "이번 주 실적", p.Done.Select(x => $"{x.Text}  ({x.Date:MM-dd})"));
+            Block(t, p.ChangeTargets > p.Changes.Count ? $"일정 변경 {p.Changes.Count}건\n(대상 {p.ChangeTargets}건)" : "일정 변경",
+                p.Changes.Select(x => x.Text
+                    + (x.More == null ? "" : $"\n  함께 옮겨진 {x.More.Count}건: " + string.Join(", ", x.More))
+                    + (x.Reason == null ? "" : $"\n사유: {x.Reason}") + $"  ({x.User})"));
+            Block(t, "상태·기준선", (p.States ?? new()).Select(x => x.Text + (x.Reason == null ? "" : $"\n사유: {x.Reason}") + $"  ({x.User})"));
+            Block(t, "진행 내용", p.Comments.Select(x => $"{x.Text}  ({x.User} {x.Date:MM-dd})"));
+            Block(t, "밀린 항목", (p.Overdue ?? new()).Select(x => $"[D+{x.LateDays}] {x.Kind} {x.Title} · 목표 {x.Due:MM-dd}" + (x.Owner == null ? "" : $" ({x.Owner})")));
+            Block(t, "다음 주 계획", p.Next);
+        }
+
+        // 무변동 과제는 끝에 표 한 장으로 접는다(화면·Excel 과 같다)
+        var folded = report.Folded();
+        if (folded.Count > 0)
+        {
+            var qh = sec.AddParagraph($"변동 없는 과제 {folded.Count}건");
+            qh.Format.Font.Size = 11;
+            qh.Format.Font.Bold = true;
+            qh.Format.SpaceBefore = Unit.FromPoint(12);
+            qh.Format.SpaceAfter = Unit.FromPoint(4);
+            qh.Format.KeepWithNext = true;
+            var qt = NewTable(sec, 8, ("과제", 6.2), ("담당", 2.2), ("상태", 1.8), ("진행률", 1.6), ("현재 단계", 2.6), ("다음 주 계획", 3.6));
+            foreach (var p in folded)
+            {
+                var row = qt.AddRow();
+                Cell(row, 0, p.Title);
+                Cell(row, 1, p.Owner);
+                Cell(row, 2, p.StateLabel, center: true, color: StateColor(p.StateLabel));
+                Cell(row, 3, p.Progress + "%", right: true);
+                Cell(row, 4, (p.CurrentStage ?? "") + (p.CurrentTarget == null ? "" : $" ({p.CurrentTarget.Value:MM-dd})"));
+                Cell(row, 5, string.Join("\n", p.Next));
+            }
         }
 
         if (report.Projects.Count == 0)

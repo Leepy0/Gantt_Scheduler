@@ -61,6 +61,7 @@ public class AppDb : DbContext
         builder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
     }
 
+    // 문자열 열 길이는 Domain/Limits 의 상수를 쓴다 — 서비스 검사·화면 maxlength 와 같은 값이어야 SQL Server 에서만 나는 길이 초과(500)가 없다
     protected override void OnModelCreating(ModelBuilder b)
     {
         // SQL Server 에서는 기존 DB 안에 별도 스키마로 둔다. SQLite 는 스키마 개념이 없다
@@ -69,72 +70,72 @@ public class AppDb : DbContext
         b.Entity<AppUser>(e =>
         {
             e.ToTable("Users");
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
-            e.Property(x => x.Email).HasMaxLength(200);
+            e.Property(x => x.Name).HasMaxLength(Limits.UserName).IsRequired();
+            e.Property(x => x.Email).HasMaxLength(Limits.Email);
             e.HasIndex(x => x.Name).IsUnique();
             e.HasOne(x => x.OrgUnit).WithMany().HasForeignKey(x => x.OrgUnitId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<OrgUnit>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.OrgName).IsRequired();
             e.HasOne(x => x.Parent).WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<UserAddress>(e =>
         {
-            e.Property(x => x.Ip).HasMaxLength(45).IsRequired();
+            e.Property(x => x.Ip).HasMaxLength(Limits.Ip).IsRequired();
             e.HasIndex(x => x.Ip).IsUnique();
             e.HasOne(x => x.User).WithMany(u => u.Addresses).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<Location>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
-            e.Property(x => x.Country).HasMaxLength(50);
+            e.Property(x => x.Name).HasMaxLength(Limits.LocationName).IsRequired();
+            e.Property(x => x.Country).HasMaxLength(Limits.Country);
             e.HasOne(x => x.Parent).WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<Category>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.CategoryName).IsRequired();
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
         });
 
         b.Entity<StageTemplate>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.StageName).IsRequired();
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
             e.HasOne(x => x.Category).WithMany(c => c.StageTemplates).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<TemplateCheckItem>(e =>
         {
-            e.Property(x => x.Text).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(Limits.CheckText).IsRequired();
             e.HasOne(x => x.StageTemplate).WithMany(t => t.CheckItems).HasForeignKey(x => x.StageTemplateId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<EquipmentType>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.EquipmentName).IsRequired();
             e.HasOne(x => x.Parent).WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
-        b.Entity<ContainerType>(e => e.Property(x => x.Name).HasMaxLength(50).IsRequired());
-        b.Entity<Vendor>(e => e.Property(x => x.Name).HasMaxLength(100).IsRequired());
+        b.Entity<ContainerType>(e => e.Property(x => x.Name).HasMaxLength(Limits.ContainerName).IsRequired());
+        b.Entity<Vendor>(e => e.Property(x => x.Name).HasMaxLength(Limits.VendorName).IsRequired());
 
         b.Entity<Holiday>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.HolidayName).IsRequired();
             e.HasIndex(x => x.Date).IsUnique();
         });
 
         b.Entity<Project>(e =>
         {
-            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Title).HasMaxLength(Limits.ProjectTitle).IsRequired();
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
-            e.Property(x => x.Vendor).HasMaxLength(100);
-            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.Vendor).HasMaxLength(Limits.VendorName);
+            e.Property(x => x.Description).HasMaxLength(Limits.Description);
             // 버전은 동시 수정 감지에 쓴다 — 읽은 뒤 다른 사람이 먼저 저장했으면 저장이 실패한다
             e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Category).WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
@@ -146,21 +147,21 @@ public class AppDb : DbContext
 
         b.Entity<ProjectEquipment>(e =>
         {
-            e.Property(x => x.Note).HasMaxLength(200);
+            e.Property(x => x.Note).HasMaxLength(Limits.ItemNote);
             e.HasOne(x => x.Project).WithMany(p => p.Equipments).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.EquipmentType).WithMany().HasForeignKey(x => x.EquipmentTypeId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<ProjectContainer>(e =>
         {
-            e.Property(x => x.Note).HasMaxLength(200);
+            e.Property(x => x.Note).HasMaxLength(Limits.ItemNote);
             e.HasOne(x => x.Project).WithMany(p => p.Containers).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.ContainerType).WithMany().HasForeignKey(x => x.ContainerTypeId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<Stage>(e =>
         {
-            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(Limits.StageName).IsRequired();
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Project).WithMany(p => p.Stages).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
@@ -168,15 +169,15 @@ public class AppDb : DbContext
 
         b.Entity<CheckItem>(e =>
         {
-            e.Property(x => x.Text).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Text).HasMaxLength(Limits.CheckText).IsRequired();
             e.HasOne(x => x.Stage).WithMany(s => s.Checks).HasForeignKey(x => x.StageId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.DoneBy).WithMany().HasForeignKey(x => x.DoneById).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<WorkItem>(e =>
         {
-            e.Property(x => x.Title).HasMaxLength(200).IsRequired();
-            e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.Title).HasMaxLength(Limits.WorkTitle).IsRequired();
+            e.Property(x => x.Note).HasMaxLength(Limits.WorkNote);
             e.Property(x => x.Version).IsConcurrencyToken();
             e.HasOne(x => x.Stage).WithMany(s => s.Works).HasForeignKey(x => x.StageId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Owner).WithMany().HasForeignKey(x => x.OwnerId).OnDelete(DeleteBehavior.Restrict);
@@ -195,9 +196,9 @@ public class AppDb : DbContext
 
         b.Entity<Attachment>(e =>
         {
-            e.Property(x => x.FileName).HasMaxLength(260).IsRequired();
-            e.Property(x => x.StoredName).HasMaxLength(100).IsRequired();
-            e.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(Limits.FileName).IsRequired();
+            e.Property(x => x.StoredName).HasMaxLength(Limits.StoredName).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(Limits.ContentType).IsRequired();
             e.HasOne(x => x.Project).WithMany(p => p.Attachments).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.UploadedBy).WithMany().HasForeignKey(x => x.UploadedById).OnDelete(DeleteBehavior.Restrict);
         });
@@ -205,11 +206,11 @@ public class AppDb : DbContext
         b.Entity<Activity>(e =>
         {
             e.Property(x => x.Type).HasConversion<string>().HasMaxLength(30);
-            e.Property(x => x.Text).HasMaxLength(1000).IsRequired();
-            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.Text).HasMaxLength(Limits.ActivityText).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(Limits.Reason);
             // 댓글을 고치면 첫 원문(최대 1000자)을 OldValue 에 남긴다
-            e.Property(x => x.OldValue).HasMaxLength(1000);
-            e.Property(x => x.NewValue).HasMaxLength(100);
+            e.Property(x => x.OldValue).HasMaxLength(Limits.ActivityOldValue);
+            e.Property(x => x.NewValue).HasMaxLength(Limits.ActivityValue);
             e.HasOne(x => x.Project).WithMany(p => p.Activities).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.At);

@@ -9,6 +9,8 @@
     if (Model.Category != null) excelRoute["category"] = Model.Category.Value.ToString();
     if (Model.Corp != null) excelRoute["corp"] = Model.Corp.Value.ToString();
     if (Model.Mine) excelRoute["mine"] = "true";
+    if (Model.DoneYear != null) excelRoute["doneYear"] = Model.DoneYear.Value.ToString();
+    if (Model.Due != null) excelRoute["due"] = Model.Due.Value.ToString();
 }
 
 <div class="page-head">
@@ -52,6 +54,16 @@
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
         <button type="submit" class="btn">조회</button>
     </div>
+    @if (Model.SpecialText != null)
+    {
+        @* 대시보드 숫자에서 온 조건 — 유형·법인·검색을 바꿔도 유지하고, 상태 탭을 바꾸거나 '조건 해제'를 누르면 푼다 *@
+        if (Model.DoneYear != null) { <input type="hidden" name="doneYear" value="@Model.DoneYear" data-special /> }
+        if (Model.Due != null) { <input type="hidden" name="due" value="@Model.Due" data-special /> }
+        <p class="form-note filter-note" data-special-note>
+            <svg class="ic"><use href="#i-dash" /></svg><span>대시보드 조건: <b>@Model.SpecialText</b></span>
+            <a asp-page="/Projects/Index" asp-route-state="@Model.StateKey" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-q="@Model.Q" asp-route-mine="@(Model.Mine ? "true" : null)">조건 해제</a>
+        </p>
+    }
 </form>
 
 @if (Model.Rows.Count == 0)
@@ -120,8 +132,13 @@ else
 
 @section Scripts {
     <script>
-        // 상태 탭·선택 상자는 바꾸는 즉시 조회
+        // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)은 푼다
         document.querySelectorAll('#filters input[type=radio], #filters select, #filters input[type=checkbox]')
-            .forEach(function (el) { el.addEventListener('change', function () { document.getElementById('filters').submit(); }); });
+            .forEach(function (el) {
+                el.addEventListener('change', function () {
+                    if (el.type === 'radio') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });
+                    document.getElementById('filters').submit();
+                });
+            });
     </script>
 }

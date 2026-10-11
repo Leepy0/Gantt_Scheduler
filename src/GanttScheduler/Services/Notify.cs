@@ -34,7 +34,7 @@ public sealed record NotifyOptions(bool Enabled, int DailyHour, string? BaseUrl,
     public static string? NormalizeEmail(string? value)
     {
         var text = value?.Trim() ?? "";
-        if (text.Length == 0 || text.Length > 200) return null;
+        if (text.Length == 0 || text.Length > Limits.Email) return null;
         return MailAddress.TryCreate(text, out var addr) && addr.Address == text && text.Contains('.', StringComparison.Ordinal) ? addr.Address : null;
     }
 }
