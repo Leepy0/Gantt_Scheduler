@@ -14,6 +14,10 @@ public sealed class AccessOptions
     // IP 연결을 이 일수보다 오래 쓰지 않았으면 'OOO 님이 맞습니까?'를 다시 묻는다(DHCP 로 IP 가 다른 사람에게 넘어간 경우 대비). 0 이면 묻지 않는다
     public int ReconfirmDays { get; init; } = 30;
 
+    // IP 연결 보존 기간(일). 이 기간 넘게 접속이 없던 연결은 하루 한 번 지운다(AddressRetentionWorker) — 퇴사자·반납 PC 의 IP 가
+    // 다음 사람에게 넘어가 엉뚱한 이름으로 기록되는 것을 줄인다. 0 이하면 정리하지 않는다
+    public int AddressKeepDays { get; init; } = 365;
+
     // 접속을 받을 대역. 비어 있으면 모두 받는다. 루프백(서버 자신)은 항상 받는다
     public IReadOnlyList<IPNetwork> AllowedNetworks { get; init; } = Array.Empty<IPNetwork>();
 
@@ -28,6 +32,7 @@ public sealed class AccessOptions
         {
             FirstAdminLocalOnly = section.GetValue("FirstAdminLocalOnly", true),
             ReconfirmDays = Math.Max(0, section.GetValue("ReconfirmDays", 30)),
+            AddressKeepDays = section.GetValue("AddressKeepDays", 365),
             AllowedNetworks = ParseNetworks(items),
         };
     }

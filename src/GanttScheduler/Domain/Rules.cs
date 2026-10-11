@@ -45,9 +45,11 @@ public static class Rules
     public static bool IsDoneLate(WorkItem w) => w.ActualEnd != null && w.ActualEnd.Value > w.PlanEnd;
 
     // 단계 진행률: 완료 100, 작업이 있으면 작업 진행률 평균, 없으면 0
-    public static int StageProgress(Stage s)
+    public static int StageProgress(Stage s) => s.CompletedDate != null ? 100 : WorksProgress(s);
+
+    // 완료 여부를 보지 않은 작업 진행률 평균(작업이 없으면 0) — 완료를 취소하면 단계 진행률이 이 값으로 돌아간다
+    public static int WorksProgress(Stage s)
     {
-        if (s.CompletedDate != null) return 100;
         if (s.Works.Count == 0) return 0;
         return (int)Math.Round(s.Works.Average(w => (double)w.Progress), MidpointRounding.AwayFromZero);
     }
@@ -84,11 +86,31 @@ public static class Rules
     }
 
     // 예상 종료일이 단계 목표일을 넘는 일수 (넘지 않으면 0)
-    public static int ForecastOverDays(Stage s, DateOnly today)
+    public static int ForecastOverDays(Stage s, DateOnly today) => OverDays(Forecast(s, today), s.TargetDate);
+
+    // 전진 계산(ForwardPass)의 예상 종료로 올린 단계 예상 종료 — 선행 작업의 지연이 후행으로 전파된 값.
+    // 작업을 읽는 화면(상세)에서 쓰고, 작업 의존을 다루지 않는 대시보드·목록은 위의 간단한 계산을 쓴다
+    public static DateOnly? Forecast(Stage s, DateOnly today, IReadOnlyDictionary<WorkItem, Expected>? expected)
     {
-        var f = Forecast(s, today);
-        if (f == null || s.TargetDate == null) return 0;
-        var d = f.Value.DayNumber - s.TargetDate.Value.DayNumber;
+        if (expected == null) return Forecast(s, today);
+        if (s.CompletedDate != null || s.Works.Count == 0) return null;
+        DateOnly max = DateOnly.MinValue;
+        foreach (var w in s.Works)
+        {
+            var end = expected.TryGetValue(w, out var e) ? e.End : w.ActualEnd ?? (w.PlanEnd < today ? today : w.PlanEnd);
+            if (end > max) max = end;
+        }
+        return max;
+    }
+
+    public static int ForecastOverDays(Stage s, DateOnly today, IReadOnlyDictionary<WorkItem, Expected>? expected) =>
+        OverDays(Forecast(s, today, expected), s.TargetDate);
+
+    // 예상 종료가 목표일을 넘는 달력 일수 (넘지 않거나 어느 하나가 없으면 0)
+    public static int OverDays(DateOnly? forecast, DateOnly? target)
+    {
+        if (forecast == null || target == null) return 0;
+        var d = forecast.Value.DayNumber - target.Value.DayNumber;
         return d > 0 ? d : 0;
     }
 
@@ -124,18 +146,66 @@ public static class Rules
     public static bool AllStagesDone(Project p) => p.Stages.Count > 0 && p.Stages.All(s => s.CompletedDate != null);
 
     // 입고 추천일 = 검수 단계 일자(완료일 우선, 없으면 목표일) + 법인 해상 운송 소요일
-    public static DateOnly? InboundRecommendation(Project p, int oceanLeadDays)
+    public static DateOnly? InboundRecommendation(Project p, int oceanLeadDays) => InboundRecommendation(Ordered(p), oceanLeadDays);
+
+    // 순서대로 놓인 단계로 계산한다 — 단계 일정 표·등록 초안처럼 아직 저장하지 않은 날짜로 추천일을 다시 볼 때
+    public static DateOnly? InboundRecommendation(IEnumerable<Stage> ordered, int oceanLeadDays)
     {
-        var inspection = Ordered(p).LastOrDefault(s => s.Kind == StageKind.Inspection);
+        var inspection = ordered.LastOrDefault(s => s.Kind == StageKind.Inspection);
         var baseDate = inspection?.CompletedDate ?? inspection?.TargetDate;
-        return baseDate?.AddDays(oceanLeadDays);
+        if (baseDate == null) return null;
+        // 아직 검증하지 않은 날짜(초안·미리보기의 9999-12-31 같은 오타)로도 부르므로 DateOnly 범위를 넘으면 추천하지 않는다
+        var day = (long)baseDate.Value.DayNumber + oceanLeadDays;
+        return day < DateOnly.MinValue.DayNumber || day > DateOnly.MaxValue.DayNumber ? null : DateOnly.FromDayNumber((int)day);
     }
 
     // ── 기준선 ───────────────────────────────────────────────────────────
 
     // 기준선 대비 밀린 일수 (당겨졌으면 음수). 기준선이나 목표일이 없으면 null
-    public static int? SlipDays(Stage s) =>
-        s.BaselineDate == null || s.TargetDate == null ? null : s.TargetDate.Value.DayNumber - s.BaselineDate.Value.DayNumber;
+    public static int? SlipDays(Stage s) => SlipDays(s.TargetDate, s.BaselineDate);
+
+    // 지금 값이 기준값보다 밀린 달력 일수. 단계·작업·과제의 '기준선 대비 +n일'이 모두 이것을 거친다 —
+    // 비교 기준(최신·1차·직전 차수)을 바꿔도 같은 식으로 센다(UseBaseline 이 기준값만 바꿔 넣는다)
+    public static int? SlipDays(DateOnly? current, DateOnly? baseline) =>
+        current == null || baseline == null ? null : current.Value.DayNumber - baseline.Value.DayNumber;
+
+    // 기준선 차수 하나를 만든다: 지금 단계 목표일과 작업 목표 일정을 그대로 고정한다(규칙 12). 단계·작업 Id 는 느슨한 참조 —
+    // 나중에 지워도 그 차수의 기록은 남는다. 저장 전 새 단계·작업(Id 0)은 없다고 보고 넣지 않는다
+    public static List<BaselineItem> BaselineItems(Project p)
+    {
+        var items = new List<BaselineItem>();
+        foreach (var s in p.Stages.Where(s => s.Id != 0))
+        {
+            items.Add(new BaselineItem { StageId = s.Id, End = s.TargetDate });
+            foreach (var w in s.Works.Where(w => w.Id != 0))
+                items.Add(new BaselineItem { WorkItemId = w.Id, Start = w.PlanStart, End = w.PlanEnd });
+        }
+        return items;
+    }
+
+    // 비교 기준을 고른 차수로 바꾼다 — 읽기 전용 그래프(추적하지 않는 상세 화면용)의 기준선 열에 그 차수의 값을 넣는다.
+    // 그 차수 뒤에 생긴 단계·작업은 기준값이 없다(null → '+n일' 없음). 이후 계산(SlipDays·BaselineEnd·간트 기준선 막대)은 그대로 따라온다
+    public static void UseBaseline(Project p, IEnumerable<BaselineItem> items, DateTime at)
+    {
+        var stages = new Dictionary<int, BaselineItem>();
+        var works = new Dictionary<int, BaselineItem>();
+        foreach (var i in items)
+        {
+            if (i.StageId is int sid) stages[sid] = i;
+            else if (i.WorkItemId is int wid) works[wid] = i;
+        }
+        p.BaselineAt = at;
+        foreach (var s in p.Stages)
+        {
+            s.BaselineDate = stages.TryGetValue(s.Id, out var si) ? si.End : null;
+            foreach (var w in s.Works)
+            {
+                var found = works.TryGetValue(w.Id, out var wi);
+                w.BaselineStart = found ? wi!.Start : null;
+                w.BaselineEnd = found ? wi!.End : null;
+            }
+        }
+    }
 
     public static DateOnly? BaselineEnd(Project p)
     {
@@ -149,20 +219,67 @@ public static class Rules
 
     public static IEnumerable<WorkItem> AllWorks(Project p) => p.Stages.SelectMany(s => s.Works);
 
-    // 의존 관계 하나가 후행 작업에 거는 가장 이른 시작일. 지금은 "끝나야 시작"(FS) 한 가지다.
-    // 의존 판정은 모두 이 함수를 거친다 — 유형(SS·FF)을 더할 때 여기만 바꾸면 밀기·검증·여유·위반 표시가 함께 따라온다
-    public static DateOnly EarliestStart(WorkLink link, DateOnly predecessorStart, DateOnly predecessorEnd, WorkCalendar cal) =>
-        cal.EarliestStartAfter(predecessorEnd, link.LagDays);
+    // 의존 간격(근무일)의 범위. 음수(앞당김)는 받지 않는다
+    public const int MaxLagDays = 250;
 
-    public static DateOnly EarliestStart(WorkLink link, WorkItem predecessor, WorkCalendar cal) =>
-        EarliestStart(link, predecessor.PlanStart, predecessor.PlanEnd, cal);
+    public static void ValidateLag(int lagDays, string field = "predecessors")
+    {
+        if (lagDays < 0 || lagDays > MaxLagDays)
+            throw new RuleException($"의존 간격은 0~{MaxLagDays} 근무일로 입력해 주세요.", field);
+    }
+
+    // 의존 관계 하나가 후행 작업에 거는 가장 이른 시작일 (결과는 근무일). 의존 판정은 모두 이 함수를 거친다 —
+    // 밀기(Reschedule)·저장 검사·여유(Floats)·위반 표시·전진 계산(ForwardPass)이 같은 답을 쓴다.
+    //  FS(끝나면 시작): 선행 종료 다음 근무일 + 간격
+    //  SS(같이 시작): 선행 시작일(휴일이면 다음 근무일) + 간격 — 같은 날 시작해도 된다
+    //  FF(같이 끝): 후행 종료가 선행 종료일 + 간격(EarliestEnd) 이후가 되는 시작일 — 후행의 근무일 기간만큼 거꾸로 센다
+    public static DateOnly EarliestStart(WorkLink link, DateOnly predecessorStart, DateOnly predecessorEnd, int successorWorkDays, WorkCalendar cal)
+    {
+        var lag = Math.Max(0, link.LagDays);
+        return link.Type switch
+        {
+            LinkType.SS => cal.AddWorkingDays(cal.NextWorkingDay(predecessorStart), lag),
+            LinkType.FF => cal.AddWorkingDays(EarliestEnd(link, predecessorEnd, cal), -(Math.Max(1, successorWorkDays) - 1)),
+            _ => cal.EarliestStartAfter(predecessorEnd, lag),
+        };
+    }
+
+    public static DateOnly EarliestStart(WorkLink link, WorkItem predecessor, WorkItem successor, WorkCalendar cal) =>
+        EarliestStart(link, predecessor.PlanStart, predecessor.PlanEnd, WorkDays(successor, cal), cal);
+
+    // FF 연결에서 후행이 끝날 수 있는 가장 이른 날 (선행 종료일 + 간격 근무일).
+    // 휴일 종료는 FS 처럼 직전 근무일에 끝난 것으로 본다 — 토요일 종료로 적힌 선행은 금요일에 일을 마치므로, 간격 0 이면 후행도
+    // 금요일(또는 같은 토요일)에 끝나도 된다. 다음 근무일로 올리면 간격 0 이 간격 1 처럼 한 근무일 더 민다
+    public static DateOnly EarliestEnd(WorkLink link, DateOnly predecessorEnd, WorkCalendar cal) =>
+        cal.AddWorkingDays(cal.EarliestStartAfter(predecessorEnd, link.LagDays), -1);
+
+    // start 로 잡은 일정이 가장 이른 날보다 먼저 시작하는가. 휴일 시작은 다음 근무일에 시작하는 것으로 본다
+    // (Place 와 같은 기준 — 토요일 시작으로 적힌 작업은 월요일부터 일하므로 금요일에 끝난 선행과 어긋나지 않는다)
+    public static bool StartsBefore(DateOnly start, DateOnly earliest, WorkCalendar cal) => cal.NextWorkingDay(start) < earliest;
 
     // 후행 작업이 선행 작업이 허용하는 날보다 먼저 시작하는가
     public static bool Violates(WorkLink link, WorkItem predecessor, WorkItem successor, WorkCalendar cal) =>
-        successor.PlanStart < EarliestStart(link, predecessor, cal);
+        StartsBefore(successor.PlanStart, EarliestStart(link, predecessor, successor, cal), cal);
 
     public static bool Violates(WorkItem predecessor, WorkItem successor, int lagDays, WorkCalendar cal) =>
         Violates(new WorkLink { LagDays = lagDays }, predecessor, successor, cal);
+
+    // 화면·이력에 쓰는 유형 이름
+    public static string LinkLabel(LinkType type) => type switch
+    {
+        LinkType.SS => "같이 시작",
+        LinkType.FF => "같이 끝",
+        _ => "끝나면 시작",
+    };
+
+    // 연결 하나의 설명: "끝나면 시작" / "같이 시작 +2근무일"
+    public static string LinkText(LinkType type, int lagDays) => LinkLabel(type) + (lagDays > 0 ? $" +{lagDays}근무일" : "");
+
+    // 입력 문자열('fs'·'SS'·빈 값) → 유형. 빈 값은 FS
+    public static LinkType ParseLinkType(string? value, string field = "predecessors") =>
+        string.IsNullOrWhiteSpace(value) ? LinkType.FS
+        : Enum.TryParse<LinkType>(value.Trim(), ignoreCase: true, out var t) && Enum.IsDefined(t) ? t
+        : throw new RuleException("의존 유형을 다시 선택해 주세요.", field);
 
     // 작업의 근무일 기간. 주말에만 걸친 작업도 1일로 본다(옮긴 뒤 기간이 0 이 되지 않게)
     public static int WorkDays(WorkItem w, WorkCalendar cal) => Math.Max(1, cal.WorkingDays(w.PlanStart, w.PlanEnd));
@@ -211,7 +328,7 @@ public static class Rules
                     if (!works.TryGetValue(l.SuccessorId, out var next)) continue;
                     var later = Float(l.SuccessorId);
                     if (later == null) continue;
-                    var gap = cal.Distance(EarliestStart(l, x.Work, cal), next.Work.PlanStart);
+                    var gap = cal.Distance(EarliestStart(l, x.Work, next.Work, cal), cal.NextWorkingDay(next.Work.PlanStart));
                     var total = gap + later.Value;
                     if (best == null || total < best.Value) best = total;
                 }
@@ -247,74 +364,186 @@ public static class Rules
     // 연결은 탐색 속성(Predecessor/Successor)을 먼저 보고, 없으면 Id 로 찾는다 — 아직 저장 전(Id 0)인 작업·연결도 다룬다
     public static List<ScheduleMove> Reschedule(Project p, WorkCalendar cal, IEnumerable<WorkItem>? from = null)
     {
-        var stageOf = new Dictionary<WorkItem, Stage>();
-        var byId = new Dictionary<int, WorkItem>();
-        foreach (var s in p.Stages)
-            foreach (var w in s.Works)
-            {
-                stageOf.TryAdd(w, s);
-                if (w.Id != 0) byId.TryAdd(w.Id, w);
-            }
-
-        WorkItem? Resolve(WorkItem? nav, int id) =>
-            nav != null && stageOf.ContainsKey(nav) ? nav : id != 0 && byId.TryGetValue(id, out var w) ? w : null;
-
-        var preds = new Dictionary<WorkItem, List<(WorkLink Link, WorkItem Work)>>();
-        var succs = new Dictionary<WorkItem, List<WorkItem>>();
-        foreach (var l in p.Links)
-        {
-            var a = Resolve(l.Predecessor, l.PredecessorId);
-            var b = Resolve(l.Successor, l.SuccessorId);
-            if (a == null || b == null || ReferenceEquals(a, b)) continue;
-            if (!preds.TryGetValue(b, out var pl)) preds[b] = pl = new();
-            pl.Add((l, a));
-            if (!succs.TryGetValue(a, out var sl)) succs[a] = sl = new();
-            sl.Add(b);
-        }
+        var g = DepGraph.Of(p);
 
         // 영향받는 부분 그래프: 시작 작업과 그 후행 전부 (원래 순서를 지켜 결과를 안정적으로)
         var nodes = new HashSet<WorkItem>();
         var order = new List<WorkItem>();
         var stack = new Stack<WorkItem>();
-        foreach (var w in (from ?? stageOf.Keys).Where(stageOf.ContainsKey).Reverse()) stack.Push(w);
+        foreach (var w in (from ?? g.Works).Where(g.StageOf.ContainsKey).Reverse()) stack.Push(w);
         while (stack.Count > 0)
         {
             var cur = stack.Pop();
             if (!nodes.Add(cur)) continue;
             order.Add(cur);
-            if (succs.TryGetValue(cur, out var next))
+            if (g.Succs.TryGetValue(cur, out var next))
                 for (var i = next.Count - 1; i >= 0; i--) stack.Push(next[i]);
         }
 
-        var indegree = order.ToDictionary(w => w, w => preds.TryGetValue(w, out var pl) ? pl.Count(x => nodes.Contains(x.Work)) : 0);
-        var queue = new Queue<WorkItem>(order.Where(w => indegree[w] == 0));
         var dates = new Dictionary<WorkItem, (DateOnly Start, DateOnly End)>();
         var moves = new List<ScheduleMove>();
 
-        while (queue.Count > 0)
+        foreach (var w in g.TopoOrder(order, nodes))
         {
-            var w = queue.Dequeue();
-            if (IsMovable(w, stageOf[w]) && preds.TryGetValue(w, out var incoming))
+            if (!IsMovable(w, g.StageOf[w]) || !g.Preds.TryGetValue(w, out var incoming)) continue;
+            DateOnly? earliest = null;
+            WorkItem? cause = null;
+            var days = WorkDays(w, cal);
+            foreach (var (link, pred) in incoming)
             {
-                DateOnly? earliest = null;
-                WorkItem? cause = null;
-                foreach (var (link, pred) in incoming)
-                {
-                    var (ps, pe) = dates.TryGetValue(pred, out var moved) ? moved : (pred.PlanStart, pred.PlanEnd);
-                    var e = EarliestStart(link, ps, pe, cal);
-                    if (earliest == null || e > earliest.Value) { earliest = e; cause = pred; }
-                }
-                if (earliest != null && w.PlanStart < earliest.Value)
-                {
-                    var (ns, ne) = Place(earliest.Value, WorkDays(w, cal), cal);
-                    dates[w] = (ns, ne);
-                    moves.Add(new ScheduleMove(w, w.PlanStart, w.PlanEnd, ns, ne, cause!));
-                }
+                var (ps, pe) = dates.TryGetValue(pred, out var moved) ? moved : (pred.PlanStart, pred.PlanEnd);
+                var e = EarliestStart(link, ps, pe, days, cal);
+                if (earliest == null || e > earliest.Value) { earliest = e; cause = pred; }
             }
-            if (succs.TryGetValue(w, out var next))
-                foreach (var n in next)
-                    if (nodes.Contains(n) && --indegree[n] == 0) queue.Enqueue(n);
+            if (earliest != null && StartsBefore(w.PlanStart, earliest.Value, cal))
+            {
+                var (ns, ne) = Place(earliest.Value, days, cal);
+                dates[w] = (ns, ne);
+                moves.Add(new ScheduleMove(w, w.PlanStart, w.PlanEnd, ns, ne, cause!));
+            }
         }
+        return moves;
+    }
+
+    // 과제의 작업 의존 그래프. 밀기(Reschedule)와 전진 계산(ForwardPass)이 같은 그래프·같은 위상 정렬을 쓴다.
+    // 연결은 탐색 속성(Predecessor/Successor)을 먼저 보고, 없으면 Id 로 찾는다 — 아직 저장 전(Id 0)인 작업·연결도 다룬다
+    private sealed class DepGraph
+    {
+        public readonly Dictionary<WorkItem, Stage> StageOf = new();
+        public readonly List<WorkItem> Works = new();
+        public readonly Dictionary<WorkItem, List<(WorkLink Link, WorkItem Work)>> Preds = new();
+        public readonly Dictionary<WorkItem, List<WorkItem>> Succs = new();
+
+        public static DepGraph Of(Project p)
+        {
+            var g = new DepGraph();
+            var byId = new Dictionary<int, WorkItem>();
+            foreach (var s in p.Stages)
+                foreach (var w in s.Works)
+                {
+                    if (g.StageOf.TryAdd(w, s)) g.Works.Add(w);
+                    if (w.Id != 0) byId.TryAdd(w.Id, w);
+                }
+
+            WorkItem? Resolve(WorkItem? nav, int id) =>
+                nav != null && g.StageOf.ContainsKey(nav) ? nav : id != 0 && byId.TryGetValue(id, out var w) ? w : null;
+
+            foreach (var l in p.Links)
+            {
+                var a = Resolve(l.Predecessor, l.PredecessorId);
+                var b = Resolve(l.Successor, l.SuccessorId);
+                if (a == null || b == null || ReferenceEquals(a, b)) continue;
+                if (!g.Preds.TryGetValue(b, out var pl)) g.Preds[b] = pl = new();
+                pl.Add((l, a));
+                if (!g.Succs.TryGetValue(a, out var sl)) g.Succs[a] = sl = new();
+                sl.Add(b);
+            }
+            return g;
+        }
+
+        // nodes 안에서의 위상 정렬(Kahn). 선행이 여럿 모이는 작업도 모든 선행이 나온 뒤에 한 번만 나온다.
+        // 순환에 걸린 작업(입력 단계에서 막지만)은 결과에 넣지 않는다
+        public List<WorkItem> TopoOrder(IReadOnlyList<WorkItem> order, HashSet<WorkItem> nodes)
+        {
+            var indegree = order.ToDictionary(w => w, w => Preds.TryGetValue(w, out var pl) ? pl.Count(x => nodes.Contains(x.Work)) : 0);
+            var queue = new Queue<WorkItem>(order.Where(w => indegree[w] == 0));
+            var result = new List<WorkItem>();
+            while (queue.Count > 0)
+            {
+                var w = queue.Dequeue();
+                result.Add(w);
+                if (Succs.TryGetValue(w, out var next))
+                    foreach (var n in next)
+                        if (nodes.Contains(n) && --indegree[n] == 0) queue.Enqueue(n);
+            }
+            return result;
+        }
+    }
+
+    // ── 오늘 기준 예측 일정(전진 계산) ──────────────────────────────────
+
+    // 작업 하나의 예상 일정. StartLate: 목표 시작일이 지났는데 아직 시작하지 않음. Cause: 예상을 미룬 선행 작업(오늘 때문이면 null)
+    public record Expected(DateOnly Start, DateOnly End, bool StartLate, WorkItem? Cause);
+
+    // 오늘과 실적을 반영해 의존 관계를 따라 앞으로 전파한 예상 일정. 저장값은 바꾸지 않는다(규칙 1·11).
+    // 위상 정렬 한 번(O(V+E)), 작업마다:
+    //  - 완료: 실적 그대로. 단계 완료로 끝난 작업은 단계 완료일에 끝난 것으로 본다(규칙 3)
+    //  - 진행 중: 시작은 실적, 종료는 max(목표 종료, 오늘) — FF 선행이 있으면 그 선행의 예상 종료 + 간격 이후
+    //  - 미착수: 시작은 max(목표 시작, 오늘, 선행들의 예상 일정이 허용하는 가장 이른 날(EarliestStart)), 근무일 기간은 그대로.
+    //    목표 시작일이 그보다 늦거나 같으면 목표 일정 그대로 둔다(당기지 않는다)
+    // 순환에 걸린 작업(입력 단계에서 막지만)은 선행 없이 자기 일정만으로 본다
+    public static Dictionary<WorkItem, Expected> ForwardPass(Project p, WorkCalendar cal, DateOnly today)
+    {
+        var g = DepGraph.Of(p);
+        var all = new HashSet<WorkItem>(g.Works);
+        var order = g.TopoOrder(g.Works, all);
+        var done = new HashSet<WorkItem>(order);
+        order.AddRange(g.Works.Where(w => !done.Contains(w)));
+
+        var result = new Dictionary<WorkItem, Expected>();
+        foreach (var w in order)
+        {
+            var stage = g.StageOf[w];
+            var incoming = g.Preds.TryGetValue(w, out var pl)
+                ? pl.Where(x => result.ContainsKey(x.Work)).Select(x => (x.Link, x.Work, result[x.Work])).ToList()
+                : new List<(WorkLink Link, WorkItem Work, Expected Pred)>();
+            result[w] = ExpectedOf(w, stage, incoming, cal, today);
+        }
+        return result;
+    }
+
+    private static Expected ExpectedOf(WorkItem w, Stage stage, List<(WorkLink Link, WorkItem Work, Expected Pred)> incoming, WorkCalendar cal, DateOnly today)
+    {
+        var closedAt = w.ActualEnd ?? stage.CompletedDate;
+        if (closedAt is DateOnly end)
+        {
+            var start = w.ActualStart ?? w.PlanStart;
+            return new Expected(start > end ? end : start, end, false, null);
+        }
+
+        if (w.ActualStart is DateOnly started)
+        {
+            var finish = w.PlanEnd < today ? today : w.PlanEnd;
+            if (finish < started) finish = started;
+            WorkItem? cause = null;
+            foreach (var (link, work, pred) in incoming)
+            {
+                if (link.Type != LinkType.FF) continue;
+                var e = EarliestEnd(link, pred.End, cal);
+                if (e > finish) { finish = e; cause = work; }
+            }
+            return new Expected(started, finish, false, cause);
+        }
+
+        var days = WorkDays(w, cal);
+        var earliest = today;
+        WorkItem? why = null;
+        foreach (var (link, work, pred) in incoming)
+        {
+            var e = EarliestStart(link, pred.Start, pred.End, days, cal);
+            if (e > earliest) { earliest = e; why = work; }
+        }
+        // 휴일 시작은 다음 근무일에 시작하는 것으로 본다(StartsBefore — 이동 판정과 같은 기준). 토요일 시작으로 적힌 작업이 월요일에 시작하면 늦지 않다
+        var startLate = StartsBefore(w.PlanStart, today, cal);
+        if (!StartsBefore(w.PlanStart, earliest, cal)) return new Expected(w.PlanStart, w.PlanEnd, startLate, null);
+        var (ns, ne) = Place(earliest, days, cal);
+        return new Expected(ns, ne, startLate, why);
+    }
+
+    // 재계획으로 옮길 작업: 밀기 대상(미착수·단계 미완료)인데 예상 일정이 목표 일정과 다른 것. 예상은 목표보다 앞서지 않는다
+    public record ReplanMove(WorkItem Work, DateOnly OldStart, DateOnly OldEnd, DateOnly NewStart, DateOnly NewEnd, bool StartLate, WorkItem? Cause);
+
+    public static List<ReplanMove> ReplanMoves(Project p, WorkCalendar cal, DateOnly today, IReadOnlyDictionary<WorkItem, Expected>? expected = null)
+    {
+        expected ??= ForwardPass(p, cal, today);
+        var moves = new List<ReplanMove>();
+        foreach (var s in Ordered(p))
+            foreach (var w in s.Works.OrderBy(w => w.PlanStart).ThenBy(w => w.Id))
+            {
+                if (!IsMovable(w, s) || !expected.TryGetValue(w, out var e)) continue;
+                if (e.Start == w.PlanStart && e.End == w.PlanEnd) continue;
+                moves.Add(new ReplanMove(w, w.PlanStart, w.PlanEnd, e.Start, e.End, e.StartLate, e.Cause));
+            }
         return moves;
     }
 
@@ -407,6 +636,34 @@ public static class Rules
 
     public static bool IsSoon(int daysLeft) => daysLeft >= 0 && daysLeft <= SoonDays;
 
+    // 과제를 끝낸 날: 모든 단계를 완료했으면 가장 늦은 단계 완료일 (대시보드 '올해 완료'와 목록의 완료 연도 조건이 같은 판정을 쓴다)
+    public static DateOnly? CompletedOn(Project p) =>
+        AllStagesDone(p) ? p.Stages.Max(s => s.CompletedDate!.Value) : null;
+
+    // 과제 종료일(Project.ClosedOn에 저장하는 값): 완료면 마지막 단계 완료일, 중단이면 중단 처리일 — 이미 적힌 값을 지키고
+    // 없으면 오늘(중단으로 바꾼 날). 진행·보류는 없다. 상태가 바뀌거나 완료 과제의 단계 완료일이 바뀔 때마다 다시 계산한다
+    public static DateOnly? ClosedOn(Project p, DateOnly today) => p.State switch
+    {
+        ProjectState.Done => CompletedOn(p),
+        ProjectState.Dropped => p.ClosedOn ?? today,
+        _ => null,
+    };
+
+    // 연도 조건(목록의 완료·중단 탭, 리드타임)의 날짜 범위 — DB 에서 ClosedOn 을 범위 비교로 거르기 위해(두 DB 에서 같게 번역된다).
+    // 주소에 아무 숫자나 올 수 있으므로 DateOnly 가 받는 범위로 묶는다(벗어난 해는 해당 과제가 없어 빈 목록이 된다 — 500 대신)
+    public static (DateOnly From, DateOnly To) YearRange(int year)
+    {
+        year = Math.Clamp(year, 1, 9999);
+        return (new DateOnly(year, 1, 1), new DateOnly(year, 12, 31));
+    }
+
+    // 화면에서 고를 수 있는 연도 범위(목록의 연도 고르기·리드타임). 밖의 값은 주소를 잘못 친 것으로 보고 무시한다
+    public static bool IsPickableYear(int year) => year is >= 2000 and <= 2099;
+
+    // 미완료 단계 중 목표일이 오늘부터 days 일 안(오늘 포함)인 것이 있는가 (대시보드 'n일 내 목표'·다가오는 일정과 목록의 조건)
+    public static bool HasStageDueWithin(Project p, DateOnly today, int days) =>
+        p.Stages.Any(s => s.CompletedDate == null && s.TargetDate != null && DaysLeft(s.TargetDate.Value, today) is var d && d >= 0 && d <= days);
+
     // 미완료 단계의 목표일이 지남
     public static bool IsLate(Stage s, DateOnly today) => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value < today;
 
@@ -414,7 +671,7 @@ public static class Rules
     public static bool IsDoneLate(Stage s) => s.CompletedDate != null && s.TargetDate != null && s.CompletedDate.Value > s.TargetDate.Value;
 
     // 작업 목표 종료의 기준선 대비 (밀리면 양수). 기준선이 없으면 null
-    public static int? SlipDays(WorkItem w) => w.BaselineEnd == null ? null : w.PlanEnd.DayNumber - w.BaselineEnd.Value.DayNumber;
+    public static int? SlipDays(WorkItem w) => SlipDays(w.PlanEnd, w.BaselineEnd);
 
     // 지연 작업이 목표 종료를 넘긴 달력 일수 (지연이 아니면 0)
     public static int LateDays(WorkItem w, Stage? stage, DateOnly today)
@@ -439,4 +696,403 @@ public static class Rules
 
     public static bool CanDeleteAttachment(Attachment a, int? projectOwnerId, int? userId, bool isAdmin) =>
         isAdmin || (userId != null && (a.UploadedById == userId || projectOwnerId == userId));
+
+    // 기준선 다시 확정: 기준선 대비 밀린 기록을 0 으로 되돌리므로 과제 담당자·관리자만 (처음 확정은 누구나)
+    public static bool CanRebaseline(Project p, int? userId, bool isAdmin) => isAdmin || (userId != null && p.OwnerId == userId);
+
+    // ── 단계 일정 계획: 목표일 초안·근무일 간격 ─────────────────────────
+    // 기본 기간(StageTemplate.DefaultWorkDays)·초안·간격·리드타임 힌트가 모두 같은 거리를 쓴다:
+    // "앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지의 근무일 거리(WorkCalendar.Distance)".
+    // 그래서 초안을 그대로 두면 단계 일정 표의 간격이 기본 기간과 같고, 과거 리드타임 평균을 기본 기간에 그대로 옮겨 쓸 수 있다
+
+    public const int MaxDefaultWorkDays = 999;
+
+    public static void ValidateDefaultWorkDays(int? days)
+    {
+        if (days is int d && (d < 0 || d > MaxDefaultWorkDays))
+            throw new RuleException($"기본 기간은 0~{MaxDefaultWorkDays} 근무일로 입력해 주세요. 정하지 않으려면 비워 둡니다.", "defaultWorkDays");
+    }
+
+    // 단계 목표일 초안 (단계 순서대로). 앞 단계 목표일(첫 단계는 착수일)에서 근무일 기본 기간만큼 뒤로 잡는다.
+    // 기본 기간이 없는 단계는 비우고, 그다음 단계는 앞에서 정해진 마지막 목표일(없으면 착수일)부터 센다 — 간트의 목표 막대와 같은 기준.
+    // fixedAt(순서 위치 → 날짜)에 있는 단계는 사람이 정한 값(빈 값 포함)을 그대로 두고 그 뒤 단계만 거기서 이어 센다.
+    // 초안은 제안일 뿐이다 — 저장은 사람이 확인하고 고친 뒤에 한다(규칙 1)
+    public static List<DateOnly?> DraftTargets(DateOnly start, IReadOnlyList<int?> workDays, WorkCalendar cal,
+                                               IReadOnlyDictionary<int, DateOnly?>? fixedAt = null)
+    {
+        var result = new List<DateOnly?>(workDays.Count);
+        var anchor = start;
+        for (var i = 0; i < workDays.Count; i++)
+        {
+            DateOnly? target = fixedAt != null && fixedAt.TryGetValue(i, out var kept) ? kept
+                : workDays[i] is int days ? cal.AddWorkingDays(anchor, Math.Clamp(days, 0, MaxDefaultWorkDays))
+                : null;
+            result.Add(target);
+            if (target != null) anchor = target.Value;
+        }
+        return result;
+    }
+
+    public static List<DateOnly?> DraftTargets(DateOnly start, IEnumerable<StageTemplate> templates, WorkCalendar cal) =>
+        DraftTargets(start, templates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).Select(t => t.DefaultWorkDays).ToList(), cal);
+
+    // 단계 목표일 사이의 근무일 간격 (단계 순서대로). 앞에서 정해진 마지막 목표일(첫 단계는 착수일)부터 이 단계 목표일까지.
+    // 목표일이 없으면 null, 앞 단계보다 이르면 음수(순서가 뒤바뀐 일정 — 화면이 경고한다)
+    public static List<int?> TargetGaps(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    {
+        var result = new List<int?>(targets.Count);
+        var anchor = start;
+        foreach (var t in targets)
+        {
+            result.Add(t == null ? null : cal.Distance(anchor, t.Value));
+            if (t != null) anchor = t.Value;
+        }
+        return result;
+    }
+
+    // ── 과제 간 단계 의존 (StageLink) ─────────────────────────────────
+    // 자동으로 밀지 않고 위반만 계산한다 — 다른 과제 담당자의 일정을 몰래 바꾸지 않기 위해서다(규칙 11)
+
+    // 후행 단계 목표일이 지켜야 할 가장 이른 날: 선행 단계 완료일(없으면 목표일) 다음 근무일 + 간격. 선행 날짜가 없으면 null
+    public static DateOnly? StageLinkEarliest(StageLink link, Stage predecessor, WorkCalendar cal)
+    {
+        var basis = predecessor.CompletedDate ?? predecessor.TargetDate;
+        return basis == null ? null : cal.EarliestStartAfter(basis.Value, link.LagDays);
+    }
+
+    // 후행 단계(미완료)의 목표일이 선행 단계가 허용하는 날보다 이른가. 어느 쪽이든 날짜가 없으면 판정하지 않는다
+    public static bool StageLinkViolated(StageLink link, Stage predecessor, Stage successor, WorkCalendar cal) =>
+        successor.CompletedDate == null && successor.TargetDate != null
+        && StageLinkEarliest(link, predecessor, cal) is { } earliest && successor.TargetDate.Value < earliest;
+
+    // ── 협업: 새 활동·댓글 수정 ──────────────────────────────────────────
+    // 목록의 '새 활동 n', 상세의 '여기부터 새 활동' 구분선, 내 할 일의 '새 소식'이 모두 같은 기준을 쓴다
+
+    // 새 활동을 세는 기간의 상한(일). 오래 안 본 과제가 수백 건으로 보이지 않게, 처음 보는 과제는 이 기간만 센다
+    public const int NewActivityDays = 7;
+
+    // 이 시각보다 뒤에 남은 활동이 '새 활동'이다: 마지막으로 본 시각, 그것이 없거나 상한보다 오래됐으면 상한
+    public static DateTime NewSince(DateTime? lastSeen, DateTime utcNow)
+    {
+        var floor = utcNow.AddDays(-NewActivityDays);
+        return lastSeen is { } seen && seen > floor ? seen : floor;
+    }
+
+    // 다른 사람이 since 뒤에 남긴 활동 (내가 남긴 것은 새 소식이 아니다). 댓글 수정·삭제 기록은 그 댓글로 보이므로 따로 세지 않는다.
+    // 지운 댓글도 새 활동이 아니다 — 볼 내용이 없는데 '새'로 부르면 목록·상세·내 할 일이 서로 달라진다(세 곳이 이 기준을 같이 쓴다)
+    public static bool IsNewActivity(ActivityType type, int authorId, DateTime at, int userId, DateTime since, bool deleted) =>
+        type != ActivityType.CommentChanged && !deleted && authorId != userId && at > since;
+
+    // 댓글은 작성자만, 남긴 뒤 editHours 시간 안에, 지우지 않은 것만 고치거나 지울 수 있다(0 이면 막는다)
+    public static bool CanEditComment(int authorId, DateTime at, DateTime? deletedAt, int userId, DateTime utcNow, int editHours) =>
+        authorId == userId && deletedAt == null && editHours > 0 && utcNow - at <= TimeSpan.FromHours(editHours);
+
+    // ── 보고 기준일(asOf) 판정 — 지난 주 보고 ─────────────────────────
+    // 지난 주 보고를 다시 열면 그 주 마지막 날(asOf) 기준으로 지연을 센다. asOf 뒤에 기록된 실적(단계 완료일·작업 실적 종료)은
+    // 그때 아직 없던 것으로 본다. 목표일은 지금 값이다 — 목표일 변경 이력을 거슬러 계산하지 않는다(근본 해결은 일별 스냅샷).
+    // asOf 가 오늘 이후면 지금 판정(DelayDays·IsLate)과 같다
+
+    // asOf 에 이미 끝나 있던 실적인가 (오늘 기준이면 기록된 실적은 모두 끝난 것)
+    public static bool DoneBy(DateOnly? date, DateOnly asOf, DateOnly today) => date != null && (asOf >= today || date.Value <= asOf);
+
+    // asOf 에 진행 중이던 과제: 지금 진행 중이거나, 지금은 완료지만 asOf 뒤에 마지막 단계를 끝낸 과제. 보류·중단은 언제 바뀌었는지 몰라 지금 상태로 본다
+    public static bool ActiveAsOf(Project p, DateOnly asOf, DateOnly today) =>
+        p.State == ProjectState.Active
+        || (p.State == ProjectState.Done && p.Stages.Any(s => !DoneBy(s.CompletedDate, asOf, today)));
+
+    // asOf 기준 단계 지연 일수 (지연이 아니면 0)
+    public static int StageLateDaysAsOf(Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(s.CompletedDate, asOf, today) && s.TargetDate != null && s.TargetDate.Value < asOf ? asOf.DayNumber - s.TargetDate.Value.DayNumber : 0;
+
+    // asOf 기준 작업 지연 일수. 그때 단계가 이미 완료돼 있었으면 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static int WorkLateDaysAsOf(WorkItem w, Stage s, DateOnly asOf, DateOnly today) =>
+        !DoneBy(w.ActualEnd, asOf, today) && !DoneBy(s.CompletedDate, asOf, today) && w.PlanEnd < asOf ? asOf.DayNumber - w.PlanEnd.DayNumber : 0;
+
+    // asOf 기준 과제 지연 일수 (DelayDays 와 같은 규칙 — 가장 오래 밀린 미완료 단계)
+    public static int DelayDaysAsOf(Project p, DateOnly asOf, DateOnly today)
+    {
+        if (!ActiveAsOf(p, asOf, today)) return 0;
+        var max = 0;
+        foreach (var s in p.Stages) max = Math.Max(max, StageLateDaysAsOf(s, asOf, today));
+        return max;
+    }
+
+    // ── 공휴일 변경 영향 ────────────────────────────────────────────────
+    // 공휴일을 더하거나 빼면 근무일 기간·지연 일수가 바뀌고, 선행 종료 다음 날을 공휴일로 넣으면 후행이 곧바로 선행 관계를 어긴다.
+    // 관리 화면이 저장 응답으로 알리도록 과제 하나의 영향을 센다(자동으로 밀지는 않는다 — 규칙 11).
+    // Touched: 바뀐 날이 미완료 단계 목표일이거나 열린 작업의 목표 기간 안에 있다. NewViolations: before 달력에서는 지키던 선행 관계를
+    // after 달력에서 어기게 되는 밀기 대상 작업 수(작업마다 한 번)
+    public static (bool Touched, int NewViolations) HolidayImpact(Project p, IReadOnlyCollection<DateOnly> changed, WorkCalendar before, WorkCalendar after)
+    {
+        var touched = p.Stages.Any(s => s.CompletedDate == null
+            && ((s.TargetDate is { } t && changed.Contains(t))
+                || s.Works.Any(w => IsOpen(w, s) && changed.Any(d => d >= w.PlanStart && d <= w.PlanEnd))));
+        var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) byId[w.Id] = (w, s);
+        var violated = new HashSet<int>();
+        foreach (var l in p.Links)
+        {
+            if (!byId.TryGetValue(l.PredecessorId, out var pred) || !byId.TryGetValue(l.SuccessorId, out var succ)) continue;
+            if (!IsMovable(succ.Work, succ.Stage)) continue;
+            if (Violates(l, pred.Work, succ.Work, after) && !Violates(l, pred.Work, succ.Work, before)) violated.Add(succ.Work.Id);
+        }
+        return (touched, violated.Count);
+    }
+
+    // ── 일정 변경 횟수 ──────────────────────────────────────────────────
+    // 일정 변경은 '결정' 단위로 센다. 연쇄 이동·선행 연동은 한 번의 결정으로 여러 행(같은 BatchId)을 남기므로
+    // 행 수로 세면 부풀려진다 — 묶음 없는 행은 하나씩, 묶음은 하나로 센다 (주간 보고·상세·Excel·PDF 공용)
+    public static int DecisionCount(IEnumerable<Guid?> batchIds)
+    {
+        var count = 0;
+        var seen = new HashSet<Guid>();
+        foreach (var b in batchIds)
+            if (b == null || seen.Add(b.Value)) count++;
+        return count;
+    }
+
+    // ── 지연 위험·정체 (조기 경보) ──────────────────────────────────────
+    // '지연'은 목표일이 지난 단계만 센다. 그 전에 보이는 신호(예상 초과·기한 지난 작업·기준선 대비 밀림·과제 간 연결 위반)를
+    // 대시보드·목록·주간 보고가 같은 판정으로 보이도록 여기서 이유 목록으로 만든다
+
+    // 기준선 대비 목표 종료가 이 일수 이상 밀리면 위험 이유로 본다
+    public const int RiskSlipDays = 5;
+    // 진행 과제가 이 일수 넘게 아무 변경(작업·단계·댓글·첨부 — 모두 UpdatedAt 을 갱신한다)이 없으면 정체
+    public const int StaleDays = 14;
+
+    // Kind: forecast(단계 예상 종료가 목표일을 넘음 — Days = 가장 큰 초과 일수), lateWorks(기한 지난 미완료 작업 — Count),
+    // slip(기준선 대비 목표 종료 밀림 — Days), links(과제 간 단계 연결 위반 — Count). Text 는 화면에 그대로 쓰는 한 줄
+    public record RiskReason(string Kind, int Value, string Text);
+
+    // 진행 과제의 위험 이유. expected: 전진 계산(ForwardPass) 결과 — 주면 작업 의존이 전파된 예상 종료로, 없으면 작업별 간단한 계산으로 본다.
+    // linkViolations: 위반한 과제 간 연결 수(연결을 읽지 않은 경로는 null — 이유에서 빠진다)
+    public static List<RiskReason> RiskReasons(Project p, DateOnly today, IReadOnlyDictionary<WorkItem, Expected>? expected = null, int? linkViolations = null)
+    {
+        var list = new List<RiskReason>();
+        if (p.State != ProjectState.Active) return list;
+
+        Stage? worst = null;
+        var over = 0;
+        var lateWorks = 0;
+        foreach (var s in Ordered(p))
+        {
+            if (s.CompletedDate != null) continue;
+            var d = ForecastOverDays(s, today, expected);
+            if (d > over) { over = d; worst = s; }
+            lateWorks += s.Works.Count(w => IsLate(w, s, today));
+        }
+        if (over > 0) list.Add(new RiskReason("forecast", over, $"'{worst!.Name}' 예상 종료가 목표일보다 {over}일 늦음"));
+        if (lateWorks > 0) list.Add(new RiskReason("lateWorks", lateWorks, $"기한 지난 작업 {lateWorks}건"));
+        if (EndTarget(p) is { } end && BaselineEnd(p) is { } baseEnd && end.DayNumber - baseEnd.DayNumber is var slip && slip >= RiskSlipDays)
+            list.Add(new RiskReason("slip", slip, $"기준선보다 목표 종료 {slip}일 밀림"));
+        if (linkViolations is > 0)
+            list.Add(new RiskReason("links", linkViolations.Value, $"다른 과제 단계 연결 위반 {linkViolations}건"));
+        return list;
+    }
+
+    // 예상 지연 일수(주간 보고·간트의 '예상 지연 +n일'): 단계 예상 종료가 목표일을 넘는 가장 큰 일수. 다른 이유만 있으면 0
+    public static int RiskDays(IEnumerable<RiskReason> reasons) =>
+        reasons.Where(r => r.Kind == "forecast").Select(r => r.Value).DefaultIfEmpty(0).Max();
+
+    // 지연 위험 과제: 아직 지연(목표일 지난 단계)은 아니지만 이유가 있는 진행 과제. 지연 과제는 '지연'으로 따로 센다
+    public static bool AtRisk(int delayDays, IReadOnlyCollection<RiskReason> reasons) => delayDays == 0 && reasons.Count > 0;
+
+    // 정체: 진행 과제인데 마지막 변경이 StaleDays 일 넘게 지남
+    public static bool IsStale(ProjectState state, DateTime updatedAtUtc, DateTime utcNow) =>
+        state == ProjectState.Active && utcNow - updatedAtUtc > TimeSpan.FromDays(StaleDays);
+
+    // ── 작업 진행률·실적 (작업 시트·내 할 일 빠른 갱신 공용) ────────────
+    // 같은 입력이 어느 화면에서 왔든 같은 값이 저장되도록 한 곳에 둔다:
+    // 실적 종료가 있으면 진행률 100%, 진행률만 올렸으면(실적 시작 없음) 접속자의 오늘 시작한 것으로 본다(UserToday)
+    public static void ValidateActuals(DateOnly? actualStart, DateOnly? actualEnd, int progress)
+    {
+        if (actualEnd != null && actualStart == null)
+            throw new RuleException("실적 종료일을 넣으려면 실적 시작일도 입력해 주세요.", "actualStart");
+        if (actualStart != null && actualEnd != null && actualStart.Value > actualEnd.Value)
+            throw new RuleException("실적 시작일이 종료일보다 늦습니다.", "actualStart");
+        ValidateProgress(progress);
+    }
+
+    public static (int Progress, DateOnly? ActualStart) WorkActuals(int progress, DateOnly? actualStart, DateOnly? actualEnd, DateOnly? clientToday, DateOnly today)
+    {
+        if (actualEnd != null) return (100, actualStart);
+        if (progress > 0 && actualStart == null) return (progress, UserToday(clientToday, today));
+        return (progress, actualStart);
+    }
+
+    // ── 유형 템플릿 작업 (과제 등록 때 단계마다 만드는 작업) ──────────────
+    // 단계 시작 기준일은 목표일 초안(DraftTargets)과 같은 기준을 쓴다: 첫 단계는 착수일, 이후 단계는 앞에서 정해진 마지막 목표일의
+    // 다음 근무일(그 단계 기간은 앞 단계 목표일 뒤부터 이 단계 목표일까지). 앞 단계에 목표일이 하나도 없으면 착수일이다
+
+    public const int MaxTemplateOffset = 999;
+    public const int MaxTemplateDuration = 999;
+
+    public static void ValidateTemplateWork(int offsetWorkDays, int durationWorkDays)
+    {
+        if (offsetWorkDays < 0 || offsetWorkDays > MaxTemplateOffset)
+            throw new RuleException($"시작(단계 시작부터)은 0~{MaxTemplateOffset} 근무일로 입력해 주세요.", "offsetWorkDays");
+        if (durationWorkDays < 1 || durationWorkDays > MaxTemplateDuration)
+            throw new RuleException($"기간은 1~{MaxTemplateDuration} 근무일로 입력해 주세요.", "durationWorkDays");
+    }
+
+    // 단계마다 시작 기준일(근무일). targets: 단계 순서대로의 목표일(등록할 때 정한 값, 없으면 초안 — 비어 있을 수 있다)
+    public static List<DateOnly> StageStarts(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    {
+        var result = new List<DateOnly>(targets.Count);
+        var basis = cal.NextWorkingDay(start);
+        foreach (var t in targets)
+        {
+            result.Add(basis);
+            if (t != null) basis = cal.EarliestStartAfter(t.Value, 0);
+        }
+        return result;
+    }
+
+    // 템플릿 작업 하나의 일정: 단계 시작 기준일에서 offset 근무일 뒤에 시작해 duration 근무일
+    public static (DateOnly Start, DateOnly End) PlaceTemplateWork(DateOnly stageStart, int offsetWorkDays, int durationWorkDays, WorkCalendar cal) =>
+        Place(cal.AddWorkingDays(cal.NextWorkingDay(stageStart), Math.Clamp(offsetWorkDays, 0, MaxTemplateOffset)),
+              Math.Clamp(durationWorkDays, 1, MaxTemplateDuration), cal);
+
+    // ── 분석: 스냅샷 대상·조직 범위·진척 증감·일정 변경 밀림·단계 체류·부하 (S10) ──────────
+
+    // 그날 스냅샷에 남길 과제: 휴지통이 아닌 진행·보류 과제와 그날 모든 단계를 끝낸 완료 과제. 중단은 남기지 않는다
+    public static bool InSnapshot(Project p, DateOnly date) =>
+        p.DeletedAt == null
+        && (p.State is ProjectState.Active or ProjectState.Hold || (p.State == ProjectState.Done && CompletedOn(p) == date));
+
+    // 조직 범위: 그 조직이거나 그 아래 파트(조직은 그룹 → 파트 두 단계). 과제는 담당자의 소속으로 본다
+    public static bool InOrg(int? unitId, int? parentId, int orgId) => unitId == orgId || (unitId != null && parentId == orgId);
+
+    public static bool InOrg(OrgUnit? unit, int orgId) => unit != null && InOrg(unit.Id, unit.ParentId, orgId);
+
+    // 과제 진척 증감(%p): 진행률 변경(이전·새 값)을 과제 진행률 계산(단계 평균의 평균 — ProjectProgress)의 비중으로 환산해 더한다.
+    // 작업 하나의 d%p 는 단계 진행률을 d/작업 수, 과제 진행률을 그 값/단계 수만큼 움직인다. 지금 구조(단계·작업 수)로 환산하고,
+    // 지금은 없는 작업·단계의 변경은 뺀다. 단계 완료(→ 100)와 완료 취소(100 →)는 단계 진행률 변경(stageChanges)으로 따로 들어온다 —
+    // 작업이 없거나 작업을 닫지 않고 완료한 단계도 센다. 단계 완료로 닫은 작업과 완료된 단계 안의 작업 변경은 진행률 값을 남기지 않아 두 번 세지 않는다
+    public static int ProgressGain(Project p, IEnumerable<(int WorkId, int Old, int New)> changes,
+        IEnumerable<(int StageId, int Old, int New)>? stageChanges = null)
+    {
+        if (p.Stages.Count == 0) return 0;
+        var stageOf = new Dictionary<int, Stage>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) stageOf[w.Id] = s;
+        double sum = 0;
+        foreach (var (workId, old, @new) in changes)
+            if (stageOf.TryGetValue(workId, out var s) && s.Works.Count > 0)
+                sum += (@new - old) / (double)s.Works.Count / p.Stages.Count;
+        var stageIds = p.Stages.Select(s => s.Id).ToHashSet();
+        foreach (var (stageId, old, @new) in stageChanges ?? Enumerable.Empty<(int, int, int)>())
+            if (stageIds.Contains(stageId))
+                sum += (@new - old) / (double)p.Stages.Count;
+        return (int)Math.Round(sum, MidpointRounding.AwayFromZero);
+    }
+
+    // 일정 변경 값('yyyy-MM-dd' 또는 작업 일정 'yyyy-MM-dd~yyyy-MM-dd')의 기준일 — 작업은 종료일. '미정'·알 수 없는 값은 null
+    public static DateOnly? ScheduleValueEnd(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var part = value.Contains('~') ? value[(value.LastIndexOf('~') + 1)..] : value;
+        return DateOnly.TryParseExact(part.Trim(), "yyyy-MM-dd", out var d) ? d : null;
+    }
+
+    // 일정 변경 한 건이 밀어낸 달력 일수(새 − 이전, 당기면 음수). 처음 정하거나 지운 값('미정')은 셀 수 없어 null
+    public static int? ScheduleSlip(string? oldValue, string? newValue) =>
+        ScheduleValueEnd(oldValue) is DateOnly o && ScheduleValueEnd(newValue) is DateOnly n ? n.DayNumber - o.DayNumber : null;
+
+    // 지금 단계에 들어온 날: 앞 단계 완료일 중 가장 늦은 날(첫 단계는 착수일) — 리드타임 표본(Reporting.LeadSamples)과 같은 기준점
+    public static DateOnly StageEntered(Project p, Stage current)
+    {
+        var entered = p.StartDate;
+        foreach (var s in Ordered(p))
+        {
+            if (ReferenceEquals(s, current)) break;
+            if (s.CompletedDate is DateOnly d && d > entered) entered = d;
+        }
+        return entered;
+    }
+
+    // 진행 과제의 지금 단계 체류 근무일(들어온 날부터 오늘까지의 근무일 거리 — 리드타임 소요일과 같은 단위). 지금 단계가 없으면 null
+    public static int? StageDwell(Project p, WorkCalendar cal, DateOnly today) =>
+        p.State == ProjectState.Active && CurrentStage(p) is { } cur ? Math.Max(0, cal.Distance(StageEntered(p, cur), today)) : null;
+
+    // 부하 가중치: 담당 1.0, 부담당 0.5
+    public const double OwnerWeight = 1.0;
+    public const double CoOwnerWeight = 0.5;
+
+    // 부하 한 칸: 사람 × 주(월~일). Assigned = 그 주에 걸린 미완료 작업의 근무일 × 가중치 합, Available = 그 주 근무일 수(주말·공휴일 제외).
+    // Ratio = Assigned / Available (근무일이 없는 주는 0). 100% 를 넘으면 과부하
+    public record LoadCell(DateOnly Week, double Assigned, int Available)
+    {
+        public double Ratio => Available == 0 ? 0 : Assigned / Available;
+        public bool Over => Ratio > 1.0 + 1e-9;
+    }
+
+    // 배정 하나: 사람, 가중치, 그 작업이 걸린 기간(예상 일정 — 늦어진 작업은 오늘 이후로 밀린 기간)
+    public record LoadAssignment(int UserId, double Weight, DateOnly Start, DateOnly End);
+
+    // 사람 × 주 부하. weekStart 는 첫 주의 월요일, weeks 주. 기간 중 근무일만 센다(WorkCalendar) — 공휴일이 낀 주는 가용일도 줄어든다
+    public static Dictionary<int, List<LoadCell>> Load(IEnumerable<LoadAssignment> assignments, DateOnly weekStart, int weeks, WorkCalendar cal)
+    {
+        var avail = Enumerable.Range(0, weeks).Select(i => cal.WorkingDays(weekStart.AddDays(7 * i), weekStart.AddDays(7 * i + 6))).ToArray();
+        var sums = new Dictionary<int, double[]>();
+        var end = weekStart.AddDays(7 * weeks - 1);
+        foreach (var a in assignments)
+        {
+            if (a.End < weekStart || a.Start > end || a.End < a.Start) continue;
+            if (!sums.TryGetValue(a.UserId, out var row)) sums[a.UserId] = row = new double[weeks];
+            for (var i = 0; i < weeks; i++)
+            {
+                var from = weekStart.AddDays(7 * i);
+                var to = from.AddDays(6);
+                var s = a.Start > from ? a.Start : from;
+                var e = a.End < to ? a.End : to;
+                if (e >= s) row[i] += cal.WorkingDays(s, e) * a.Weight;
+            }
+        }
+        return sums.ToDictionary(kv => kv.Key,
+            kv => kv.Value.Select((v, i) => new LoadCell(weekStart.AddDays(7 * i), Math.Round(v, 1), avail[i])).ToList());
+    }
+
+    // 과제의 부하 배정: 진행 과제의 열린 작업(IsOpen)마다 담당·부담당. 기간은 오늘 기준 예상 일정(ForwardPass)이다 —
+    // 기한이 지난 미완료 작업은 오늘부터 남은 기간으로 잡혀 지난 주에 묻히지 않는다
+    public static IEnumerable<LoadAssignment> LoadAssignments(Project p, WorkCalendar cal, DateOnly today,
+        IReadOnlyDictionary<WorkItem, Expected>? expected = null)
+    {
+        if (p.State != ProjectState.Active) yield break;
+        expected ??= ForwardPass(p, cal, today);
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works.Where(w => IsOpen(w, s)))
+            {
+                var (start, end) = expected.TryGetValue(w, out var e) ? (e.Start, e.End) : (w.PlanStart, w.PlanEnd);
+                if (start < today) start = today;           // 이미 지난 날의 몫은 다시 배정하지 않는다
+                if (end < start) end = start;
+                if (w.OwnerId is int o) yield return new LoadAssignment(o, OwnerWeight, start, end);
+                if (w.CoOwnerId is int c && c != w.OwnerId) yield return new LoadAssignment(c, CoOwnerWeight, start, end);
+            }
+    }
+
+    // 보고 기간 미달: 목표일(작업은 목표 종료일)이 기간 [from, to] 안이고 기준일까지 지났는데 끝나지 않았다(기준일 판정 — DoneBy).
+    // 이번 기간(asOf = 오늘)이면 오늘이 목표인 것은 아직 미달이 아니다. 단계가 끝났으면 그 작업은 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static bool MissedIn(DateOnly? due, DateOnly? done, DateOnly? stageDone, DateOnly from, DateOnly to, DateOnly asOf, DateOnly today) =>
+        due is DateOnly d && d >= from && d <= to && (asOf >= today ? d < today : d <= asOf)
+        && !DoneBy(done, asOf, today) && !DoneBy(stageDone, asOf, today);
+
+    // ── 사용자 정리·사용 현황 (S12b) ──
+
+    // 사용 현황의 기준 기간(일): 최근 접속자·갱신 건수·조용한 진행 과제
+    public const int UsageDays = 30;
+
+    // 담당 이관 대상인 '진행 중' 과제: 진행·보류(아직 열린 과제 — 보류는 다시 시작한다). 완료·중단 과제의 담당은 기록으로 남긴다
+    public static bool IsOpenProject(ProjectState state) => state is ProjectState.Active or ProjectState.Hold;
+
+    // 조용한 과제: 마지막 변경(UpdatedAt)이 days 일 넘게 지남 (정체 IsStale 과 같은 셈, 기간만 다르다)
+    public static bool IsQuiet(DateTime updatedAtUtc, DateTime utcNow, int days) => utcNow - updatedAtUtc > TimeSpan.FromDays(days);
+
+    // 사용 현황(관리 > 사용 현황)이 세는 과제: 진행만. 보류 과제는 일부러 멈춘 것이라 '조용한 과제' 비율에 넣지 않는다.
+    // 조직 줄과 사람 줄이 이 하나로 세야 두 숫자의 합이 맞는다
+    public static bool IsUsageProject(ProjectState state) => state == ProjectState.Active;
+
+    // 비율(%) — 분모가 0 이면 0
+    public static int Percent(int part, int whole) => whole <= 0 ? 0 : (int)Math.Round(part * 100.0 / whole, MidpointRounding.AwayFromZero);
 }

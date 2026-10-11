@@ -5,7 +5,8 @@
 //   rows: [{ key, cls, title, sub, side(html), href, height, toggle: {expanded}, data,
 //            bars:  [{ from, to, top, h, cls, label, title, fill, drag: 'move'|'end', anchor: true }],
 //            marks: [{ date, top, cls, title }] }],
-//   links: [{ from: rowKey, to: rowKey, cls }],     // 선행 행의 anchor 막대 끝 → 후행 행의 anchor 막대 시작
+//   links: [{ from: rowKey, to: rowKey, cls, fromSide, toSide }],   // 선행 행의 anchor 막대 → 후행 행의 anchor 막대.
+//          fromSide/toSide: 'start'|'end' (기본 끝 → 시작 = FS. 같이 시작 SS 는 시작 → 시작, 같이 끝 FF 는 끝 → 끝)
 //   today, holidays: [{date, name}], zoom: 'day'|'week'|'month', corner,
 //   onRowClick(row), onToggle(row), onBarDrag(row, bar, {from, to}), keepScroll,
 //   fit: 전체 폭(px) — 인쇄처럼 가로 스크롤 없이 모든 일정을 한 폭에 담아야 할 때. 하루 폭을 배율 값 이하로 줄여 맞춘다
@@ -215,22 +216,33 @@ window.Gantt = (function () {
             top += height;
         });
 
-        // ── 의존선: 선행 막대 끝에서 후행 막대 시작으로 꺾은선 ──
+        // ── 의존선: 선행 막대에서 후행 막대로 꺾은선. 유형에 따라 잇는 쪽이 다르다 ──
         var paths = '';
         (opts.links || []).forEach(function (l) {
             var a = geometry[l.from], b = geometry[l.to];
             if (!a || !b) return;      // 접힌 단계의 작업은 행이 없다
-            var x1 = a.x2, y1 = a.y, x2 = b.x1, y2 = b.y;
+            var y1 = a.y, y2 = b.y;
             var d;
-            if (x2 >= x1 + 14) {
-                d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + y2 + 'H' + (x2 - 1);
+            if (l.fromSide === 'start' && l.toSide !== 'end') {
+                // 같이 시작(SS): 두 막대의 시작 중 앞쪽보다 조금 왼쪽으로 나가 내려온 뒤 후행 시작으로
+                var left = Math.min(a.x1, b.x1) - 8;
+                d = 'M' + a.x1 + ' ' + y1 + 'H' + left + 'V' + y2 + 'H' + (b.x1 - 1);
+            } else if (l.toSide === 'end') {
+                // 같이 끝(FF): 두 막대의 끝 중 뒤쪽보다 조금 오른쪽으로 나가 내려온 뒤 후행 끝으로(화살표는 왼쪽을 향한다)
+                var right = Math.max(a.x2, b.x2) + 8;
+                d = 'M' + a.x2 + ' ' + y1 + 'H' + right + 'V' + y2 + 'H' + (b.x2 + 1);
             } else {
-                // 후행이 선행 끝보다 앞에서 시작하면 행 사이로 돌아 들어간다
-                var mid = y2 > y1 ? a.rowBottom : a.rowTop;
-                d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + mid + 'H' + (x2 - 9) + 'V' + y2 + 'H' + (x2 - 1);
+                var x1 = a.x2, x2 = b.x1;
+                if (x2 >= x1 + 14) {
+                    d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + y2 + 'H' + (x2 - 1);
+                } else {
+                    // 후행이 선행 끝보다 앞에서 시작하면 행 사이로 돌아 들어간다
+                    var mid = y2 > y1 ? a.rowBottom : a.rowTop;
+                    d = 'M' + x1 + ' ' + y1 + 'H' + (x1 + 7) + 'V' + mid + 'H' + (x2 - 9) + 'V' + y2 + 'H' + (x2 - 1);
+                }
             }
             var cls = l.cls || '';
-            paths += '<path class="' + cls + '" d="' + d + '" marker-end="url(#g-arrow' + (cls ? '-' + cls : '') + ')"/>';
+            paths += '<path class="' + cls + '" data-link-type="' + (l.type || 'fs') + '" d="' + d + '" marker-end="url(#g-arrow' + (cls ? '-' + cls : '') + ')"/>';
         });
         if (paths) {
             var svg = el('div', 'g-links');

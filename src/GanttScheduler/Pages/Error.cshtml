@@ -13,11 +13,18 @@
     };
     ViewData["Title"] = code == 404 ? "찾을 수 없음" : "오류";
     ViewData["Bare"] = true;
+    // 서버 오류에는 오류 번호(요청 번호)를 보인다. 같은 번호가 서버 로그(App_Data/logs)에 남아 관리자가 원인을 찾을 수 있다
+    var errorId = code == 0 || code >= 500 ? HttpContext.TraceIdentifier : null;
+    var at = DateTime.UtcNow;
 }
 <section class="welcome">
     <div class="card welcome-card" data-error-code="@(code == 0 ? null : code)">
         <h1>@title</h1>
         <p class="muted">@message</p>
+        @if (errorId != null)
+        {
+            <p class="error-id" id="error-id">오류 번호 <code>@errorId</code> · <time datetime="@at.ToString("yyyy-MM-ddTHH:mm:ssZ")">@KoreaClock.ToKst(at).ToString("yyyy-MM-dd HH:mm") (한국 시간)</time></p>
+        }
         @if (code == 404)
         {
             <a class="btn primary block" href="~/Projects">과제 목록으로 이동</a>

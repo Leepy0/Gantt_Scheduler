@@ -1,0 +1,51 @@
+@page
+@model GanttScheduler.Pages.Projects.ImportModel
+@using GanttScheduler.Services
+@{
+    ViewData["Title"] = "과제 가져오기";
+    ViewData["Nav"] = "projects";
+}
+
+<div class="page-head">
+    <a class="btn icon ghost" asp-page="/Projects/Index" aria-label="과제 목록으로"><svg class="ic"><use href="#i-left" /></svg></a>
+    <h1>과제 가져오기</h1>
+</div>
+
+<div class="import" id="import">
+    <section class="card import-step">
+        <div class="card-head"><h2><span class="step-no">1</span>양식 내려받기</h2></div>
+        <p class="muted">과제 시트에 한 줄에 과제 하나씩 적습니다. 작업 시트(선택)에 과제명·단계명과 함께 작업을 적으면 그 작업도 만듭니다.
+            유형·법인·위치·사용자 이름은 양식의 '목록' 시트에 있고, 적는 방법은 '안내' 시트에 있습니다.</p>
+        <div class="form-actions start">
+            <a class="btn" id="import-template" asp-page-handler="Template"><svg class="ic"><use href="#i-download" /></svg>양식 내려받기 (.xlsx)</a>
+        </div>
+    </section>
+
+    <section class="card import-step">
+        <div class="card-head"><h2><span class="step-no">2</span>파일 올리기</h2></div>
+        <form id="import-form" class="form" novalidate>
+            <div class="field" data-field="file">
+                <span class="label">적어 넣은 양식 파일</span>
+                <input type="file" name="file" id="import-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <span class="hint">.xlsx, @Model.MaxMB MB 까지. 한 번에 과제 @ProjectService.MaxImportProjects 줄, 작업 @ProjectService.MaxImportWorks 줄까지 가져올 수 있습니다. 올리면 먼저 확인만 하고 등록하지 않습니다.</span>
+            </div>
+            <p class="form-error" role="alert" id="import-error" hidden></p>
+            <div class="form-actions start">
+                <button type="submit" class="btn primary" id="import-check"><svg class="ic"><use href="#i-search" /></svg>확인</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card import-step" id="import-result" hidden>
+        <div class="card-head"><h2><span class="step-no">3</span>확인 결과</h2></div>
+        <div id="import-preview"></div>
+        <div class="form-actions start" id="import-actions" hidden>
+            <label class="check" id="import-confirm-row" hidden><input type="checkbox" id="import-confirm" /><span id="import-confirm-label"></span></label>
+            <button type="button" class="btn primary" id="import-run"><svg class="ic"><use href="#i-upload" /></svg>가져오기</button>
+        </div>
+    </section>
+</div>
+
+@section Scripts {
+    <script src="~/js/import.js" asp-append-version="true"></script>
+}

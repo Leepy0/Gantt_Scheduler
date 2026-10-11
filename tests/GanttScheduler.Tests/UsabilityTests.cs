@@ -186,8 +186,8 @@ public class UsabilityServiceTests : IClassFixture<TestDb>
         var dash = await s.Dashboard.BuildAsync(false);
         var all = await s.Projects.AllAsync();
         var expected = all.Where(p => p.State == ProjectState.Active)
-            .SelectMany(p => p.Stages).Count(st => st.CompletedDate == null && st.TargetDate != null
-                && Rules.IsSoon(Rules.DaysLeft(st.TargetDate.Value, Today)));
+            .Count(p => p.Stages.Any(st => st.CompletedDate == null && st.TargetDate != null
+                && Rules.IsSoon(Rules.DaysLeft(st.TargetDate.Value, Today))));
         Assert.Equal(expected, dash.Kpi.DueThisWeek);
         Assert.All(dash.Upcoming, u => Assert.Equal(u.Soon ? "warn" : "", u.Chip.Cls));
     }

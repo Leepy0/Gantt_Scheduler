@@ -93,7 +93,7 @@ public class ServiceTests : IClassFixture<TestDb>
         var changes = p.Activities!.Where(a => a.Type == "targetChanged").ToList();
         Assert.Equal(3, changes.Count);
         Assert.All(changes, a => Assert.Equal("자료 보완", a.Reason));
-        Assert.Equal(3, p.TargetChanges);
+        Assert.Equal(1, p.TargetChanges);         // 연쇄 이동은 한 번의 결정 — 행 3개(같은 BatchId)를 1회로 센다
 
         using var check = _db.NewScope();
         var batches = await check.Db.Activities.Where(a => a.ProjectId == id && a.Type == ActivityType.TargetChanged).Select(a => a.BatchId).ToListAsync();
@@ -272,7 +272,10 @@ public class ServiceTests : IClassFixture<TestDb>
         Assert.Equal(2, Assert.Single(p.Equipments!).Quantity);
 
         using (var s = _db.NewScope())
+        {
             await s.Projects.DeleteAsync(id);
+            await s.Projects.PurgeAsync(id);
+        }
         using (var s = _db.NewScope())
         {
             Assert.Null(await s.Projects.ViewAsync(id));
@@ -311,7 +314,7 @@ public class ServiceTests : IClassFixture<TestDb>
         var corps = (await s.Masters.ListAsync("location")).Where(n => n.Level == 1).Select(n => n.Name).ToList();
         Assert.Equal("인도", corps[^2]);
 
-        await s.Masters.ToggleAsync(new MasterRef("location", 1, india.Id, 0));
+        await s.Masters.ToggleAsync(new MasterRef("location", 1, india.Id, 0, Active: false));
         Assert.False((await s.Masters.ListAsync("location")).Single(n => n.Id == india.Id && n.Level == 1).Active);
 
         // 공휴일은 날짜가 겹치면 거절

@@ -14,6 +14,8 @@ public record PreviousView(string Version, DateTime At, bool CanRollback, string
 public record UpdateSettings(bool AutoCheck, bool AutoApply, int WindowFrom, int WindowTo, int IdleMinutes);
 // 적용했지만 시작되지 않은 버전. Retry: 다시 시도할 방법 (apply = 받아 둔 파일로 적용, download = 다시 받기, null = 없음)
 public record StartFailureView(string Version, string From, string Error, string? Detail, bool RolledBack, DateTime At, string? Retry);
+// 업데이트 화면의 진단 정보 (관리자). ApplyLog: apply.log 끝부분, StartupError: startup-error.log, State: 상태 요약, Logs: 최근 업데이트·백업 경고
+public record UpdateDiagnostics(string? ApplyLog, long ApplyLogSize, string? StartupError, DateTime? StartupErrorAt, string State, List<LogEntry> Logs);
 
 public record UpdateStatus(
     string Version, string Build, string Channel, string ChannelName, string? Commit, string Host, string Source, string? BrowserPage,
@@ -66,6 +68,8 @@ public class UpdateService
     private readonly ILogger<UpdateService> _log;
     private readonly bool _sqlite;
     private readonly int _verifySeconds;
+    // 구조가 바뀌는 업데이트를 적용하기 전에 DB 를 백업한다 (Backup:BeforeSchemaUpdate). 없으면(시험) 백업하지 않는다
+    private readonly BackupService? _backup;
     // 방금 적용한 받아 둔 폴더. 이 버전이 요청을 받기 시작(ApplicationStarted)할 때까지 지우지 않는다 —
     // 그 전에 죽으면 도우미가 되돌리면서 상태를 교체 전으로 돌려(Staged = 이 폴더) '다시 시도'가 이 폴더를 쓰기 때문이다.
     // 교체 도우미도 이 폴더에서 돌며 시작을 기다린다(Windows 에서는 실행 파일이 잠겨 반쪽만 지워진다)
@@ -81,8 +85,9 @@ public class UpdateService
     private string? _errorFix;
 
     public UpdateService(AppBuild build, UpdatePaths paths, UpdateSource source, ActivityTracker activity,
-        IHostApplicationLifetime lifetime, ILogger<UpdateService> log, IConfiguration cfg)
+        IHostApplicationLifetime lifetime, ILogger<UpdateService> log, IConfiguration cfg, BackupService? backup = null)
     {
+        _backup = backup;
         _build = build;
         _paths = paths;
         _source = source;
@@ -92,6 +97,7 @@ public class UpdateService
         _sqlite = !string.Equals(cfg["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
         // 교체 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 도우미가 이전 버전으로 되돌린다 (0 이면 확인하지 않는다)
         _verifySeconds = Math.Clamp(cfg.GetValue("Update:VerifySeconds", 120), 0, 1800);
+        CheckEvery = TimeSpan.FromHours(Math.Clamp(cfg.GetValue("Update:CheckHours", 6.0), 0.01, 168));
         _state = Load();
         // 요청을 받기 시작했다는 표시를 남긴다. 교체 도우미가 이것으로 새 버전이 제대로 떴는지 안다
         lifetime.ApplicationStarted.Register(MarkStarted);
@@ -100,6 +106,37 @@ public class UpdateService
     public AppBuild Build => _build;
     public bool Applying { get { lock (_gate) return _phase == "applying"; } }
     public bool SourceConfigured => _source.Configured;
+    // 새 버전 확인이 실패하기 시작한 시각 (계속 실패하면 관리자 칩으로 알린다 — OpsAlerts)
+    public DateTime? CheckFailedSince { get { lock (_gate) return _state.CheckFailedSince; } }
+    // 자동 확인 주기 (Update:CheckHours) — 주기 작업(UpdateWorker)과 '계속 실패' 판단이 같은 값을 쓴다
+    public TimeSpan CheckEvery { get; }
+
+    // 관리자 칩(OpsAlerts)용: 자동 확인이 실제로 돌고 있는데 그 확인이 after 넘게 계속 실패하는가.
+    // 자동 확인을 껐거나(인터넷에 못 나가는 사내 서버) 스스로 확인하지 않는 빌드면 지난 실패 한 번이 칩으로 영영 남지 않게 하고,
+    // 마지막 확인도 최근(주기의 두 배 + 1시간 안)이어야 한다 — 확인이 멈춘 뒤의 옛 실패를 '계속 실패'로 보지 않는다
+    public bool CheckFailing(DateTime utcNow, TimeSpan after)
+    {
+        if (!_source.Configured || !_build.SelfUpdating) return false;
+        lock (_gate)
+        {
+            var s = _state;
+            return s.AutoCheck && s.CheckError != null
+                && s.CheckedAt is { } at && utcNow - at <= CheckEvery * 2 + TimeSpan.FromHours(1)
+                && s.CheckFailedSince is { } since && utcNow - since > after;
+        }
+    }
+
+    // 관리자 칩(OpsAlerts)용: 시작되지 않은 버전과 마지막 적용 결과. Status() 는 폴더 쓰기 시험을 하므로 화면마다 부르지 않는다.
+    // 시작 실패 안내를 닫았으면 그때까지의 실패 이력(되돌린 뒤 남는 실패 기록)은 빼고 준다 — 닫은 문제를 다른 칩으로 다시 알리지 않게
+    public (StartFailure? StartFailure, UpdateLog? Last) Problems()
+    {
+        lock (_gate)
+        {
+            var last = _state.History.OrderByDescending(h => h.At).FirstOrDefault();
+            if (last is { Ok: false } && _state.FailureDismissedAt is { } dismissed && last.At <= dismissed) last = null;
+            return (_state.StartFailure, last);
+        }
+    }
 
     // IIS 아래에서 돌고 있는지 (ASP.NET Core 모듈이 넣어 주는 환경 변수로 판단)
     public static bool UnderIis =>
@@ -119,8 +156,11 @@ public class UpdateService
             if (s.Previous != null && Directory.Exists(s.Previous.Dir))
             {
                 var same = s.Previous.Schema == _build.Schema;
+                // 적용 전에 만든 백업이 있으면 그 이름을 알려 준다 (복원 절차: docs/OPERATIONS.md)
+                var backup = s.History.LastOrDefault(h => h.Kind == "apply" && h.Ok && h.To == _build.VersionText)?.Backup;
                 prev = new PreviousView(s.Previous.Version, s.Previous.At, same && ok,
-                    !same ? "이 버전에서 DB 구조가 바뀌어 프로그램만 되돌릴 수 없습니다. 되돌리려면 적용 전 DB 백업을 복원해야 합니다." : reason);
+                    !same ? "이 버전에서 DB 구조가 바뀌어 프로그램만 되돌릴 수 없습니다. 되돌리려면 적용 전 DB 백업을 복원해야 합니다."
+                            + (backup == null ? "" : $" 복원할 백업: {backup}") : reason);
             }
             return new UpdateStatus(
                 _build.VersionText, _build.Id, _build.Channel, _build.ChannelName, _build.Commit,
@@ -210,12 +250,21 @@ public class UpdateService
                     s.CheckFix = latest == null
                         ? "받아 오는 곳에 정식 릴리스가 없거나, 로그인해야 볼 수 있는 곳(비공개 레포)입니다. 배포 파일(zip)을 직접 올려 적용하거나, 설정 Update:Source 를 확인하세요."
                         : null;
+                    // 확인 자체는 됐다(릴리스가 없더라도 응답은 왔다) — 연속 실패 알림을 끈다
+                    s.LastCheckOkAt = s.CheckedAt;
+                    s.CheckFailedSince = null;
                 });
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 var (message, fix) = Explain(ex);
-                Change(s => { s.CheckedAt = DateTime.UtcNow; s.CheckError = message; s.CheckFix = fix; });
+                Change(s =>
+                {
+                    s.CheckedAt = DateTime.UtcNow;
+                    s.CheckError = message;
+                    s.CheckFix = fix;
+                    s.CheckFailedSince ??= s.CheckedAt;   // 계속 실패하면 관리자 칩으로 알린다 (OpsAlerts)
+                });
                 _log.LogWarning("업데이트 확인 실패: {Message}", ex.Message);
             }
         }
@@ -390,6 +439,8 @@ public class UpdateService
             throw new RuleException("대기 시간은 5~720분 사이로 입력해 주세요.", "idleMinutes");
         Change(s =>
         {
+            // 자동 확인을 켜고 끌 때 '계속 실패'를 새로 센다 — 끈 동안의 수동 확인 실패가 다시 켠 직후 칩으로 뜨지 않게
+            if (s.AutoCheck != input.AutoCheck) s.CheckFailedSince = null;
             s.AutoCheck = input.AutoCheck;
             s.AutoApply = input.AutoApply;
             s.WindowFrom = input.WindowFrom;
@@ -411,7 +462,60 @@ public class UpdateService
                 Save();
                 throw new UpdateException($"받아 둔 업데이트 파일이 없어졌습니다({missing}).", "새 버전을 다시 받아 주세요.");
             }
+            // DB 구조가 바뀌는 업데이트는 적용 뒤 프로그램만 되돌릴 수 없다 — 먼저 DB 를 백업하고, 실패하면 적용하지 않는다.
+            // 백업은 몇 분 걸릴 수 있어 요청과 떼어 돌리고(단계 backing-up), 끝나면 이어서 교체를 시작한다
+            if (_backup != null && _backup.Options.BeforeSchemaUpdate && SchemaChanged(staged.Schema))
+            {
+                if (_phase != "idle") throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
+                var (ok, reason, fix) = ApplyBlock();
+                if (!ok) throw new UpdateException(reason!, fix!);
+                _phase = "backing-up";
+                _progress = 0;
+                _error = null;
+                _errorFix = null;
+                BackupTask = Task.Run(() => BackupThenApplyAsync(staged, by));
+                return;
+            }
             Launch("apply", staged.Dir, _paths.PreviousDir, staged.Version, staged.Schema, by);
+        }
+    }
+
+    // 적용 전 백업 작업 (시험이 끝나기를 기다릴 수 있게 남겨 둔다)
+    internal Task? BackupTask { get; private set; }
+
+    private async Task BackupThenApplyAsync(StagedUpdate staged, string by)
+    {
+        BackupEntry? entry = null;
+        string? failure = null;
+        try
+        {
+            entry = await _backup!.RunAsync(BackupKinds.Update, by, _lifetime.ApplicationStopping, $"v{_build.VersionText} → v{staged.Version} 적용 전");
+            if (!entry.Ok) failure = entry.Error;
+        }
+        catch (Exception ex) { failure = ex.Message; }
+
+        lock (_gate)
+        {
+            if (_phase != "backing-up") return;   // 서버가 내려가는 중
+            _phase = "idle";
+            if (failure != null)
+            {
+                _error = "적용 전 DB 백업에 실패해 업데이트를 적용하지 않았습니다: " + failure;
+                _errorFix = "백업 경로(Backup:Path)와 쓰기 권한을 확인한 뒤 다시 적용하세요. 다른 방법으로 백업했다면 Backup:BeforeSchemaUpdate 를 false 로 바꾸고 적용할 수 있습니다.";
+                _log.LogWarning("업데이트 v{Version} 적용 중단 — 적용 전 백업 실패: {Error}", staged.Version, failure);
+                return;
+            }
+            try
+            {
+                if (_state.Staged?.Version != staged.Version)
+                    throw new UpdateException("백업하는 동안 받아 둔 업데이트가 바뀌었습니다.", "화면을 새로 고친 뒤 다시 적용해 주세요.");
+                Launch("apply", staged.Dir, _paths.PreviousDir, staged.Version, staged.Schema, by, entry!.Name);
+            }
+            catch (Exception ex)
+            {
+                (_error, _errorFix) = Explain(ex);
+                _log.LogWarning("업데이트 적용 실패: {Message}", ex.Message);
+            }
         }
     }
 
@@ -429,14 +533,14 @@ public class UpdateService
     }
 
     // 도우미(새 버전·이전 버전 폴더의 실행 파일)를 띄우고 서버를 내린다. _gate 안에서 부른다
-    private void Launch(string kind, string fromDir, string backupDir, string toVersion, string? toSchema, string by)
+    private void Launch(string kind, string fromDir, string backupDir, string toVersion, string? toSchema, string by, string? dbBackup = null)
     {
         if (_phase != "idle") throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
         var (ok, reason, fix) = ApplyBlock();
         if (!ok) throw new UpdateException(reason!, fix!);
 
         TryDelete(_paths.ResultPath);
-        _state.Pending = new PendingSwap(kind, _build.VersionText, toVersion, _build.Schema, by, DateTime.UtcNow);
+        _state.Pending = new PendingSwap(kind, _build.VersionText, toVersion, _build.Schema, by, DateTime.UtcNow, dbBackup);
         Save();
 
         var (file, prefix) = Runner(fromDir);
@@ -472,7 +576,7 @@ public class UpdateService
 
         try
         {
-            using var helper = Process.Start(psi) ?? throw new InvalidOperationException("프로세스를 시작하지 못했습니다.");
+            using var helper = StartProcess(psi) ?? throw new InvalidOperationException("프로세스를 시작하지 못했습니다.");
         }
         catch (Exception ex)
         {
@@ -490,6 +594,9 @@ public class UpdateService
             _lifetime.StopApplication();
         });
     }
+
+    // 도우미 프로세스 시작. 시험은 실제로 띄우지 않고 넘긴 인자만 확인하도록 바꿔 끼운다
+    internal Func<ProcessStartInfo, Process?> StartProcess { get; set; } = Process.Start;
 
     // 도우미를 실행할 방법: 폴더에 실행 파일이 있으면 그것, 없으면(런타임 미포함 배포) dotnet 으로 DLL 실행
     private static (string File, string[] Prefix) Runner(string dir)
@@ -577,7 +684,7 @@ public class UpdateService
                 // (교체 뒤 새 버전이 늦게 떠서 도우미가 실패로 적어 두었더라도, 이렇게 떴으면 성공이다)
                 var ok = _build.VersionText == pending.To;
                 var error = ok ? null : result?.Error ?? "교체가 끝나지 않았습니다. App_Data/updates/apply.log 를 확인하세요.";
-                _state.History.Add(new UpdateLog(DateTime.UtcNow, pending.Kind, pending.From, pending.To, pending.By, ok, error));
+                _state.History.Add(new UpdateLog(DateTime.UtcNow, pending.Kind, pending.From, pending.To, pending.By, ok, error, pending.Backup));
                 if (_state.History.Count > 30) _state.History.RemoveRange(0, _state.History.Count - 30);
 
                 if (ok && pending.Kind == "apply")
@@ -639,8 +746,107 @@ public class UpdateService
         }
     }
 
+    // ── 진단 정보 (업데이트 화면, 관리자) ───────────────────────────────
+    // 교체 기록(apply.log) 끝부분, 시작 오류(startup-error.log), 상태 요약. 원인은 서버 파일에만 있어 원격 데스크톱 없이는 볼 수 없었다
+    public const int ApplyLogTail = 60;
+    public string ApplyLogPath => Path.Combine(_paths.DataDir, "apply.log");
+    public string StartupErrorPath => Path.Combine(_paths.AppDir, "App_Data", ServiceInstaller.StartupErrorFile);
+
+    public UpdateDiagnostics Diagnostics(IEnumerable<LogEntry>? recent = null)
+    {
+        var apply = ReadTail(ApplyLogPath, ApplyLogTail);
+        string? startup = null;
+        DateTime? startupAt = null;
+        try
+        {
+            if (File.Exists(StartupErrorPath))
+            {
+                startupAt = File.GetLastWriteTimeUtc(StartupErrorPath);
+                startup = Redact.Secrets(ReadShared(StartupErrorPath, 64 * 1024));
+            }
+        }
+        catch (IOException) { /* 쓰는 중 — 다음에 */ }
+        var logs = (recent ?? Enumerable.Empty<LogEntry>())
+            .Where(e => e.Category.Contains("Update", StringComparison.OrdinalIgnoreCase) || e.Category.Contains("Backup", StringComparison.OrdinalIgnoreCase))
+            .Take(30).ToList();
+        return new UpdateDiagnostics(apply == null ? null : Redact.Secrets(apply), File.Exists(ApplyLogPath) ? new FileInfo(ApplyLogPath).Length : 0,
+            startup, startupAt, StateSummary(), logs);
+    }
+
+    // 내려받기용 텍스트 한 파일 — 관리자가 메일·메신저로 전달하기 쉽게. 연결 문자열의 계정·비밀번호는 가린다
+    public string DiagnosticsText(IEnumerable<LogEntry>? recent = null)
+    {
+        var d = Diagnostics(recent);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"과제 스케줄러 업데이트 진단 정보 — {KoreaClock.ToKst(DateTime.UtcNow):yyyy-MM-dd HH:mm:ss} (한국 시간)");
+        sb.AppendLine().AppendLine("== 상태 요약 ==").AppendLine(d.State);
+        sb.AppendLine().AppendLine($"== 교체 기록 apply.log (끝 {ApplyLogTail}줄) ==").AppendLine(d.ApplyLog ?? "(없음)");
+        sb.AppendLine().AppendLine("== 시작 오류 startup-error.log ==")
+          .AppendLine(d.StartupError == null ? "(없음)" : $"{KoreaClock.ToKst(d.StartupErrorAt!.Value):yyyy-MM-dd HH:mm:ss} 에 기록{Environment.NewLine}{d.StartupError}");
+        sb.AppendLine().AppendLine("== 최근 업데이트·백업 경고 ==");
+        if (d.Logs.Count == 0) sb.AppendLine("(없음)");
+        foreach (var e in d.Logs) sb.AppendLine($"{KoreaClock.ToKst(e.At):yyyy-MM-dd HH:mm:ss} [{e.Level}] {e.Category}: {Redact.Secrets(e.Message)}");
+        return sb.ToString();
+    }
+
+    private string StateSummary()
+    {
+        static string T(DateTime? utc) => utc == null ? "-" : KoreaClock.ToKst(utc.Value).ToString("yyyy-MM-dd HH:mm");
+        lock (_gate)
+        {
+            var s = _state;
+            var lines = new List<string>
+            {
+                $"지금 버전: v{_build.VersionText} (빌드 {_build.Id}, {_build.ChannelName}, DB 구조 {(_build.Schema.Length == 0 ? "-" : _build.Schema)})",
+                $"실행 방식: {(_paths.ServiceName != null ? $"Windows 서비스 ({_paths.ServiceName})" : UnderIis ? "IIS" : "직접 실행")} · 프로그램 폴더 {_paths.AppDir}",
+                $"받아 오는 곳: {_source.Describe} · 서명 검증 {(_source.Key != null ? "켜짐 " + _source.Key.Id : "꺼짐")}",
+                $"지금 단계: {_phase}" + (_error == null ? "" : $" · 마지막 오류 {_error}"),
+                $"마지막 확인: {T(s.CheckedAt)}" + (s.CheckedAt == null ? "" : s.CheckError == null ? " (성공)" : $" (실패: {s.CheckError})")
+                    + $" · 마지막 성공 {T(s.LastCheckOkAt)}" + (s.CheckFailedSince == null ? "" : $" · 실패 시작 {T(s.CheckFailedSince)}"),
+                $"최신 릴리스: {(s.Latest == null ? "-" : $"v{s.Latest.Version} (구조 {s.Latest.Schema ?? "-"}, 서명 {(s.Latest.Signed ? "확인" : "-")})")}",
+                $"받아 둔 버전: {(s.Staged == null ? "-" : $"v{s.Staged.Version} ({T(s.Staged.At)}, {s.Staged.Origin}, {s.Staged.By}, 구조 {s.Staged.Schema ?? "-"})")}",
+                $"이전 버전(되돌리기용): {(s.Previous == null ? "-" : $"v{s.Previous.Version} ({T(s.Previous.At)}, 구조 {s.Previous.Schema})")}",
+                $"진행 중 교체: {(s.Pending == null ? "-" : $"{s.Pending.Kind} v{s.Pending.From} → v{s.Pending.To} ({T(s.Pending.At)}, {s.Pending.By})")}",
+                $"자동 적용 제외(되돌린 버전): {s.SkipAuto ?? "-"}",
+                $"시작 실패: {(s.StartFailure == null ? "-" : $"v{s.StartFailure.Version} ({T(s.StartFailure.At)}, 되돌림 {(s.StartFailure.RolledBack ? "예" : "아니오")}) {s.StartFailure.Error}")}",
+                $"자동 적용: {(s.AutoApply ? $"켜짐 {s.WindowFrom}~{s.WindowTo}시, {s.IdleMinutes}분 무사용" : "꺼짐")} · 자동 확인 {(s.AutoCheck ? "켜짐" : "꺼짐")}",
+                "최근 이력:",
+            };
+            lines.AddRange(s.History.OrderByDescending(h => h.At).Take(10).Select(h =>
+                $"  {T(h.At)} {h.Kind} v{h.From} → v{h.To} {h.By} {(h.Ok ? "성공" : "실패: " + h.Error)}" + (h.Backup == null ? "" : $" (백업 {h.Backup})")));
+            if (s.History.Count == 0) lines.Add("  (없음)");
+            return Redact.Secrets(string.Join(Environment.NewLine, lines));
+        }
+    }
+
+    // 파일 끝 n줄. 큰 파일은 끝부분만 읽는다(도우미가 쓰는 중이어도 읽을 수 있게 공유해서 연다)
+    private static string? ReadTail(string path, int lines)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var text = ReadShared(path, 256 * 1024);
+            var all = text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+            return string.Join(Environment.NewLine, all.Skip(Math.Max(0, all.Length - lines)));
+        }
+        catch (IOException) { return null; }
+    }
+
+    // 파일 끝에서 최대 max 바이트를 읽는다
+    private static string ReadShared(string path, int max)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (fs.Length > max) fs.Seek(-max, SeekOrigin.End);
+        using var r = new StreamReader(fs, System.Text.Encoding.UTF8);
+        return r.ReadToEnd();
+    }
+
     // 시작되지 않은 버전 안내를 닫는다. 그 버전을 자동으로 다시 적용하지 않는 것(SkipAuto)은 그대로 둔다
-    public void DismissFailure() => Change(s => s.StartFailure = null);
+    public void DismissFailure() => Change(s =>
+    {
+        s.StartFailure = null;
+        s.FailureDismissedAt = DateTime.UtcNow;
+    });
 
     // 요청을 받기 시작했을 때(ApplicationStarted) 남기는 표시. 쓰다가 끊겨도 깨진 파일을 읽지 않게 임시 파일에 쓰고 바꿔치기한다
     internal void MarkStarted()
@@ -662,7 +868,8 @@ public class UpdateService
     {
         lock (_gate)
         {
-            if (_phase == "applying") return;   // 서버가 내려가는 중에는 바꾸지 않는다
+            // 서버가 내려가는 중이거나 적용 전 백업 중에는 바꾸지 않는다 (백업이 끝나면 이어서 교체해야 한다)
+            if (_phase is "applying" or "backing-up") return;
             _phase = phase;
             _progress = 0;
             if (phase != "idle") { _error = null; _errorFix = null; }
@@ -766,11 +973,11 @@ public class UpdateWorker : BackgroundService
     private readonly ILogger<UpdateWorker> _log;
     private readonly TimeSpan _every;
 
-    public UpdateWorker(UpdateService updates, IConfiguration cfg, ILogger<UpdateWorker> log)
+    public UpdateWorker(UpdateService updates, ILogger<UpdateWorker> log)
     {
         _updates = updates;
         _log = log;
-        _every = TimeSpan.FromHours(Math.Clamp(cfg.GetValue("Update:CheckHours", 6.0), 0.01, 168));
+        _every = updates.CheckEvery;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)

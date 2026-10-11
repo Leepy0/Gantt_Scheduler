@@ -99,6 +99,14 @@ public class ExcelExporter
             ("실적 시작", 12), ("실적 종료", 12), ("기준선 대비(일)", 13), ("선행 작업", 22), ("메모", 30));
 
         var titles = p.Stages.SelectMany(s => s.Works).ToDictionary(w => w.Id, w => w.Title);
+        // 선행 이름 뒤에 유형·간격 (끝나면 시작·간격 0 은 그대로 이름만 — 예전 양식과 같게)
+        var links = p.Links.GroupBy(l => (l.From, l.To)).ToDictionary(g => g.Key, g => g.First());
+        string Pre(int to, int from)
+        {
+            var name = titles.TryGetValue(from, out var t) ? t : "";
+            if (!links.TryGetValue((from, to), out var l) || (l.Type == "fs" && l.Lag == 0)) return name;
+            return $"{name}({Rules.LinkText(Rules.ParseLinkType(l.Type), l.Lag)})";
+        }
         var r = head + 1;
         foreach (var s in p.Stages)
         {
@@ -133,7 +141,7 @@ public class ExcelExporter
                 Date(ws.Cell(r, 11), w.ActualStart);
                 Date(ws.Cell(r, 12), w.ActualEnd);
                 Slip(ws.Cell(r, 13), w.SlipDays);
-                ws.Cell(r, 14).Value = string.Join(", ", w.Predecessors.Select(id => titles.TryGetValue(id, out var t) ? t : "")) + (w.Critical ? (w.Predecessors.Count > 0 ? " · " : "") + "임계" : "");
+                ws.Cell(r, 14).Value = string.Join(", ", w.Predecessors.Select(id => Pre(w.Id, id))) + (w.Critical ? (w.Predecessors.Count > 0 ? " · " : "") + "임계" : "");
                 ws.Cell(r, 15).Value = w.Note ?? "";
                 r++;
             }
@@ -331,19 +339,24 @@ public class ExcelExporter
     }
 
     // ── 주간 보고 ────────────────────────────────────────────────────────
+    // 화면과 같이: 변동·지연·밀린 항목이 있는 과제는 첫 시트에 한 줄씩, 나머지 무변동 과제는 '변동 없는 과제' 시트 한 장으로 접는다
     public byte[] Weekly(WeeklyReport report)
     {
         using var wb = NewWorkbook();
-        var ws = wb.Worksheets.Add("주간 보고");
-        Title(ws, $"주간 보고 ({report.From:yyyy-MM-dd} ~ {report.To:MM-dd})",
-            $"진행 과제 {report.Active} · 지연 {report.Delayed} · 이번 주 완료 {report.DoneCount}건 · 일정 변경 {report.ChangeCount}건 · 작성일 {report.Today:yyyy-MM-dd}(한국 시간)");
+        // 첫 장: 요약(숫자·전 기간 대비·지연·위험 요약·미달·지연 변화) — 보고서를 열면 먼저 보이는 장
+        SummarySheet(wb, report);
+        var ws = wb.Worksheets.Add("과제별");
+        var asOf = report.Past && report.AsOf != null ? $" · 지연은 {report.AsOf.Value:yyyy-MM-dd} 기준, 진행률·현재 단계는 작성일 기준" : "";
+        Title(ws, $"{report.Title} ({report.From:yyyy-MM-dd} ~ {report.To:MM-dd})" + (report.Scope == null ? "" : $" · {report.Scope}"),
+            $"진행 과제 {report.Active} · 지연 {report.Delayed} · 이번 주 완료 {report.DoneCount}건 · 일정 변경 {report.ChangeCount}건(대상 {report.ChangeTargets}건)" +
+            $" · 상태·기준선 {report.StateCount}건 · 과제 완료 {report.Completed}건 · 작성일 {report.Today:yyyy-MM-dd}(한국 시간){asOf}");
 
         const int head = 4;
-        Header(ws, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 9), ("진행률", 8), ("현재 단계", 16),
-            ("이번 주 실적", 38), ("일정 변경 · 사유", 44), ("진행 내용", 40), ("다음 주 계획", 36));
+        Header(ws, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 12), ("진행률", 8), ("현재 단계", 16),
+            ($"{report.PeriodWord} 실적", 36), ("일정 변경 · 사유", 44), ("상태 · 기준선", 30), ("진행 내용", 38), ("밀린 항목", 32), ($"{report.NextWord} 계획", 34));
 
         var r = head + 1;
-        foreach (var p in report.Projects)
+        foreach (var p in report.Cards())
         {
             ws.Cell(r, 1).Value = p.Title;
             ws.Cell(r, 1).Style.Font.Bold = true;
@@ -351,17 +364,218 @@ public class ExcelExporter
             ws.Cell(r, 3).Value = p.Corporation;
             ws.Cell(r, 4).Value = p.Owner;
             State(ws.Cell(r, 5), p.StateLabel + (p.DelayDays > 0 ? $" D+{p.DelayDays}" : ""));
+            // 예상 지연(조기 경보)으로 카드에 오른 과제는 그 이유를 상태 칸 아래에 적는다(화면의 칩과 같은 글자) — 무변동인데 왜 접히지 않았는지 보이게
+            if (p.RiskChip is { } risk) ws.Cell(r, 5).Value = ws.Cell(r, 5).GetString() + "\n" + risk.Text;
             Percent(ws.Cell(r, 6), p.Progress);
+            if (p.GainText is { } gain) ws.Cell(r, 6).CreateComment().AddText(gain);
             ws.Cell(r, 7).Value = p.CurrentStage == null ? "" : p.CurrentStage + (p.CurrentTarget == null ? "" : $"\n목표 {p.CurrentTarget.Value:MM-dd}");
             ws.Cell(r, 8).Value = Lines(p.Done.Select(x => x.Text));
-            ws.Cell(r, 9).Value = Lines(p.Changes.Select(x => x.Text + (x.Reason == null ? "" : $"\n  사유: {x.Reason}")));
-            ws.Cell(r, 10).Value = Lines(p.Comments.Select(x => $"{x.Text} ({x.User})"));
-            ws.Cell(r, 11).Value = Lines(p.Next);
+            // 결정 하나에 함께 옮겨진 대상은 그 아래 들여 적는다 (결정 수와 대상 수를 함께 읽을 수 있게)
+            ws.Cell(r, 9).Value = Lines(p.Changes.Select(x => x.Text
+                + (x.More == null ? "" : $"\n  함께 옮겨진 {x.More.Count}건: " + string.Join(", ", x.More))
+                + (x.Reason == null ? "" : $"\n  사유: {x.Reason}")));
+            ws.Cell(r, 10).Value = Lines((p.States ?? new()).Select(x => x.Text + (x.Reason == null ? "" : $"\n  사유: {x.Reason}")));
+            ws.Cell(r, 11).Value = Lines(p.Comments.Select(x => $"{x.Text} ({x.User})"));
+            ws.Cell(r, 12).Value = Lines((p.Overdue ?? new()).Select(x => $"{x.Kind} {x.Title} D+{x.LateDays}" + (x.Owner == null ? "" : $" ({x.Owner})")));
+            ws.Cell(r, 13).Value = Lines(p.Next);
             r++;
         }
-        Body(ws, head, r - 1, 11, centered: new[] { 5, 6 }, wrap: new[] { 1, 7, 8, 9, 10, 11 }, top: true);
+        Body(ws, head, r - 1, 13, centered: new[] { 5, 6 }, wrap: new[] { 1, 5, 7, 8, 9, 10, 11, 12, 13 }, top: true);
+        Print(ws, head);
+
+        var folded = report.Folded();
+        if (folded.Count > 0)
+        {
+            var qs = wb.Worksheets.Add("변동 없는 과제");
+            Title(qs, "변동 없는 과제", $"{report.From:yyyy-MM-dd} ~ {report.To:MM-dd} · {report.PeriodWord} 기록된 변동·지연·밀린 항목이 없는 과제 {folded.Count}건");
+            Header(qs, head, ("과제", 30), ("유형", 12), ("법인", 9), ("담당", 9), ("상태", 9), ("진행률", 8), ("현재 단계", 16), ($"{report.NextWord} 계획", 40));
+            var q = head + 1;
+            foreach (var p in folded)
+            {
+                qs.Cell(q, 1).Value = p.Title;
+                qs.Cell(q, 2).Value = p.Category;
+                qs.Cell(q, 3).Value = p.Corporation;
+                qs.Cell(q, 4).Value = p.Owner;
+                State(qs.Cell(q, 5), p.StateLabel);
+                Percent(qs.Cell(q, 6), p.Progress);
+                qs.Cell(q, 7).Value = p.CurrentStage == null ? "" : p.CurrentStage + (p.CurrentTarget == null ? "" : $" ({p.CurrentTarget.Value:MM-dd})");
+                qs.Cell(q, 8).Value = Lines(p.Next);
+                q++;
+            }
+            Body(qs, head, q - 1, 8, centered: new[] { 5, 6 }, wrap: new[] { 1, 8 }, top: true);
+            Print(qs, head);
+        }
+        return Save(wb);
+    }
+
+    // ── 가져오기 양식 ─────────────────────────────────────────────────────
+    // 과제·작업 시트는 1행이 머리글이고 2행부터 적는다(ProjectImporter 가 머리글 이름으로 열을 찾는다).
+    // 단계 목표일은 유형마다 단계가 달라 고정 열 대신 '단계명=날짜; 단계명=날짜' 한 칸에 적는다(유형별 시트보다 틀릴 곳이 적다)
+    public byte[] ImportTemplate(ImportLists lists)
+    {
+        const int rows = 300;     // 날짜 서식·목록 고르기를 미리 걸어 두는 줄 수
+        using var wb = NewWorkbook();
+        var c = ProjectService.ImportColumns.Project;
+        var ps = wb.Worksheets.Add(ProjectService.ImportColumns.ProjectSheet);
+        Header(ps, 1, (c[0], 34), (c[1], 14), (c[2], 12), (c[3], 22), (c[4], 10), (c[5], 12), (c[6], 14), (c[7], 30), (c[8], 46));
+        ps.Range(2, 6, rows + 1, 6).Style.DateFormat.Format = "yyyy-mm-dd";
+        ps.Range(2, 1, rows + 1, c.Length).Style.NumberFormat.Format = "@";
+        ps.Range(2, 6, rows + 1, 6).Style.NumberFormat.Format = "yyyy-mm-dd";
+
+        var w = ProjectService.ImportColumns.Work;
+        var ws = wb.Worksheets.Add(ProjectService.ImportColumns.WorkSheet);
+        Header(ws, 1, (w[0], 34), (w[1], 12), (w[2], 30), (w[3], 10), (w[4], 12), (w[5], 12), (w[6], 24));
+        ws.Range(2, 1, rows * 5 + 1, w.Length).Style.NumberFormat.Format = "@";
+        ws.Range(2, 5, rows * 5 + 1, 6).Style.NumberFormat.Format = "yyyy-mm-dd";
+
+        // 목록(참고용): 유형과 단계, 법인, 법인 아래 위치 경로, 사용자
+        var ls = wb.Worksheets.Add(ProjectService.ImportColumns.ListSheet);
+        Header(ls, 1, ("유형", 14), ("단계 (순서대로)", 50), ("", 2), ("법인", 12), ("", 2), ("법인", 12), ("위치 (법인 아래 경로)", 30), ("", 2), ("사용자", 14));
+        for (var i = 0; i < lists.Categories.Count; i++)
+        {
+            ls.Cell(i + 2, 1).Value = lists.Categories[i].Name;
+            ls.Cell(i + 2, 2).Value = string.Join(", ", lists.Categories[i].Stages);
+        }
+        var corps = lists.Locations.Select(l => l.Corporation).Distinct().ToList();
+        for (var i = 0; i < corps.Count; i++) ls.Cell(i + 2, 4).Value = corps[i];
+        for (var i = 0; i < lists.Locations.Count; i++)
+        {
+            ls.Cell(i + 2, 6).Value = lists.Locations[i].Corporation;
+            ls.Cell(i + 2, 7).Value = lists.Locations[i].Path;
+        }
+        for (var i = 0; i < lists.Users.Count; i++) ls.Cell(i + 2, 9).Value = lists.Users[i];
+        // 유형·법인 칸은 목록에서 고르게 한다(오타 방지). 목록이 비어 있으면 걸지 않는다
+        if (lists.Categories.Count > 0)
+            ps.Range(2, 2, rows + 1, 2).CreateDataValidation().List(ls.Range(2, 1, lists.Categories.Count + 1, 1), true);
+        if (corps.Count > 0)
+            ps.Range(2, 3, rows + 1, 3).CreateDataValidation().List(ls.Range(2, 4, corps.Count + 1, 4), true);
+
+        var guide = wb.Worksheets.Add("안내");
+        guide.ShowGridLines = false;
+        guide.Column(1).Width = 16;
+        guide.Column(2).Width = 100;
+        var lines = new (string Key, string Text)[]
+        {
+            ("과제 시트", "한 줄에 과제 하나. 1행 머리글은 지우거나 바꾸지 마세요. 과제명·유형·법인·착수일은 꼭 적습니다."),
+            ("유형", "'목록' 시트의 유형 이름 (칸을 누르면 고를 수 있습니다)."),
+            ("법인 · 위치", "법인 이름과, 그 아래 위치를 '제품군>라인>층' 처럼 > 로 이어 적습니다. 위치를 비우면 법인 전체입니다."),
+            ("담당", "사용자 이름. 비우면 올린 사람입니다. 목록에 없는 이름은 가져올 때 '새로 만들 담당자'로 확인을 받습니다."),
+            ("착수일 · 날짜", "2026-10-12, 2026.10.12, 2026/10/12, 10/12(올해) 모두 됩니다. 날짜 서식 칸이면 그대로 읽습니다."),
+            ("단계 목표일", "'단계명=날짜; 단계명=날짜' 처럼 한 칸에 적습니다. 예) 검토=2026-11-02; 품의=2026-11-16. 적지 않은 단계는 목표일 미정입니다."),
+            ("작업 시트", "선택. 과제명(과제 시트와 같게)·단계명·작업명·담당·목표 시작·목표 종료·선행 작업명. 종료를 비우면 하루짜리 작업입니다."),
+            ("선행 작업명", "같은 과제의 작업 이름(끝나면 시작). 여러 개는 ; 로 나눕니다. 선행이 끝나기 전에 시작하면 오류로 알려 줍니다."),
+            ("템플릿 작업", "작업 시트에 그 과제의 줄이 없으면 유형의 템플릿 작업을 만듭니다. 줄이 있으면 그 줄만으로 만듭니다."),
+            ("가져오기", "올리면 먼저 미리보기로 행·열마다 문제를 보여 줍니다. 문제가 하나라도 있으면 아무것도 등록하지 않습니다. " +
+                         $"한 번에 과제 {ProjectService.MaxImportProjects}줄, 작업 {ProjectService.MaxImportWorks}줄까지."),
+        };
+        guide.Cell(1, 1).Value = "과제 가져오기 양식";
+        guide.Cell(1, 1).Style.Font.Bold = true;
+        guide.Cell(1, 1).Style.Font.FontSize = 16;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            guide.Cell(i + 3, 1).Value = lines[i].Key;
+            guide.Cell(i + 3, 1).Style.Font.Bold = true;
+            guide.Cell(i + 3, 2).Value = lines[i].Text;
+            guide.Cell(i + 3, 2).Style.Alignment.WrapText = true;
+        }
+        ps.SetTabActive();
+        return Save(wb);
+    }
+
+    // 변경 이력: 화면의 지금 조건(filterText) 그대로. total 이 행 수보다 많으면(상한) 제목 줄에 밝힌다
+    public byte[] History(List<HistoryRow> rows, string filterText, int total)
+    {
+        using var wb = NewWorkbook();
+        var ws = wb.Worksheets.Add("변경 이력");
+        Title(ws, "변경 이력", filterText + $" · {rows.Count}건" + (total > rows.Count ? $" (전체 {total}건 중 앞의 {rows.Count}건)" : "") + " · 시각은 한국 시간");
+        const int head = 4;
+        Header(ws, head, ("시각", 17), ("사용자", 10), ("과제", 30), ("구분", 10), ("내용", 60), ("사유", 40));
+        var kinds = Reporting.Kinds.ToDictionary(k => k.Key, k => k.Label);
+        var r = head + 1;
+        foreach (var x in rows)
+        {
+            ws.Cell(r, 1).Value = KoreaClock.ToKst(x.At).ToString("yyyy-MM-dd HH:mm");
+            ws.Cell(r, 2).Value = x.User;
+            ws.Cell(r, 3).Value = x.Project;
+            ws.Cell(r, 4).Value = kinds.GetValueOrDefault(x.Kind, x.Kind);
+            ws.Cell(r, 5).Value = x.Text;
+            ws.Cell(r, 6).Value = x.Reason ?? "";
+            r++;
+        }
+        Body(ws, head, r - 1, 6, centered: new[] { 1, 4 }, wrap: new[] { 3, 5, 6 }, top: true);
         Print(ws, head);
         return Save(wb);
+    }
+
+    // 보고 첫 장: 숫자(직전 기간 대비), 지연·위험 요약, 기간 미달, 지연 변화. 표마다 머리글만 칠하고 자동 필터는 걸지 않는다(한 장에 표가 여럿)
+    private static void SummarySheet(XLWorkbook wb, WeeklyReport report)
+    {
+        var ws = wb.Worksheets.Add("요약");
+        Title(ws, $"{report.Title} 요약 ({report.From:yyyy-MM-dd} ~ {report.To:yyyy-MM-dd})",
+            (report.Scope ?? "전체") + $" · 작성일 {report.Today:yyyy-MM-dd}(한국 시간)" +
+            (report.Past && report.AsOf != null ? $" · 지연은 {report.AsOf.Value:yyyy-MM-dd} 기준" : ""));
+        static string D(int? v) => v == null ? "" : $" ({(v > 0 ? "+" : v == 0 ? "±" : "")}{v})";
+        var row = 4;
+        Pair(ws, row, 1, "진행 과제", report.Active + D(report.ActiveDelta));
+        Pair(ws, row, 3, "지연", report.Delayed + D(report.DelayedDelta));
+        Pair(ws, row, 5, $"{report.PeriodWord} 완료", report.DoneCount.ToString());
+        row++;
+        Pair(ws, row, 1, "일정 변경", $"{report.ChangeCount} (대상 {report.ChangeTargets})");
+        Pair(ws, row, 3, "상태·기준선", report.StateCount.ToString());
+        Pair(ws, row, 5, "과제 완료", report.Completed.ToString());
+        if (report.ActiveDelta != null)
+        {
+            row++;
+            ws.Cell(row, 1).Value = $"괄호는 {report.PrevWord} (직전 기간 끝의 스냅샷 기준)";
+            ws.Cell(row, 1).Style.Font.FontColor = Muted;
+        }
+        foreach (var (col, width) in new[] { (1, 30.0), (2, 14.0), (3, 14.0), (4, 40.0), (5, 12.0), (6, 12.0) }) ws.Column(col).Width = width;
+
+        void Table(string title, string[] heads, IEnumerable<string[]> rows)
+        {
+            row += 2;
+            ws.Cell(row, 1).Value = title;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 1).Style.Font.FontSize = 12;
+            row++;
+            for (var i = 0; i < heads.Length; i++) ws.Cell(row, i + 1).Value = heads[i];
+            var h = ws.Range(row, 1, row, heads.Length);
+            h.Style.Font.Bold = true;
+            h.Style.Font.FontColor = XLColor.White;
+            h.Style.Fill.BackgroundColor = Accent;
+            var first = row + 1;
+            foreach (var r in rows)
+            {
+                row++;
+                for (var i = 0; i < r.Length; i++) ws.Cell(row, i + 1).Value = r[i];
+            }
+            if (row < first)
+            {
+                row++;
+                ws.Cell(row, 1).Value = "없음";
+                ws.Cell(row, 1).Style.Font.FontColor = Muted;
+            }
+            var all = ws.Range(first - 1, 1, row, heads.Length);
+            all.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            all.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            all.Style.Border.OutsideBorderColor = Line;
+            all.Style.Border.InsideBorderColor = Line;
+            all.Style.Alignment.WrapText = true;
+        }
+
+        Table("지연·위험 요약", new[] { "과제", "단계", "상태", "최근 사유", "담당" },
+            (report.DelaySummary ?? new()).Select(x => new[] { x.Project, x.Stage ?? "", x.Chip.Text, x.Reason ?? "", x.Owner }));
+        Table($"{report.PeriodWord} 미달", new[] { "과제", "구분", "단계·작업", "목표", "담당" },
+            (report.Missed ?? new()).Select(m => new[] { m.Project, m.Kind, m.Title, m.Due.ToString("yyyy-MM-dd"), m.Owner ?? "" }));
+        if (report.NewDelayed != null && report.Resolved != null)
+            Table($"지연 변화 ({report.PrevWord})", new[] { "과제", "변화", "지연 일수" },
+                report.NewDelayed.Select(f => new[] { f.Project, "새로 지연", $"D+{f.DelayDays}" })
+                    .Concat(report.Resolved.Select(f => new[] { f.Project, "지연 해소", $"직전 D+{f.DelayDays}" })));
+        var gains = report.Projects.Where(p => p.ProgressGain != 0).OrderByDescending(p => p.ProgressGain).ToList();
+        if (gains.Count > 0)
+            Table("과제별 진척", new[] { "과제", "진척", "진행률" }, gains.Select(p => new[] { p.Title, p.GainText!, p.Progress + "%" }));
+        ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+        ws.PageSetup.FitToPages(1, 0);
     }
 
     private static string Lines(IEnumerable<string> items) => string.Join("\n", items.Select(x => "· " + x));
@@ -479,11 +693,13 @@ public class ExcelExporter
         cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
     }
 
-    // 기준선 대비 일수: 밀리면 빨강(+n), 당겨지면 초록(-n)
+    // 기준선 대비 일수: 밀리면 빨강(+n), 당겨지면 초록(-n). 글자가 아니라 숫자로 넣고 표시 형식으로 부호를 붙인다 —
+    // 글자('+3')면 정렬·필터가 사전순이 되고 합계를 낼 수 없다
     private static void Slip(IXLCell cell, int? days)
     {
         if (days == null) return;
-        cell.Value = Signed(days.Value);
+        cell.Value = days.Value;
+        cell.Style.NumberFormat.Format = "+0;-0;0";
         if (days.Value > 0) cell.Style.Font.FontColor = Alarm;
         else if (days.Value < 0) cell.Style.Font.FontColor = Ok;
     }

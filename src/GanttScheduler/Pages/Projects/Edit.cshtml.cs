@@ -30,6 +30,14 @@ public class EditModel : PageModel
         public string? Note { get; set; }
     }
 
+    // 등록 화면의 단계 목표일 한 줄. Kept: 사람이 고친 값(초안을 다시 계산할 때 그대로 둔다 — 오류로 다시 그린 화면에서도 지킨다)
+    public class StageTargetRow
+    {
+        public int TemplateId { get; set; }
+        public DateOnly? TargetDate { get; set; }
+        public bool Kept { get; set; }
+    }
+
     public class FormModel
     {
         public string? Title { get; set; }
@@ -43,6 +51,8 @@ public class EditModel : PageModel
         // 화면을 연 시점의 값(JSON). 다른 사람이 먼저 저장해 충돌했을 때 '그 사람이 바꾼 항목'만 골라 보여 주는 데만 쓴다
         public string? Base { get; set; }
         public List<ItemRow> Items { get; set; } = new();
+        public List<StageTargetRow> StageTargets { get; set; } = new();   // 등록할 때만 (수정은 상세의 단계 일정 표)
+        public bool TemplateWorks { get; set; } = true;                   // 등록할 때 유형 템플릿 작업도 만든다(기본 켬)
     }
 
     [BindProperty(SupportsGet = true)] public int? Id { get; set; }
@@ -68,7 +78,8 @@ public class EditModel : PageModel
         }
         else
         {
-            var p = await _projects.LoadAsync(Id.Value);
+            // 기본 정보·내역만 추적 없이 읽는다 (단계·작업·활동은 이 화면에 필요 없다)
+            var p = await _projects.LoadInfoAsync(Id.Value);
             if (p == null) return NotFound();
             Form = new FormModel
             {
@@ -90,6 +101,10 @@ public class EditModel : PageModel
         return Page();
     }
 
+    // 등록할 위치가 없다(사용 중인 법인이 하나도 없음) — 화면 맨 위에 첫 설정 안내를 띄운다
+    public bool NeedsSetup { get; private set; }
+    public bool IsAdmin => _me.IsAdmin;
+
     public async Task<IActionResult> OnPostAsync()
     {
         // 모델 바인딩 오류(날짜 형식 등)는 규칙 검사 전에 알려 준다
@@ -102,7 +117,9 @@ public class EditModel : PageModel
 
         var items = Form.Items.Select(i => new ItemInput(i.TypeId, i.Quantity, i.Note)).ToList();
         var input = new ProjectInput(Form.Title, Form.CategoryId, Form.LocationId, Form.Owner, Form.StartDate,
-            Form.Vendor, Form.Description, items, items, Form.Version);
+            Form.Vendor, Form.Description, items, items, Form.Version,
+            IsNew ? Form.StageTargets.Select(t => new StageTargetInput(t.TemplateId, t.TargetDate)).ToList() : null,
+            IsNew ? Form.TemplateWorks : null);
         try
         {
             var id = Id;
@@ -132,12 +149,32 @@ public class EditModel : PageModel
         }
     }
 
+    // 등록 화면의 단계 목표일 초안. keep 은 사람이 고친 줄('템플릿Id:yyyy-MM-dd', 비웠으면 '템플릿Id:') — 그 뒤 단계만 거기서 이어 센다
+    public async Task<IActionResult> OnGetDraftAsync(int categoryId, DateOnly? start, int? locationId, string[]? keep)
+    {
+        var kept = new Dictionary<int, DateOnly?>();
+        foreach (var k in keep ?? Array.Empty<string>())
+        {
+            var parts = k.Split(':', 2);
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var templateId)) continue;
+            kept[templateId] = DateOnly.TryParseExact(parts[1], "yyyy-MM-dd", out var d) ? d : null;
+        }
+        try
+        {
+            return new JsonResult(new { ok = true, draft = await _projects.DraftAsync(categoryId, start, locationId, kept) });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
     // 동시 수정 충돌: 입력한 값은 그대로 두고 최신 버전으로 바꿔, 확인한 뒤 같은 화면에서 다시 저장할 수 있게 한다.
     // (예전에는 같은 옛 버전으로 다시 그려 몇 번을 눌러도 거절되고, 메시지는 '최신 내용으로 바꿨다'고 잘못 말했다)
     private async Task ShowConflictAsync(int id)
     {
         // 실패한 저장이 컨텍스트에 남긴 값이 섞이지 않게 추적 없이 DB 에서 새로 읽는다
-        var latest = await _db.Projects.AsNoTracking()
+        var latest = await _db.LiveProjects.AsNoTracking()
             .Include(x => x.Category)
             .Include(x => x.Owner)
             .Include(x => x.Equipments).ThenInclude(e => e.EquipmentType).ThenInclude(t => t!.Parent)
@@ -258,7 +295,9 @@ public class EditModel : PageModel
         UserNames = await _projects.UserNamesAsync();
         VendorNames = (await _db.Vendors.AsNoTracking().ToListAsync()).Where(v => v.IsActive).OrderBy(v => v.SortOrder).Select(v => v.Name).ToList();
 
-        var locations = (await _db.Locations.AsNoTracking().ToListAsync())
+        var all = await _db.Locations.AsNoTracking().ToListAsync();
+        NeedsSetup = IsNew && !all.Any(l => l.Level == 1 && l.IsActive);
+        var locations = all
             .OrderBy(l => l.Level).ThenBy(l => l.SortOrder).ThenBy(l => l.Id)
             .Select(l => new { id = l.Id, parentId = l.ParentId, level = l.Level, name = l.Name, active = l.IsActive });
         var equipment = (await _db.EquipmentTypes.AsNoTracking().ToListAsync())
@@ -273,19 +312,28 @@ public class EditModel : PageModel
         string? currentOwner = null;
         if (!IsNew)
         {
-            var ownerId = await _db.Projects.AsNoTracking().Where(x => x.Id == Id).Select(x => x.OwnerId).FirstOrDefaultAsync();
+            var ownerId = await _db.LiveProjects.AsNoTracking().Where(x => x.Id == Id).Select(x => x.OwnerId).FirstOrDefaultAsync();
             currentOwner = await _db.Users.AsNoTracking().Where(u => u.Id == ownerId).Select(u => u.Name).FirstOrDefaultAsync();
+        }
+
+        // 유형별 작업 템플릿 수 — 등록 화면의 '템플릿 작업 n개 함께 만들기' 안내 (그룹 집계는 하지 않고 메모리에서 센다 — DESIGN 6장)
+        var templateWorks = new Dictionary<int, int>();
+        if (IsNew)
+        {
+            var stageOf = (await _db.StageTemplates.AsNoTracking().ToListAsync()).ToDictionary(t => t.Id, t => t.CategoryId);
+            foreach (var stageId in await _db.TemplateWorks.AsNoTracking().Select(w => w.StageTemplateId).ToListAsync())
+                if (stageOf.TryGetValue(stageId, out var categoryId)) templateWorks[categoryId] = templateWorks.GetValueOrDefault(categoryId) + 1;
         }
 
         MetaJson = AppJson.Serialize(new
         {
             isNew = IsNew,
             currentOwner,
-            categories = Categories.Select(c => new { id = c.Id, name = c.Name, kind = Views.Key(c.Kind) }),
+            categories = Categories.Select(c => new { id = c.Id, name = c.Name, kind = Views.Key(c.Kind), templateWorks = templateWorks.GetValueOrDefault(c.Id) }),
             locations,
             equipment,
             containers,
-            form = new { categoryId = Form.CategoryId, locationId = Form.LocationId, items = Form.Items },
+            form = new { categoryId = Form.CategoryId, locationId = Form.LocationId, items = Form.Items, stageTargets = Form.StageTargets },
             errorField = ErrorField,
         });
     }

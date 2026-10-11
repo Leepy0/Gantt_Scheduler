@@ -132,7 +132,10 @@ public class AdvancedTests : IClassFixture<TestDb>
 
         var (id2, _, _, _) = await LinkedAsync("테스트 의존-과제삭제");
         using (var s = _db.NewScope())
+        {
             await s.Projects.DeleteAsync(id2);
+            await s.Projects.PurgeAsync(id2);
+        }
         using var check = _db.NewScope();
         Assert.False(await check.Db.WorkLinks.AnyAsync(l => l.ProjectId == id2));
         Assert.False(await check.Db.WorkItems.AnyAsync(w => w.Stage!.ProjectId == id2));
@@ -377,10 +380,10 @@ public class AdvancedTests : IClassFixture<TestDb>
         Assert.Contains(mine.Next, n => n.Contains("A 종료 목표 10-14"));       // 다음 주(10-12~10-18)에 끝나는 작업
         Assert.Contains(mine.Next, n => n.Contains("B 종료 목표 10-16"));
 
-        // 지난주에는 이 과제의 활동이 없다 (진행 과제라 목록에는 있음)
+        // 이 과제는 이번 주(10-09)에 등록했으므로 지난주 보고에는 없다 — 지난 보고에 그 뒤 등록한 과제가 끼지 않는다
         var last = await scope.Insights.WeeklyAsync(Day(9, 30), false);
         Assert.Equal(Day(9, 28), last.From);
-        Assert.Empty(last.Projects.Single(p => p.Id == id).Changes);
+        Assert.DoesNotContain(last.Projects, p => p.Id == id);
 
         var history = await scope.Insights.HistoryAsync(new HistoryFilter(null, null, null, "schedule", "테스트 주간 보고", 1));
         Assert.Single(history.Rows);

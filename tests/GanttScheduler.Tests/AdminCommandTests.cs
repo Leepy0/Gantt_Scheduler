@@ -54,7 +54,9 @@ public class AdminCommandTests
         using (var s = db.NewScope())
         {
             kimId = (await s.Users.RegisterAsync("10.77.0.1", "김물류", null)).Id;
-            await s.Masters.ToggleAsync(new MasterRef("user", 1, kimId, 0));    // 사용 중지
+            // 사용 중지 (샘플 과제를 맡고 있어 관리 화면 단추는 담당 이관을 요구하므로 바로 바꾼다)
+            (await s.Db.Users.SingleAsync(u => u.Id == kimId)).IsActive = false;
+            await s.Db.SaveChangesAsync();
         }
 
         // 없는 이름: 새로 만든다
