@@ -14,6 +14,7 @@
     <input type="hidden" asp-for="Id" />
     <input type="hidden" asp-for="Form.LocationId" id="location-id" />
     <input type="hidden" asp-for="Form.Version" />
+    <input type="hidden" asp-for="Form.Base" />
 
     @if (Model.Error != null)
     {
@@ -23,6 +24,7 @@
     <label class="field" data-field="title">
         <span class="label">과제명</span>
         <input asp-for="Form.Title" maxlength="200" required autocomplete="off" />
+        <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("title") ?? "")" />
     </label>
 
     <div class="field" data-field="categoryId">
@@ -56,33 +58,39 @@
             <select data-level="4" aria-label="층"></select>
         </div>
         <span class="hint">법인은 필수, 나머지는 아는 데까지 선택합니다.</span>
+        <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("locationId") ?? "")" />
     </div>
 
     <div class="field-row">
         <label class="field" data-field="owner">
             <span class="label">담당자</span>
             <input asp-for="Form.Owner" maxlength="50" list="user-names" autocomplete="off" />
+            <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("owner") ?? "")" />
         </label>
         <label class="field" data-field="startDate">
             <span class="label">착수일</span>
             <input type="date" name="Form.StartDate" id="Form_StartDate" value="@(Model.Form.StartDate?.ToString("yyyy-MM-dd"))" />
+            <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("startDate") ?? "")" />
         </label>
     </div>
 
     <label class="field" data-field="vendor">
         <span class="label">협력사 <span class="opt">선택</span></span>
         <input asp-for="Form.Vendor" maxlength="100" list="vendor-names" autocomplete="off" />
+        <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("vendor") ?? "")" />
     </label>
 
     <div class="field" id="items-field" data-field="equipments" hidden>
         <span class="label" id="items-label">기기 내역</span>
         <div id="items" class="items"></div>
         <button type="button" class="btn small" id="add-item"><svg class="ic"><use href="#i-plus" /></svg>행 추가</button>
+        <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("items") ?? "")" />
     </div>
 
     <label class="field" data-field="description">
         <span class="label">설명 <span class="opt">선택</span></span>
         <textarea asp-for="Form.Description" rows="4" maxlength="2000"></textarea>
+        <partial name="_ConflictNote" model="@(Model.Changed.GetValueOrDefault("description") ?? "")" />
     </label>
 
     <div class="form-actions">

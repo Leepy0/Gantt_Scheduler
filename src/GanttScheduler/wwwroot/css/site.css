@@ -386,7 +386,7 @@ input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-colo
 .g-month { position: absolute; top: 0; height: 22px; padding-left: 8px; border-left: 1px solid var(--line-strong); color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; line-height: 22px; white-space: nowrap; overflow: hidden; }
 .g-tick { position: absolute; top: 22px; height: 22px; color: var(--text-3); font-size: var(--fs-xs); line-height: 22px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .g-tick.week { text-align: left; padding-left: 4px; border-left: 1px solid var(--line); }
-.g-tick.off { color: var(--line-strong); }
+.g-tick.off { color: var(--text-3); background: var(--surface-2); }   /* 휴일 글자도 읽을 수 있는 대비 — 구분은 배경으로 */
 .g-tick.today { color: #fff; background: var(--accent); border-radius: 4px; font-weight: 600; }
 .g-body { position: relative; }
 .g-bg { position: absolute; z-index: 0; top: 0; bottom: 0; left: var(--g-left); width: var(--g-width); pointer-events: none; }
@@ -725,3 +725,48 @@ a.me:hover { color: var(--accent); text-decoration: none; }
 .ip-add { display: flex; gap: 8px; }
 .ip-add input { flex: 1; min-width: 0; }
 .form-note code { overflow-wrap: anywhere; }
+
+/* ── 화면 사용성: 변경 띠·충돌 안내·임시 저장·간트 이름 단추 ─────── */
+/* 다른 사용자가 이 과제를 바꿨을 때의 띠 — 스크롤해도 보이게 머리 아래에 붙인다 */
+.change-banner {
+    position: sticky; top: calc(var(--top-h) + 8px); z-index: 20;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 48px; padding: 8px 8px 8px 16px;
+    border-radius: var(--r-sm); background: var(--accent-weak); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-1);
+}
+.change-banner > span { flex: 1; min-width: 0; }
+.change-banner.alarm { background: var(--alarm-weak); color: var(--alarm); }
+/* 동시 수정 뒤 '다른 사용자가 바꾼 값' (시트·과제 수정 화면 공통) */
+.conflict-note { display: flex; align-items: flex-start; gap: 4px; color: var(--warn); font-weight: 600; }
+.conflict-note .ic { width: 12px; height: 12px; margin-top: 3px; }
+.draft-note { justify-content: flex-start; }
+.draft-note .spacer { flex: 1; }
+dialog.sheet:focus { outline: none; }
+.g-name-btn {
+    flex: 1; min-width: 0; display: flex; align-items: center; align-self: stretch; padding: 0; margin: 0;
+    border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.g-name-btn:focus-visible { outline-offset: -2px; }
+.btn[aria-busy=true] { cursor: progress; }
+
+/* ── 인쇄: 메뉴·도구 없이 보이는 내용만, 간트는 한 폭에 펼쳐서(스크립트가 월 배율로 다시 그린다) ── */
+@media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    :root { --top-h: 0px; --bottom-h: 0px; }
+    html, body { background: #fff; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .top, .bottom-nav, .toasts, .notice, .change-banner, .toolbar, .tabs, .summary-actions, .no-print, [data-print],
+    .page-head .btn, .page-head .seg, .card-head .btn, .card-head .seg, .stage-foot, .danger-zone, .comment-form,
+    #upload-form, .files .btn, .g-toggle, .legend .hide-sm, dialog { display: none !important; }
+    .page { max-width: none; padding: 0; gap: 8px; }
+    .card, .kpi, .stage-card { box-shadow: none; border: 1px solid var(--line); }
+    .card:not(.flush), .kpi, .stage-card, .g-row, .rows > li, .feed > li { break-inside: avoid; }
+    .card.flush { overflow: visible; }
+    .g-scroll, .gantt-host.tall .g-scroll { overflow: visible !important; max-height: none !important; }
+    .g-head, .g-corner, .g-name, .g-pad::before { position: static; }
+    /* 의존선은 간트 전체에 걸친 SVG 한 장이라 쪽을 나눌 수 없다 — 다음 쪽으로 밀려 엉뚱한 곳에 찍히므로 인쇄에서는 뺀다
+       (선행 위반·임계 표시는 이름 칸의 아이콘으로 남는다) */
+    .g-links { display: none; }
+    .stepper { overflow: visible; flex-wrap: wrap; }
+    .step { box-shadow: none; border-left: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    a { color: inherit; }
+}

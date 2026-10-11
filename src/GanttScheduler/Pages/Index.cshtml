@@ -16,7 +16,9 @@
         <a asp-page="/Index" asp-route-mine="true" class="@(Model.Mine ? "on" : "")">내 과제</a>
     </div>
     <span class="spacer"></span>
-    <span class="asof">기준 @Model.AsOf</span>
+    @* 지연·임박 판정의 기준이 한국 날짜라 기준 시각도 한국 시간으로 적는다 (규칙 8) *@
+    <span class="asof">기준 @Model.AsOf (한국 시간)</span>
+    <button type="button" class="btn icon no-print" data-print title="인쇄" aria-label="인쇄"><svg class="ic"><use href="#i-print" /></svg></button>
     <a class="btn icon" asp-page="/Index" asp-route-mine="@(Model.Mine ? "true" : null)" title="새로고침" aria-label="새로고침"><svg class="ic"><use href="#i-refresh" /></svg></a>
 </div>
 
@@ -32,7 +34,7 @@
         <span class="kpi-sub">목표일 초과</span>
     </a>
     <div class="kpi">
-        <span class="kpi-label">7일 내 목표</span>
+        <span class="kpi-label">@(Rules.SoonDays)일 내 목표</span>
         <span class="kpi-value">@d.Kpi.DueThisWeek</span>
         <span class="kpi-sub">단계 기준</span>
     </div>
@@ -61,7 +63,7 @@
                                 <span class="row-title">@p.Title</span>
                                 <span class="row-sub">@p.Corporation · @p.DelayedStage 단계 · @p.Owner</span>
                             </span>
-                            <span class="chip alarm"><svg class="ic"><use href="#i-alert" /></svg>지연 D+@p.DelayDays</span>
+                            <partial name="_StatusChip" model="p.Chip" />
                         </a>
                     </li>
                 }
@@ -86,14 +88,7 @@
                                 <span class="row-title">@u.Project</span>
                                 <span class="row-sub">@u.Stage · @u.Date.ToString("MM-dd")</span>
                             </span>
-                            @if (u.DDay <= 7)
-                            {
-                                <span class="chip warn"><svg class="ic"><use href="#i-clock" /></svg>@(u.DDay == 0 ? "오늘" : "D-" + u.DDay)</span>
-                            }
-                            else
-                            {
-                                <span class="chip">D-@u.DDay</span>
-                            }
+                            <partial name="_StatusChip" model="u.Chip" />
                         </a>
                     </li>
                 }

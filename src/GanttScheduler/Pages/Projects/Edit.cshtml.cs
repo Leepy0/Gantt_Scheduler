@@ -40,6 +40,8 @@ public class EditModel : PageModel
         public string? Vendor { get; set; }
         public string? Description { get; set; }
         public int? Version { get; set; }       // 화면을 연 시점의 과제 버전 (동시 수정 감지)
+        // 화면을 연 시점의 값(JSON). 다른 사람이 먼저 저장해 충돌했을 때 '그 사람이 바꾼 항목'만 골라 보여 주는 데만 쓴다
+        public string? Base { get; set; }
         public List<ItemRow> Items { get; set; } = new();
     }
 
@@ -54,6 +56,8 @@ public class EditModel : PageModel
     public List<string> UserNames { get; private set; } = new();
     public List<string> VendorNames { get; private set; } = new();
     public string MetaJson { get; private set; } = "{}";
+    // 동시 수정 충돌 뒤: 다른 사용자가 바꾼 항목 → 그 값(표시용). 입력칸 옆에 보여 준다
+    public Dictionary<string, string> Changed { get; } = new();
 
     public async Task<IActionResult> OnGetAsync()
     {
@@ -76,6 +80,7 @@ public class EditModel : PageModel
                 Vendor = p.Vendor,
                 Description = p.Description,
                 Version = p.Version,
+                Base = AppJson.Serialize(Snapshot(p)),
                 Items = (p.Category?.Kind == CategoryKind.Container
                     ? p.Containers.Select(c => new ItemRow { TypeId = c.ContainerTypeId, Quantity = c.Quantity, Note = c.Note })
                     : p.Equipments.Select(e => new ItemRow { TypeId = e.EquipmentTypeId, Quantity = e.Quantity, Note = e.Note })).ToList(),
@@ -105,6 +110,19 @@ public class EditModel : PageModel
             else await _projects.UpdateAsync(id.Value, input);
             return RedirectToPage("/Projects/Detail", new { id });
         }
+        catch (ConflictException) when (Id != null)
+        {
+            await ShowConflictAsync(Id.Value);
+            await LoadMetaAsync();
+            return Page();
+        }
+        catch (DbUpdateConcurrencyException) when (Id != null)
+        {
+            // 읽고 저장하는 사이에 다른 저장이 끼어든 경우 — 버전 확인을 통과했어도 DB 가 막는다. 같은 방법으로 다시 저장하게 한다
+            await ShowConflictAsync(Id.Value);
+            await LoadMetaAsync();
+            return Page();
+        }
         catch (RuleException ex)
         {
             Error = ex.Message;
@@ -112,6 +130,76 @@ public class EditModel : PageModel
             await LoadMetaAsync();
             return Page();
         }
+    }
+
+    // 동시 수정 충돌: 입력한 값은 그대로 두고 최신 버전으로 바꿔, 확인한 뒤 같은 화면에서 다시 저장할 수 있게 한다.
+    // (예전에는 같은 옛 버전으로 다시 그려 몇 번을 눌러도 거절되고, 메시지는 '최신 내용으로 바꿨다'고 잘못 말했다)
+    private async Task ShowConflictAsync(int id)
+    {
+        // 실패한 저장이 컨텍스트에 남긴 값이 섞이지 않게 추적 없이 DB 에서 새로 읽는다
+        var latest = await _db.Projects.AsNoTracking()
+            .Include(x => x.Category)
+            .Include(x => x.Owner)
+            .Include(x => x.Equipments).ThenInclude(e => e.EquipmentType).ThenInclude(t => t!.Parent)
+            .Include(x => x.Containers).ThenInclude(c => c.ContainerType)
+            .FirstOrDefaultAsync(x => x.Id == id);
+        if (latest == null)
+        {
+            Error = "다른 사용자가 이 과제를 삭제했습니다. 저장할 수 없습니다.";
+            return;
+        }
+
+        var before = ParseBase(Form.Base);
+        var now = Snapshot(latest);
+        var locations = await _projects.LocationsAsync();
+        foreach (var (key, value) in now)
+        {
+            if (before != null && before.TryGetValue(key, out var old) && old == value) continue;
+            Changed[key] = key switch
+            {
+                "locationId" => string.Join(" · ", locations.Chain(latest.LocationId).Select(l => l.Name)),
+                "items" => ItemsText(latest),
+                _ => value.Length == 0 ? "(비어 있음)" : value,
+            };
+        }
+
+        // 다시 저장할 때는 지금 버전으로 보낸다. 모델 상태에 남은 옛 값이 숨은 입력에 다시 그려지지 않게 지운다
+        Form.Version = latest.Version;
+        Form.Base = AppJson.Serialize(now);
+        ModelState.Remove("Form.Version");
+        ModelState.Remove("Form.Base");
+        Error = Changed.Count > 0
+            ? "다른 사용자가 이 과제를 먼저 수정했습니다. 그 사람이 바꾼 값을 항목 옆에 표시했습니다. 입력한 내용은 그대로 있으니 확인한 뒤 다시 저장하면 지금 화면의 내용으로 저장됩니다."
+            : "다른 사용자가 이 과제를 먼저 수정했습니다(이 화면에 없는 항목). 입력한 내용은 그대로 있으니 다시 저장하면 지금 화면의 내용으로 저장됩니다.";
+    }
+
+    // 충돌 비교용 값 (표시 문자열이 아니라 비교할 수 있는 원래 값)
+    private static Dictionary<string, string> Snapshot(Project p) => new()
+    {
+        ["title"] = p.Title,
+        ["locationId"] = p.LocationId.ToString(),
+        ["owner"] = p.Owner?.Name ?? "",
+        ["startDate"] = p.StartDate.ToString("yyyy-MM-dd"),
+        ["vendor"] = p.Vendor ?? "",
+        ["description"] = p.Description ?? "",
+        ["items"] = string.Join("|", p.Equipments.OrderBy(e => e.Id).Select(e => $"E{e.EquipmentTypeId}:{e.Quantity}:{e.Note}"))
+                    + "/" + string.Join("|", p.Containers.OrderBy(c => c.Id).Select(c => $"C{c.ContainerTypeId}:{c.Quantity}:{c.Note}")),
+    };
+
+    private static Dictionary<string, string>? ParseBase(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json); }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    private static string ItemsText(Project p)
+    {
+        var items = p.Category?.Kind == CategoryKind.Container
+            ? p.Containers.OrderBy(c => c.Id).Select(c => $"{c.ContainerType?.Name} {c.Quantity}")
+            : p.Equipments.OrderBy(e => e.Id).Select(e => $"{Views.EquipmentName(e.EquipmentType)} {e.Quantity}");
+        var text = string.Join(", ", items);
+        return text.Length == 0 ? "(비어 있음)" : text;
     }
 
     private async Task LoadMetaAsync()

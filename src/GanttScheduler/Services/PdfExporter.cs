@@ -37,7 +37,7 @@ public class PdfExporter
         var doc = NewDocument(p.Title, landscape: true);
         var sec = doc.LastSection;
 
-        Heading(sec, p.Title, $"과제 일정 · 출력일 {today:yyyy-MM-dd}");
+        Heading(sec, p.Title, $"과제 일정 · 출력일 {today:yyyy-MM-dd} · 날짜는 한국 시간 기준");
 
         var baseline = p.BaselineAt == null ? "미확정"
             : $"{KoreaClock.ToKst(p.BaselineAt.Value):yyyy-MM-dd} 확정" + (p.SlipDays == null ? "" : $" · 목표 종료 {ExcelExporter.Signed(p.SlipDays.Value)}일");
@@ -46,7 +46,7 @@ public class PdfExporter
         foreach (var w in new[] { 2.0, 6.9, 2.0, 6.9, 2.0, 6.9 }) info.AddColumn(Unit.FromCentimeter(w));
         InfoRow(info, "유형", p.Category, "위치", p.Corporation + (p.LocationPath.Length > 0 ? " · " + p.LocationPath : ""),
             "담당", p.Owner + (p.OwnerOrg == null ? "" : $" ({p.OwnerOrg})"));
-        InfoRow(info, "상태", ExcelExporter.StateLabel(p) + (p.DelayDays > 0 ? $" D+{p.DelayDays}" : ""),
+        InfoRow(info, "상태", p.Chip.Text,
             "기간", $"{p.StartDate:yyyy-MM-dd} ~ {(p.EndTarget == null ? "미정" : p.EndTarget.Value.ToString("yyyy-MM-dd"))}",
             "진행률", p.Progress + "%");
         InfoRow(info, "기준선", baseline, "목표일 변경", p.TargetChanges + "회", "임계 작업", p.CriticalCount + "건");
@@ -63,7 +63,7 @@ public class PdfExporter
             row.Format.Font.Bold = true;
             Cell(row, 0, "단계", center: true);
             Cell(row, 1, s.Name + (s.CheckTotal > 0 ? $"  (체크 {s.CheckDone}/{s.CheckTotal})" : ""));
-            Cell(row, 3, ExcelExporter.StageLabel(s), center: true, color: StateColor(ExcelExporter.StageLabel(s)));
+            Cell(row, 3, s.Chip.Text, center: true, color: StateColor(s.Chip.Text));
             Cell(row, 4, s.Progress + "%", right: true);
             Cell(row, 5, D(s.BaselineDate), center: true);
             Cell(row, 6, D(s.PlanFrom), center: true);
@@ -77,14 +77,14 @@ public class PdfExporter
                 Cell(wr, 0, "작업", center: true, color: Muted);
                 Cell(wr, 1, "  " + w.Title + (w.Critical ? "  [임계]" : ""));
                 Cell(wr, 2, string.Join(", ", new[] { w.Owner, w.CoOwner }.Where(x => !string.IsNullOrEmpty(x))));
-                Cell(wr, 3, ExcelExporter.WorkLabel(w), center: true, color: StateColor(ExcelExporter.WorkLabel(w)));
+                Cell(wr, 3, w.Chip.Text, center: true, color: StateColor(w.Chip.Text));
                 Cell(wr, 4, w.Progress + "%", right: true);
                 Cell(wr, 5, D(w.BaselineEnd), center: true);
                 Cell(wr, 6, D(w.PlanStart), center: true);
                 Cell(wr, 7, D(w.PlanEnd), center: true);
                 Cell(wr, 8, D(w.ActualStart), center: true);
                 Cell(wr, 9, D(w.ActualEnd), center: true);
-                SlipCell(wr, 10, w.BaselineEnd == null ? null : w.PlanEnd.DayNumber - w.BaselineEnd.Value.DayNumber);
+                SlipCell(wr, 10, w.SlipDays);
             }
         }
         if (p.Stages.Count == 0) Empty(t, 11, "단계가 없습니다.");
@@ -98,7 +98,7 @@ public class PdfExporter
         var doc = NewDocument("주간 보고", landscape: false);
         var sec = doc.LastSection;
 
-        Heading(sec, "주간 보고", $"{report.From:yyyy-MM-dd} ~ {report.To:yyyy-MM-dd} · 작성일 {report.Today:yyyy-MM-dd}");
+        Heading(sec, "주간 보고", $"{report.From:yyyy-MM-dd} ~ {report.To:yyyy-MM-dd} · 작성일 {report.Today:yyyy-MM-dd}(한국 시간)");
 
         var sum = NewTable(sec, 9, ("진행 과제", 4.5), ("지연", 4.5), ("이번 주 완료", 4.5), ("일정 변경", 4.5));
         var sr = sum.AddRow();

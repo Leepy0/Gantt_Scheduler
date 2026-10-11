@@ -102,6 +102,17 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 }
 
+// 본문 없는 오류 응답(없는 과제 404 등)은 오류 화면으로 다시 그린다. 화면이 JSON 으로 묻는 요청은 그대로 둔다 —
+// 시트·폴링이 상태 코드와 JSON 본문으로 판단하므로 HTML 이 섞이면 안 된다
+app.UseStatusCodePagesWithReExecute("/Error", "?code={0}");
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Headers.Accept.ToString().Contains("application/json")
+        && ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IStatusCodePagesFeature>() is { } pages)
+        pages.Enabled = false;
+    await next();
+});
+
 app.UseStaticFiles();
 app.UseRouting();
 
@@ -117,10 +128,11 @@ app.UseMiddleware<UserGateMiddleware>();
 app.MapRazorPages();
 app.MapGet("/health", () => Results.Text("ok"));
 // 열려 있는 화면이 서버가 새 버전으로 바뀌었는지 확인하는 주소
-app.MapGet("/version", (HttpContext ctx) =>
+// today: 한국 날짜. 오래 열어 둔 화면이 날짜가 바뀐 것을 알아채고 다시 그린다(DB 를 읽지 않는다)
+app.MapGet("/version", (HttpContext ctx, IClock clock) =>
 {
     ctx.Response.Headers.CacheControl = "no-store";
-    return Results.Json(new { ok = true, build = build.Id, version = build.VersionText, updating = updates.Applying });
+    return Results.Json(new { ok = true, build = build.Id, version = build.VersionText, updating = updates.Applying, today = clock.Today });
 });
 
 app.Run();

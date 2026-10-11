@@ -1,0 +1,6 @@
+@model GanttScheduler.Domain.ChipView
+@* 상태 칩 — 어떤 칩을 보일지는 서버(Views.*Chip)가 정하고, 화면 JS 의 App.chip 과 같은 마크업으로 그린다 *@
+@if (Model != null && Model.Text.Length > 0)
+{
+    <span class="chip @Model.Cls">@if (Model.Icon != null) {<svg class="ic" aria-hidden="true"><use href="#i-@Model.Icon" /></svg>}@Model.Text</span>
+}

@@ -54,8 +54,19 @@ public class DetailModel : PageModel
     public async Task<IActionResult> OnGetDataAsync(int id)
     {
         var view = await _projects.ViewAsync(id);
-        return view == null ? NotFound() : new JsonResult(new { ok = true, project = view });
+        return view == null ? Missing() : new JsonResult(new { ok = true, project = view, today = _clock.Today });
     }
+
+    // 과제가 마지막으로 바뀐 시각 하나만 돌려준다 — 열린 화면이 1분마다 물어 '다른 사용자가 바꿨습니다' 띠를 띄운다
+    public async Task<IActionResult> OnGetStampAsync(int id)
+    {
+        var stamp = await _projects.StampAsync(id);
+        return stamp == null ? Missing() : new JsonResult(new { ok = true, updatedAt = stamp });
+    }
+
+    // 화면이 JSON 으로 묻는 과제가 없을 때 (삭제됨) — 본문 없는 404 대신 이유를 알린다
+    private static JsonResult Missing() =>
+        new(new { ok = false, missing = true, error = "과제를 찾을 수 없습니다. 다른 사용자가 삭제했을 수 있습니다." }) { StatusCode = StatusCodes.Status404NotFound };
 
     public async Task<IActionResult> OnGetExcelAsync(int id)
     {
@@ -154,7 +165,8 @@ public class DetailModel : PageModel
         try
         {
             var id = await action();
-            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(id) });
+            // today: 화면을 오래 열어 두면 날짜가 바뀐다. 응답마다 한국 날짜를 실어 화면의 '오늘'을 맞춘다
+            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(id), today = _clock.Today });
         }
         catch (ConflictException ex)
         {

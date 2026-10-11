@@ -16,7 +16,7 @@ public record WeeklyItem(string Text, string? Reason, string User, DateOnly Date
 public record WeeklyProject(
     int Id, string Title, string Category, string Corporation, string Owner, string StateLabel,
     int Progress, int DelayDays, string? CurrentStage, DateOnly? CurrentTarget,
-    List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next);
+    List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next, ChipView? Chip = null);
 
 public record WeeklyReport(
     DateOnly From, DateOnly To, DateOnly Today, int Active, int Delayed, int DoneCount, int ChangeCount, List<WeeklyProject> Projects);
@@ -31,9 +31,16 @@ public record HistoryPage(DateOnly From, DateOnly To, List<HistoryRow> Rows, int
 // ── 내 할 일 ─────────────────────────────────────────────────────────────
 public record MyWork(
     int ProjectId, string Project, int WorkId, string Stage, string Title, string Role,
-    DateOnly PlanStart, DateOnly PlanEnd, int Progress, string Status, bool Late, int DDay);
+    DateOnly PlanStart, DateOnly PlanEnd, int Progress, string Status, bool Late, int DDay)
+{
+    public bool Soon => !Late && Rules.IsSoon(DDay);           // 임박 (Rules.SoonDays)
+    public ChipView Chip => Views.DueChip(DDay, Late);
+}
 
-public record MyStage(int ProjectId, string Project, string Stage, DateOnly? Target, int? DDay, bool Late, int Progress);
+public record MyStage(int ProjectId, string Project, string Stage, DateOnly? Target, int? DDay, bool Late, int Progress)
+{
+    public ChipView? Chip => DDay == null ? null : Views.DueChip(DDay.Value, Late);
+}
 
 public record MyView(List<MyWork> Late, List<MyWork> Soon, List<MyWork> Later, List<MyStage> Stages);
 
@@ -210,9 +217,9 @@ public static class Reporting
 
             var current = Rules.CurrentStage(p);
             projects.Add(new WeeklyProject(p.Id, p.Title, p.Category?.Name ?? "", locations.Get(p.CorporationId)?.Name ?? "", p.Owner?.Name ?? "",
-                Rules.DelayDays(p, today) > 0 ? "지연" : Views.Label(p.State),
+                Views.StateLabel(p.State, Rules.DelayDays(p, today)),
                 Rules.ProjectProgress(p), Rules.DelayDays(p, today), current?.Name, current?.TargetDate,
-                done, changes, comments, next));
+                done, changes, comments, next, Views.ProjectChip(p.State, Rules.DelayDays(p, today))));
         }
 
         projects = projects.OrderByDescending(x => x.DelayDays).ThenBy(x => x.Title).ToList();
@@ -235,24 +242,24 @@ public static class Reporting
                 {
                     works.Add(new MyWork(p.Id, p.Title, w.Id, s.Name, w.Title, w.OwnerId == userId ? "담당" : "부담당",
                         w.PlanStart, w.PlanEnd, w.Progress, Views.Key(Rules.StatusOf(w)), Rules.IsLate(w, s, today),
-                        w.PlanEnd.DayNumber - today.DayNumber));
+                        Rules.DaysLeft(w.PlanEnd, today)));
                 }
             }
             // 내가 담당인 과제는 지금 진행 중인 단계도 챙긴다
             if (p.OwnerId == userId && Rules.CurrentStage(p) is { } cur)
             {
                 stages.Add(new MyStage(p.Id, p.Title, cur.Name, cur.TargetDate,
-                    cur.TargetDate == null ? null : cur.TargetDate.Value.DayNumber - today.DayNumber,
-                    cur.TargetDate != null && cur.TargetDate.Value < today, Rules.StageProgress(cur)));
+                    cur.TargetDate == null ? null : Rules.DaysLeft(cur.TargetDate.Value, today),
+                    Rules.IsLate(cur, today), Rules.StageProgress(cur)));
             }
         }
 
         var ordered = works.OrderBy(w => w.PlanEnd).ThenBy(w => w.Title).ToList();
         return new MyView(
             ordered.Where(w => w.Late).ToList(),
-            // 이번 주 안에 끝나야 하거나 이미 시작했어야 하는 작업
-            ordered.Where(w => !w.Late && (w.DDay <= 7 || w.PlanStart <= today)).ToList(),
-            ordered.Where(w => !w.Late && w.DDay > 7 && w.PlanStart > today).ToList(),
+            // 곧(Rules.SoonDays 안) 끝나야 하거나 이미 시작했어야 하는 작업
+            ordered.Where(w => !w.Late && (w.Soon || w.PlanStart <= today)).ToList(),
+            ordered.Where(w => !w.Late && !w.Soon && w.PlanStart > today).ToList(),
             stages.OrderBy(s => s.Target ?? DateOnly.MaxValue).ToList());
     }
 }

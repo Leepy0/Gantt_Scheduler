@@ -4,7 +4,11 @@ namespace GanttScheduler.Services;
 
 public record Kpi(int Active, int Delayed, int DueThisWeek, int DoneThisYear, int Hold);
 public record GroupStat(string Name, int OnTrack, int Delayed, int Done, int Paused, int Total);
-public record DueItem(int ProjectId, string Project, string Stage, DateOnly Date, int DDay);
+public record DueItem(int ProjectId, string Project, string Stage, DateOnly Date, int DDay)
+{
+    public bool Soon => Rules.IsSoon(DDay);                    // 임박 (Rules.SoonDays)
+    public ChipView Chip => Views.DueChip(DDay, late: false);
+}
 
 public record DashboardView(
     DateOnly Today, Kpi Kpi,
@@ -66,7 +70,7 @@ public static class Dashboard
 
         var kpi = new Kpi(
             active.Count, delayed.Count,
-            due.Count(d => d.DDay <= 7),
+            due.Count(d => d.Soon),
             doneThisYear,
             all.Count(p => p.State == ProjectState.Hold));
 

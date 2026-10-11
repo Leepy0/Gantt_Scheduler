@@ -1,13 +1,31 @@
 @page
 @attribute [Microsoft.AspNetCore.Mvc.IgnoreAntiforgeryToken]
 @{
-    ViewData["Title"] = "오류";
+    // 본문 없는 오류 응답은 Program.cs 의 UseStatusCodePagesWithReExecute 가 ?code=상태코드 로 이 화면을 다시 그린다.
+    // 예외(500)는 code 없이 온다
+    int.TryParse(Request.Query["code"], out var code);
+    var (title, message) = code switch
+    {
+        404 => ("찾는 화면이 없습니다", "과제가 삭제되었거나 주소가 잘못되었습니다. 목록에서 다시 찾아 주세요."),
+        403 => ("접근할 수 없습니다", "이 화면을 볼 수 있는 권한이 없습니다."),
+        400 => ("요청을 처리하지 못했습니다", "화면이 오래되었을 수 있습니다. 새로 고친 뒤 다시 시도해 주세요."),
+        _ => ("요청을 처리하지 못했습니다", "서버에서 오류가 발생했습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 알려 주세요."),
+    };
+    ViewData["Title"] = code == 404 ? "찾을 수 없음" : "오류";
     ViewData["Bare"] = true;
 }
 <section class="welcome">
-    <div class="card welcome-card">
-        <h1>요청을 처리하지 못했습니다</h1>
-        <p class="muted">서버에서 오류가 발생했습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 알려 주세요.</p>
-        <a class="btn primary block" href="~/">대시보드로 이동</a>
+    <div class="card welcome-card" data-error-code="@(code == 0 ? null : code)">
+        <h1>@title</h1>
+        <p class="muted">@message</p>
+        @if (code == 404)
+        {
+            <a class="btn primary block" href="~/Projects">과제 목록으로 이동</a>
+            <a class="btn block" href="~/">대시보드로 이동</a>
+        }
+        else
+        {
+            <a class="btn primary block" href="~/">대시보드로 이동</a>
+        }
     </div>
 </section>
