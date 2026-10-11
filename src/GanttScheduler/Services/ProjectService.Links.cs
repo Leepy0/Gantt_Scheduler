@@ -94,6 +94,11 @@ public partial class ProjectService
             .Where(s => s.Id == link.PredecessorStageId || s.Id == link.SuccessorStageId).ToListAsync();
         var pred = stages.First(s => s.Id == link.PredecessorStageId);
         var succ = stages.First(s => s.Id == link.SuccessorStageId);
+        // 보던 과제가 연결의 한쪽이어야 하고, 휴지통 과제에 걸린 연결은 끊지 않는다 — 복원하면 연결도 되살아나야 한다
+        if (input.ProjectId != pred.ProjectId && input.ProjectId != succ.ProjectId)
+            throw new RuleException("이 과제의 연결이 아닙니다. 화면을 새로고침해 주세요.");
+        if (pred.Project!.DeletedAt != null || succ.Project!.DeletedAt != null)
+            throw new RuleException("휴지통에 있는 과제와의 연결은 끊을 수 없습니다. 과제를 복원한 뒤 끊어 주세요.");
         _db.StageLinks.Remove(link);
         AddActivity(pred.Project!, pred.Id, $"[{pred.Name}] 과제 간 후행 연결 해제: {succ.Project!.Title} · {succ.Name}");
         AddActivity(succ.Project!, succ.Id, $"[{succ.Name}] 과제 간 선행 연결 해제: {pred.Project!.Title} · {pred.Name}");

@@ -320,6 +320,11 @@ public class DetailModel : PageModel
         {
             return ConflictJson(ex.ProjectId, ex.Message);
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            // 두 사람이 같은 순간에 지우면 늦은 쪽은 Version 동시성 검사에 걸린다 — 다른 변경과 같이 409 로 알린다
+            return ConflictJson(input.Id, new ConflictException(input.Id).Message);
+        }
         catch (RuleException ex)
         {
             return Fail(ex);

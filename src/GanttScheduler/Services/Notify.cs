@@ -178,18 +178,31 @@ public class DigestService
         foreach (var u in users)
         {
             ct.ThrowIfCancellationRequested();
-            var pending = await _db.Notifications.Include(n => n.Activity).ThenInclude(a => a!.User)
-                .Where(n => n.UserId == u.Id && n.ReadAt == null && n.EmailedAt == null)
-                // 휴지통에 있는 과제의 알림은 싣지 않는다(화면 알림 목록과 같은 기준 — NotificationService.Live)
-                .Where(n => _db.Projects.Any(p => p.Id == n.ProjectId && p.DeletedAt == null))
-                .OrderByDescending(n => n.Id).Take(MaxNotifications).ToListAsync(ct);
-            var my = Reporting.My(projects, u.Id, today);
-            var soon = my.Soon.Where(w => w.Soon).ToList();
-            if (pending.Count == 0 && my.Late.Count == 0 && soon.Count == 0) continue;
-            foreach (var pid in pending.Select(n => n.ProjectId).Distinct().Where(id => !titles.ContainsKey(id)))
-                titles[pid] = await _db.LiveProjects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync(ct);
-
-            var mail = Compose(u.Name, u.Email!, today, pending, titles, my.Late, soon);
+            List<Notification> pending;
+            MailItem mail;
+            try
+            {
+                pending = await _db.Notifications.Include(n => n.Activity).ThenInclude(a => a!.User)
+                    .Where(n => n.UserId == u.Id && n.ReadAt == null && n.EmailedAt == null)
+                    // 휴지통에 있는 과제의 알림은 싣지 않는다(화면 알림 목록과 같은 기준 — NotificationService.Live)
+                    .Where(n => _db.Projects.Any(p => p.Id == n.ProjectId && p.DeletedAt == null))
+                    .OrderByDescending(n => n.Id).Take(MaxNotifications).ToListAsync(ct);
+                var my = Reporting.My(projects, u.Id, today);
+                var soon = my.Soon.Where(w => w.Soon).ToList();
+                if (pending.Count == 0 && my.Late.Count == 0 && soon.Count == 0) continue;
+                foreach (var pid in pending.Select(n => n.ProjectId).Distinct().Where(id => !titles.ContainsKey(id)))
+                    titles[pid] = await _db.LiveProjects.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Title).FirstOrDefaultAsync(ct);
+                mail = Compose(u.Name, u.Email!, today, pending, titles, my.Late, soon);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 메일을 만들다 실패해도 실행 전체를 끊지 않는다 — 끊기면 결과가 저장되지 않아 1분마다 다시 돌며
+                // 이미 받은 사람에게 지연·임박 메일이 거듭 나간다
+                failed++;
+                error = ex.Message;
+                _log.LogWarning(ex, "메일 요약을 만들지 못했습니다: {User}", u.Name);
+                continue;
+            }
             try
             {
                 await _channel.SendAsync(mail, ct);

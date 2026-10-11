@@ -818,6 +818,9 @@ public class EngineServiceTests : IClassFixture<TestDb>
 
         // 해제: 두 과제 모두에 남긴다
         var link = (await ViewAsync(p)).Stages[0].CrossLinks.Single();
+        // 연결의 어느 쪽도 아닌 과제 화면에서 보낸 해제는 받지 않는다
+        using (var s = _db.NewScope())
+            await Assert.ThrowsAsync<RuleException>(() => s.Projects.RemoveStageLinkAsync(new StageLinkRemove(link.Id, r)));
         using (var s = _db.NewScope())
             Assert.Equal(p, await s.Projects.RemoveStageLinkAsync(new StageLinkRemove(link.Id, p)));
         Assert.Equal(2, await CountAsync());

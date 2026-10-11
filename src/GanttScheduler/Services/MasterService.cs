@@ -207,8 +207,9 @@ public class MasterService
                     .OrderBy(u => u.Name)
                     .Select(u => new MasterNode(u.Id, null, 1, u.Name, u.IsActive, 0, Org: Views.OrgName(u.OrgUnit), OrgUnitId: u.OrgUnitId,
                         IsAdmin: u.IsAdmin, Ips: u.Addresses.Select(a => a.Ip).OrderBy(x => x).ToList(),
-                        LastSeen: u.Addresses.Count == 0 ? null : KoreaClock.KstDate(u.Addresses.Max(a => a.LastSeenAt)),
-                        Addresses: u.Addresses.OrderByDescending(a => a.LastSeenAt)
+                        // 사람별 마지막 접속은 관리자에게만 준다(DESIGN) — 사용자 목록은 누구나 볼 수 있다
+                        LastSeen: !_me.IsAdmin || u.Addresses.Count == 0 ? null : KoreaClock.KstDate(u.Addresses.Max(a => a.LastSeenAt)),
+                        Addresses: !_me.IsAdmin ? null : u.Addresses.OrderByDescending(a => a.LastSeenAt)
                             .Select(a => new UserIpView(a.Ip, KoreaClock.KstDate(a.LastSeenAt), a.Ip == _me.Ip)).ToList(),
                         // 메일 주소는 관리자에게만 보인다
                         Email: _me.IsAdmin ? u.Email : null))

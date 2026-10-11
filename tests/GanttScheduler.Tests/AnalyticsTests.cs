@@ -429,6 +429,13 @@ public class AnalyticsServiceTests : IDisposable
         Assert.Contains(report.Resolved!, f => f.ProjectId == calm.Id);
         Assert.Equal(report.Active - 2, report.ActiveDelta);
         Assert.Equal(report.Delayed - 1, report.DelayedDelta);
+
+        // 휴지통으로 보낸 과제는 지금 숫자와 직전 기록 양쪽에서 빠진다 — 지운 것만으로 '전주 대비' 가 바뀌지 않는다
+        var version = (await s.Db.Projects.AsNoTracking().SingleAsync(p => p.Id == delayed.Id)).Version;
+        await s.Projects.DeleteAsync(delayed.Id, null, version);
+        var afterTrash = await s.Insights.WeeklyAsync(null, false);
+        Assert.Equal(afterTrash.Active - 1, afterTrash.ActiveDelta);
+        Assert.Equal(afterTrash.Delayed - 1, afterTrash.DelayedDelta);
     }
 
     [Fact]

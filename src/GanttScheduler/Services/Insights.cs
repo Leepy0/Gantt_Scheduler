@@ -233,7 +233,8 @@ public class InsightService
         int? activeDelta = null, delayedDelta = null;
         if (prevDay is DateOnly pd)
         {
-            var prev = await _db.ProjectSnapshots.AsNoTracking().Where(x => x.Date == pd).ToListAsync();
+            // 휴지통 과제는 지금 숫자에서 빠지므로 직전 기록에서도 뺀다(빼지 않으면 지운 과제만큼 "전주 대비 -1" 로 보인다)
+            var prev = await _db.ProjectSnapshots.AsNoTracking().Where(x => x.Date == pd && x.Project!.DeletedAt == null).ToListAsync();
             HashSet<int>? scope = null;
             if (filter.OrgUnitId is int o) scope = Reporting.OrgScope(o, await _db.OrgUnits.AsNoTracking().ToListAsync());
             var mineIds = all.Select(p => p.Id).ToHashSet();

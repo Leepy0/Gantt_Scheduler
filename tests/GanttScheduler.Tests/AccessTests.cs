@@ -344,6 +344,22 @@ public class AccessTests : IClassFixture<TestDb>
         }
     }
 
+    [Fact]
+    public async Task 사람별_마지막_접속은_관리자에게만_준다()
+    {
+        int userId;
+        using (var s = _db.NewScope())
+            userId = (await s.Users.RegisterAsync("10.66.5.1", "접속기록사람", null)).Id;
+        using (var s = _db.NewScope("일반사용자"))
+        {
+            var node = (await s.Masters.ListAsync("user")).Single(n => n.Id == userId);
+            Assert.Null(node.LastSeen);
+            Assert.Null(node.Addresses);
+        }
+        using (var s = _db.NewScope(admin: true))
+            Assert.Equal(Today, (await s.Masters.ListAsync("user")).Single(n => n.Id == userId).LastSeen);
+    }
+
     // ── 담당자 이름 처리 ───────────────────────────────────────────────
 
     [Fact]

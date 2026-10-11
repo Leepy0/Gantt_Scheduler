@@ -14,9 +14,11 @@ public sealed class DataVersion
 
     public void Bump() => Interlocked.Increment(ref _value);
 
-    // 상황판에 보이는 값에 닿는 엔티티. 사람별 기록(마지막 접속·방문·관심·알림)과 기준 정보는 세지 않는다
+    // 상황판에 보이는 값에 닿는 엔티티. 사람별 기록(마지막 접속·방문·관심·알림)은 세지 않는다.
+    // 공휴일은 근무일 계산(예상 종료·위험)을, 법인·위치·대분류·사용자 이름은 상황판 글자를 바꾸므로 함께 센다
     public static bool Watches(object entity) =>
-        entity is Project or Stage or WorkItem or CheckItem or WorkLink or StageLink or Attachment or Activity;
+        entity is Project or Stage or WorkItem or CheckItem or WorkLink or StageLink or Attachment or Activity
+            or Holiday or Location or Category or AppUser;
 }
 
 // 상황판 한 줄: 지연(빨강) 또는 지연 위험(노랑) 과제와 이유 한 줄
