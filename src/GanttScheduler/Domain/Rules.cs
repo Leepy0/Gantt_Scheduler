@@ -640,6 +640,26 @@ public static class Rules
     public static DateOnly? CompletedOn(Project p) =>
         AllStagesDone(p) ? p.Stages.Max(s => s.CompletedDate!.Value) : null;
 
+    // 과제 종료일(Project.ClosedOn에 저장하는 값): 완료면 마지막 단계 완료일, 중단이면 중단 처리일 — 이미 적힌 값을 지키고
+    // 없으면 오늘(중단으로 바꾼 날). 진행·보류는 없다. 상태가 바뀌거나 완료 과제의 단계 완료일이 바뀔 때마다 다시 계산한다
+    public static DateOnly? ClosedOn(Project p, DateOnly today) => p.State switch
+    {
+        ProjectState.Done => CompletedOn(p),
+        ProjectState.Dropped => p.ClosedOn ?? today,
+        _ => null,
+    };
+
+    // 연도 조건(목록의 완료·중단 탭, 리드타임)의 날짜 범위 — DB 에서 ClosedOn 을 범위 비교로 거르기 위해(두 DB 에서 같게 번역된다).
+    // 주소에 아무 숫자나 올 수 있으므로 DateOnly 가 받는 범위로 묶는다(벗어난 해는 해당 과제가 없어 빈 목록이 된다 — 500 대신)
+    public static (DateOnly From, DateOnly To) YearRange(int year)
+    {
+        year = Math.Clamp(year, 1, 9999);
+        return (new DateOnly(year, 1, 1), new DateOnly(year, 12, 31));
+    }
+
+    // 화면에서 고를 수 있는 연도 범위(목록의 연도 고르기·리드타임). 밖의 값은 주소를 잘못 친 것으로 보고 무시한다
+    public static bool IsPickableYear(int year) => year is >= 2000 and <= 2099;
+
     // 미완료 단계 중 목표일이 오늘부터 days 일 안(오늘 포함)인 것이 있는가 (대시보드 'n일 내 목표'·다가오는 일정과 목록의 조건)
     public static bool HasStageDueWithin(Project p, DateOnly today, int days) =>
         p.Stages.Any(s => s.CompletedDate == null && s.TargetDate != null && DaysLeft(s.TargetDate.Value, today) is var d && d >= 0 && d <= days);
@@ -1057,4 +1077,22 @@ public static class Rules
     public static bool MissedIn(DateOnly? due, DateOnly? done, DateOnly? stageDone, DateOnly from, DateOnly to, DateOnly asOf, DateOnly today) =>
         due is DateOnly d && d >= from && d <= to && (asOf >= today ? d < today : d <= asOf)
         && !DoneBy(done, asOf, today) && !DoneBy(stageDone, asOf, today);
+
+    // ── 사용자 정리·사용 현황 (S12b) ──
+
+    // 사용 현황의 기준 기간(일): 최근 접속자·갱신 건수·조용한 진행 과제
+    public const int UsageDays = 30;
+
+    // 담당 이관 대상인 '진행 중' 과제: 진행·보류(아직 열린 과제 — 보류는 다시 시작한다). 완료·중단 과제의 담당은 기록으로 남긴다
+    public static bool IsOpenProject(ProjectState state) => state is ProjectState.Active or ProjectState.Hold;
+
+    // 조용한 과제: 마지막 변경(UpdatedAt)이 days 일 넘게 지남 (정체 IsStale 과 같은 셈, 기간만 다르다)
+    public static bool IsQuiet(DateTime updatedAtUtc, DateTime utcNow, int days) => utcNow - updatedAtUtc > TimeSpan.FromDays(days);
+
+    // 사용 현황(관리 > 사용 현황)이 세는 과제: 진행만. 보류 과제는 일부러 멈춘 것이라 '조용한 과제' 비율에 넣지 않는다.
+    // 조직 줄과 사람 줄이 이 하나로 세야 두 숫자의 합이 맞는다
+    public static bool IsUsageProject(ProjectState state) => state == ProjectState.Active;
+
+    // 비율(%) — 분모가 0 이면 0
+    public static int Percent(int part, int whole) => whole <= 0 ? 0 : (int)Math.Round(part * 100.0 / whole, MidpointRounding.AwayFromZero);
 }

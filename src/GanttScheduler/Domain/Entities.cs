@@ -180,6 +180,9 @@ public class Project
     public DateTime UpdatedAt { get; set; }
     public int Version { get; set; }                // 동시 수정 감지용 — 과제 정보·상태가 바뀔 때마다 증가
     public DateTime? BaselineAt { get; set; }       // 기준선을 확정한 시각 (없으면 미확정)
+    // 과제 종료일: 완료면 마지막 단계 완료일, 중단이면 중단 처리일(Rules.ClosedOn). 진행·보류는 없음.
+    // 목록의 완료·중단 연도 조건과 '올해 완료'가 단계 완료일을 매번 다시 모으지 않고 DB 에서 거르기 위해 저장한다
+    public DateOnly? ClosedOn { get; set; }
     // 휴지통: 지운 과제는 표시만 하고 모든 조회에서 뺀다(AppDb.LiveProjects). 보관 기간(Trash:KeepDays)이 지나면 영구 삭제한다
     public DateTime? DeletedAt { get; set; }
     public int? DeletedById { get; set; }
@@ -496,4 +499,22 @@ public class DelayReason
     public string Name { get; set; } = "";
     public int SortOrder { get; set; }
     public bool IsActive { get; set; } = true;
+}
+
+// ── 관리 변경 이력 ────────────────────────────────────────────────────────
+
+// 기준 정보·사용자·설정의 변경 한 줄. 공휴일·해상 운송일·유형 템플릿·관리자 지정은 일정 계산과 권한을 바꾸는데
+// 과제 활동(Activity)은 과제에 묶여 있어 담을 곳이 없다. 이력은 추가만 한다(고치거나 지우지 않는다).
+// UserId 가 없으면 서버가 스스로 한 일(보존 기간 정리 등)이다. EntityId 는 느슨한 참조 — 지운 항목의 기록도 남는다
+public class MasterChange
+{
+    public int Id { get; set; }
+    public DateTime At { get; set; }
+    public int? UserId { get; set; }
+    public AppUser? User { get; set; }
+    public string Kind { get; set; } = "";          // 엔티티 종류(MasterLog.Kinds — location·holiday·user·ip·update …)
+    public int? EntityId { get; set; }
+    public string Text { get; set; } = "";
+    public string? OldValue { get; set; }
+    public string? NewValue { get; set; }
 }

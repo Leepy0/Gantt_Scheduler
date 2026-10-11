@@ -102,7 +102,10 @@ public class UserGateMiddleware
             }
         }
 
-        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/Error");
+        // 상황판(/Board)은 사람 없이 켜 두는 PC 가 보는 읽기 전용 화면이라 이름 등록 없이 연다(GET 만 — 고치는 요청은 없다).
+        // 허용 대역 검사는 위에서 그대로 거쳤고, 사용자를 만들지 않으므로 첫 관리자 판정·담당자 목록에도 닿지 않는다
+        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/Error")
+            || (path.StartsWithSegments("/Board") && (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)));
         if ((!me.IsKnown || me.NeedsConfirm) && !open)
         {
             var wantsJson = ctx.Request.Headers.Accept.ToString().Contains("application/json");
@@ -161,12 +164,18 @@ public class UserService
     // 이 요청에서 새로 만든(아직 저장 전) 담당자. 같은 이름을 두 번 만들지 않게 한다
     private readonly Dictionary<string, AppUser> _pending = new(StringComparer.OrdinalIgnoreCase);
 
-    public UserService(AppDb db, IClock clock, AccessOptions? access = null)
+    // 관리 변경 이력(사용자 등록·IP 연결·첫 관리자). 없으면 처음 쓸 때 만든다(시험처럼 직접 만든 경우)
+    private MasterLog? _changes;
+
+    public UserService(AppDb db, IClock clock, AccessOptions? access = null, MasterLog? changes = null)
     {
         _db = db;
         _clock = clock;
         _access = access ?? new AccessOptions();
+        _changes = changes;
     }
+
+    private MasterLog Changes => _changes ??= new MasterLog(_db, _clock);
 
     // 이름으로 등록. 같은 이름의 사용자가 이미 있으면 이 IP 를 그 사용자에 연결한다(PC 교체·IP 변경 대응).
     // local: 서버 자신(루프백)에서 온 요청 — 관리자가 없을 때 첫 관리자가 될 수 있다
@@ -196,16 +205,25 @@ public class UserService
         // 관리자가 한 명도 없으면 첫 관리자를 정한다. 기본은 서버 자신에서 등록한 사람만(설치 직후 아무 PC 나 선점하지 못하게)
         var firstAdmin = !await _db.Users.AnyAsync(u => u.IsAdmin) && (local || !_access.FirstAdminLocalOnly);
 
+        // 관리 변경 이력: 행위자는 등록한 본인(이 요청에는 아직 현재 사용자가 없다)
+        var linkedTo = addr == null || addr.UserId == user?.Id ? null : await _db.Users.AsNoTracking().Where(u => u.Id == addr.UserId).Select(u => u.Name).FirstOrDefaultAsync();
         if (user == null)
         {
             user = new AppUser { Name = name, OrgUnitId = orgUnitId, IsAdmin = firstAdmin, CreatedAt = _clock.UtcNow };
             _db.Users.Add(user);
+            var who = user;
+            Changes.Add("user", () => who.Id, $"사용자 등록: {name} ({ip})", null, name, actor: user);
         }
         else
         {
             if (orgUnitId != null && user.OrgUnitId == null) user.OrgUnitId = orgUnitId;
-            if (firstAdmin) user.IsAdmin = true;
+            if (firstAdmin && !user.IsAdmin) user.IsAdmin = true;
+            else firstAdmin = false;
         }
+        if (firstAdmin) Changes.Add("user", () => user.Id, $"관리자 지정(첫 관리자): {name}", "일반", "관리자", actor: user);
+        // 이 IP 가 처음이거나 다른 사람에게서 넘어왔다 — 기존 사용자에 새 IP 를 붙인 경우만(새 사용자는 등록 줄에 IP 가 있다)
+        if (user.Id != 0 && addr?.UserId != user.Id)
+            Changes.Add("ip", user.Id, $"IP 연결(이름 등록 화면): {name} — {ip}" + (linkedTo == null ? "" : $" ({linkedTo} 님에게서 옮김)"), linkedTo, name, actor: user);
 
         // 새 사용자는 아직 Id 가 없으므로 내비게이션으로 연결해 한 번에 저장한다
         if (addr == null)
@@ -277,6 +295,9 @@ public class UserService
         user = new AppUser { Name = name, CreatedAt = _clock.UtcNow };
         _db.Users.Add(user);
         _pending[name] = user;
+        // 담당 입력으로 생긴 사용자도 관리 변경 이력에 남긴다(오타 이름이 생긴 시점을 찾을 수 있게 — 병합의 실마리). 저장은 호출한 쪽과 함께
+        var added = user;
+        Changes.Add("user", () => added.Id, $"사용자 추가(담당 입력): {name}", null, name);
         return user;
     }
 }

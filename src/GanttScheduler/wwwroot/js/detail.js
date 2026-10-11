@@ -482,9 +482,20 @@
         return App.url('/Projects/Files?handler=Download&id=' + id + (inline ? '&inline=true' : ''));
     }
 
+    // 과제 첨부 합계 — 상한(Storage:ProjectMaxMB)을 정했으면 함께 보인다. 상한 검사는 서버가 한다
+    function renderFilesTotal(list) {
+        var box = $('files-total');
+        if (!box) return;
+        var cap = data.upload && data.upload.projectMaxMB;
+        var used = list.reduce(function (n, a) { return n + (a.size || 0); }, 0);
+        box.hidden = !list.length && !cap;
+        box.textContent = '첨부 합계 ' + App.size(used) + (cap ? ' / 과제 상한 ' + cap + 'MB' : '');
+    }
+
     function renderFiles() {
         var list = P.attachments || [];
         $('files-count').textContent = list.length ? String(list.length) : '';
+        renderFilesTotal(list);
         $('file-stage').innerHTML = '<option value="">과제 전체</option>' + P.stages.map(function (s) {
             return '<option value="' + s.id + '">' + esc(s.name) + '</option>';
         }).join('');
@@ -815,6 +826,10 @@
         return field('reasonCode', '사유 분류', '<select name="reasonCode"><option value="">고르지 않음</option>' +
             REASONS.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + '</option>'; }).join('') + '</select>', true);
     }
+    // 도움말의 그 절로 가는 '?' 링크. 시트에서 입력 중일 수 있어 새 탭으로 연다
+    function helpQ(id, label) {
+        return '<a class="help-q" href="' + App.url('/Help#' + id) + '" target="_blank" rel="noopener" title="도움말: ' + label + '" aria-label="도움말: ' + label + '">' + icon('help') + '</a>';
+    }
     function reasonCodeOf(form) {
         var el = form.elements.reasonCode;
         return el && el.value ? +el.value : null;
@@ -1001,9 +1016,9 @@
         if (isNew) html += '<div data-target-preview></div>';
         if (!isNew) {
             html += '<div data-reason hidden class="form">' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유"></textarea>') +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유"></textarea>') +
                 reasonCodeHtml() +
-                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
+                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
                 cascadeWorksHtml(s) +
                 '</div>';
             // 저장 전 미리보기: 목표일을 바꾸면 함께 옮겨지는 단계·작업과 예상 종료 전/후 (서버 계산)
@@ -1282,9 +1297,9 @@
             },
             html: '<div class="form-note" data-target-note></div>' +
                 field('targetDate', '바꿀 목표일', '<input type="date" name="targetDate" required value="' + newDate + '" />') +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유" required></textarea>') +
                 reasonCodeHtml() +
-                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
+                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
                 cascadeWorksHtml(s) +
                 '<div data-target-preview></div>',
             primary: '변경',
@@ -1357,7 +1372,7 @@
                 field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + from + '" />') +
                 field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + to + '" />') +
                 '</div>' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
                 reasonCodeHtml() +
                 '<div data-plan-preview></div>',
             primary: '변경',
@@ -1565,8 +1580,8 @@
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
             (isNew ? '' : '<div data-reason hidden>' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + reasonCodeHtml() + '</div>') +
-            '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span></span>' + preHtml +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + reasonCodeHtml() + '</div>') +
+            '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span>' + helpQ('links', '의존 관계 — 유형과 간격') + '</span>' + preHtml +
             '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
             '<div data-work-preview></div>' +
@@ -1888,7 +1903,7 @@
             html: '<p class="form-warn">' + icon('alert') + '<span>지금의 목표 일정으로 기준선을 덮어씁니다. 기준선 대비 밀린 일수가 0 으로 돌아가고 이전 기준선은 되돌릴 수 없습니다.</span></p>' +
                 '<div class="form-note" data-baseline-ends>' + icon('pin') + '<span>기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' + esc(P.endTarget || '미정') + '</b>' +
                 (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '') + '</span></div>' +
-                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
+                field('reason', '사유' + helpQ('baseline', '기준선과 차수'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
             // 다른 사람이 과제를 바꿨으면 최신 일정을 보고 다시 확정하게 한다 (api 가 P 를 최신으로 바꿔 둔다)
             onConflict: function (form) {
                 opened = P.version;

@@ -39,4 +39,7 @@ public static class Limits
     public const int FileNameInput = 200;
     public const int StoredName = 100;
     public const int ContentType = 100;
+
+    // 관리 변경 이력 (S12b) — 종류 열쇠(location·holiday·user·ip …)
+    public const int MasterKind = 30;
 }

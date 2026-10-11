@@ -43,7 +43,7 @@ public class IndexModel : PageModel
             .Select(level => MasterService.NameLimit(k, level)).ToArray()));
 
     // 이름 외 입력칸(국가·메일·IP)의 길이 상한 — 같은 이유로 Limits 에서 준다
-    public string FieldLimitsJson => AppJson.Serialize(new { country = Limits.Country, email = Limits.Email, ip = Limits.Ip });
+    public string FieldLimitsJson => AppJson.Serialize(new { country = Limits.Country, email = Limits.Email, ip = Limits.Ip, reason = Limits.Reason });
 
     public Task<IActionResult> OnGetDataAsync(string kind) => Run(kind, () => Task.CompletedTask);
 
@@ -60,6 +60,48 @@ public class IndexModel : PageModel
     public Task<IActionResult> OnPostPasteHolidaysAsync([FromBody] HolidayPaste input) => Run("holiday", () => _masters.PasteHolidaysAsync(input.Text));
 
     public Task<IActionResult> OnPostRemoveIpAsync([FromBody] MasterIp input) => Run("user", () => _masters.RemoveAddressAsync(input));
+
+    // ── 사용자 정리·관리 변경 이력·사용 현황 (UserAdminService·MasterLog) ──
+    // 서비스는 요청에서 꺼낸다 — 이 페이지를 쓰는 다른 핸들러의 생성자를 늘리지 않으려고
+    private UserAdminService People => HttpContext.RequestServices.GetRequiredService<UserAdminService>();
+    private MasterLog Changes => HttpContext.RequestServices.GetRequiredService<MasterLog>();
+
+    // 사용자 병합: from 의 기록을 into 로 옮기고 from 을 지운다. 응답은 사용자 목록 + 안내 문구
+    public Task<IActionResult> OnPostMergeAsync([FromBody] MergeInput input) => RunPeople(async () => (await People.MergeAsync(input)).Text);
+
+    // 담당 이관 후 사용 중지
+    public Task<IActionResult> OnPostReassignAsync([FromBody] ReassignInput input) => RunPeople(async () => (await People.ReassignAsync(input)).Text);
+
+    // 관리 변경 이력(관리자만): 종류·기간·사람 조건, 쪽 나눔. 처음 부를 때(page 1) 고르기 목록(종류·사람)을 함께 준다
+    public async Task<IActionResult> OnGetChangesAsync(string? kind, DateOnly? from, DateOnly? to, int? user, int page = 1)
+    {
+        try
+        {
+            var result = await Changes.ListAsync(new MasterChangeFilter(string.IsNullOrEmpty(kind) ? null : kind, from, to, user, page));
+            var kinds = MasterLog.Kinds.Select(k => new { key = k.Key, label = k.Value });
+            return new JsonResult(new { ok = true, page = result, kinds, people = await Changes.PeopleAsync() });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
+    // 사용 현황: 조직별 집계(누구나), 사람별 마지막 접속(관리자만)
+    public async Task<IActionResult> OnGetUsageAsync() => new JsonResult(new { ok = true, usage = await People.UsageAsync() });
+
+    private async Task<IActionResult> RunPeople(Func<Task<string>> action)
+    {
+        try
+        {
+            var notice = await action();
+            return new JsonResult(new { ok = true, nodes = await _masters.ListAsync("user"), notice });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
 
     public record MailInput(string? Email);
 

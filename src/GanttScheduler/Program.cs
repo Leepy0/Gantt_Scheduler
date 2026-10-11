@@ -46,6 +46,9 @@ builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileL
 builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
+// TV 상황판(/Board): 과제 그래프가 저장될 때마다 오르는 데이터 버전(AppDb.SaveChangesAsync 가 올린다)과 상황판 요약
+builder.Services.AddSingleton<DataVersion>();
+builder.Services.AddScoped<BoardService>();
 // 접속 제어(허용 대역·첫 관리자·IP 재확인). 테스트가 바꾼 설정도 보이도록 서비스가 처음 쓰일 때 읽는다
 builder.Services.AddSingleton(sp => AccessOptions.From(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped<CurrentUser>();
@@ -99,6 +102,10 @@ builder.Services.AddSingleton(_ => SnapshotOptions.From(config));
 builder.Services.AddScoped<SnapshotService>();
 builder.Services.AddScoped<AnalyticsService>();
 builder.Services.AddHostedService<SnapshotWorker>();
+// 사용자·기준 정보 관리: 관리 변경 이력(MasterLog — 변경과 같은 저장), 사용자 병합·이관·사용 현황, IP 연결 보존 정리(Access:AddressKeepDays)
+builder.Services.AddScoped<MasterLog>();
+builder.Services.AddScoped<UserAdminService>();
+builder.Services.AddHostedService<AddressRetentionWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);

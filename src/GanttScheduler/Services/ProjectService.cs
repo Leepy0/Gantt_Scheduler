@@ -498,6 +498,8 @@ public partial class ProjectService
 
         var old = p.State;
         p.State = state;
+        // 중단 처리일은 지금 중단한 날이다 — 앞서 완료로 남은 종료일을 이어 쓰지 않게 비우고 SyncState 가 오늘로 채운다
+        if (state == ProjectState.Dropped) p.ClosedOn = null;
         p.Activities.Add(NewActivity(ActivityType.StateChanged, $"상태 변경: {Views.Label(old)} → {Views.Label(state)}", reason));
         SyncState(p);
         p.Version++;
@@ -1318,7 +1320,7 @@ public partial class ProjectService
     public const string AutoDoneText = "상태 변경: 진행 → 완료 (모든 단계 완료)";
     public const string AutoReopenText = "상태 변경: 완료 → 진행 (미완료 단계 있음)";
 
-    // 모든 단계가 끝나면 완료로, 완료 과제에 미완료 단계가 생기면 다시 진행으로
+    // 모든 단계가 끝나면 완료로, 완료 과제에 미완료 단계가 생기면 다시 진행으로. 종료일(ClosedOn)도 함께 맞춘다
     private void SyncState(Project p)
     {
         var allDone = Rules.AllStagesDone(p);
@@ -1332,6 +1334,8 @@ public partial class ProjectService
             p.State = ProjectState.Active;
             p.Activities.Add(NewActivity(ActivityType.StateChanged, AutoReopenText));
         }
+        // 종료일은 상태가 바뀔 때뿐 아니라 완료 상태로 단계 완료일만 고칠 때도 달라진다 — 상태·단계를 바꾸는 모든 경로가 여기를 지난다
+        p.ClosedOn = Rules.ClosedOn(p, _clock.Today);
     }
 
     // 활동은 모두 ActivityLog 한 곳에서 만든다(누가·언제, 그리고 저장할 때 알림을 함께 계산한다)

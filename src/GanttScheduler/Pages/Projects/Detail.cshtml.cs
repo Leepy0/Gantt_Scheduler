@@ -70,7 +70,7 @@ public class DetailModel : PageModel
                 stageName = Limits.StageName, checkText = Limits.CheckText, workTitle = Limits.WorkTitle, workNote = Limits.WorkNote,
                 userName = Limits.UserName, reason = Limits.Reason, text = Limits.ActivityText, projectTitle = Limits.ProjectTitle,
             },
-            upload = new { maxBytes = _files.MaxBytes, maxMB = _files.MaxMB, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
+            upload = new { maxBytes = _files.MaxBytes, maxMB = _files.MaxMB, projectMaxMB = _files.ProjectMaxMB, extensions = AttachmentService.Allowed.Keys.OrderBy(x => x) },
         });
         return Page();
     }

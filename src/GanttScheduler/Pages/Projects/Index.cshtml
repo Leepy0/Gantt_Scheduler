@@ -55,6 +55,17 @@
                 <option value="@o.Id" selected="@(Model.Org == o.Id)">@(o.Level == 2 ? "· " : "")@o.Name</option>
             }
         </select>
+        @if (Model.HasYear)
+        {
+            @* 완료·중단 탭: 종료일(완료 = 마지막 단계 완료일, 중단 = 중단 처리일)의 연도. 기본은 올해 — 해가 갈수록 끝난 과제가 목록을 채우지 않게 *@
+            <select name="year" id="list-year" aria-label="종료 연도" title="완료는 마지막 단계 완료일, 중단은 중단한 날의 연도">
+                @foreach (var y in Model.Years)
+                {
+                    <option value="@y" selected="@(Model.ClosedYear == y)">@(y)년 종료</option>
+                }
+                <option value="0" selected="@(Model.ClosedYear == null)">전체 연도</option>
+            </select>
+        }
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
         @* 정렬은 조회해도 유지한다(머리글로 바꾼다) *@
         @if (Model.SortKey != null) { <input type="hidden" name="sort" value="@Model.SortKey" /> }
@@ -87,8 +98,8 @@
 {
     <section class="card">
         <p class="empty">
-            조건에 맞는 과제가 없습니다.
-            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a>
+            @(Model.ClosedYear is int emptyYear ? $"{emptyYear}년에 끝난 과제 중 조건에 맞는 것이 없습니다." : "조건에 맞는 과제가 없습니다.")
+            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a> · <a href="@Url.Content("~/Help#state")" data-help="state">상태는 어떻게 정해지나요?</a>
         </p>
     </section>
 }
@@ -183,11 +194,13 @@ else
                 location.href = pick.value;
             });
         })();
-        // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)은 푼다
+        // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)과 종료 연도는 푼다(새 탭은 올해부터).
+        // 종료 연도를 직접 고르면 대시보드의 완료 연도 조건(doneYear)도 푼다 — 두 연도가 엇갈려 빈 목록이 되지 않게
         document.querySelectorAll('#filters input[type=radio], #filters select:not(#list-sort), #filters input[type=checkbox]')
             .forEach(function (el) {
                 el.addEventListener('change', function () {
-                    if (el.type === 'radio') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });
+                    if (el.type === 'radio' || el.id === 'list-year') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });
+                    if (el.type === 'radio') { var y = document.getElementById('list-year'); if (y) y.remove(); }
                     document.getElementById('filters').submit();
                 });
             });

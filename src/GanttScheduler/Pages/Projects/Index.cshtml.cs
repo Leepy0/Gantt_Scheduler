@@ -40,6 +40,10 @@ public class IndexModel : PageModel
     [BindProperty(SupportsGet = true)] public bool Current { get; set; }
     // 조직: 과제 담당자의 소속(하위 파트 포함)
     [BindProperty(SupportsGet = true)] public int? Org { get; set; }
+    // 완료·중단 탭의 종료 연도(Project.ClosedOn). 없으면 올해(대시보드 숫자에서 온 doneYear 가 있으면 그 해), 0 이면 전체 연도
+    [BindProperty(SupportsGet = true)] public int? Year { get; set; }
+    // 고를 수 있는 연도: 가장 이른 종료 연도 ~ 올해 (최근 해가 먼저)
+    public List<int> Years { get; private set; } = new();
     public List<PickOption> Orgs { get; private set; } = new();
     // 머리글 정렬 (Dashboard.SortKeys). 없으면 상태 → 지연 큰 순 → 목표 종료
     [BindProperty(SupportsGet = true)] public string? Sort { get; set; }
@@ -55,6 +59,12 @@ public class IndexModel : PageModel
 
     // 상태 필터를 지정하지 않으면 진행 과제만 본다 ("all" 은 전체)
     public string StateKey => State ?? "active";
+
+    // 연도 고르기가 있는 탭(끝난 과제를 보는 탭)
+    public bool HasYear => StateKey is "done" or "dropped";
+
+    // 이 목록에 적용하는 종료 연도 (null = 전체 연도·연도 조건 없는 탭)
+    public int? ClosedYear => !HasYear || Year == 0 ? null : Year ?? DoneYear ?? _clock.Today.Year;
 
     public static readonly (string Key, string Label)[] States =
     {
@@ -113,13 +123,22 @@ public class IndexModel : PageModel
         if (Due != null) r["due"] = Due.Value.ToString();
         if (Current) r["current"] = "true";
         if (Org != null) r["org"] = Org.Value.ToString();
+        if (HasYear && Year != null) r["year"] = Year.Value.ToString();
         if (SortKey != null) r["sort"] = SortKey;
         if (Desc) r["desc"] = "true";
         return r;
     }
 
+    // 주소로 들어온 연도가 고를 수 있는 범위 밖이면 버린다(0 = 전체 연도는 그대로) — 연도 고르기 목록이 수천 줄로 늘거나
+    // 날짜 계산이 깨지지 않게. 대시보드에서 온 doneYear 는 '그 해 완료'라는 뜻을 지켜 빈 목록이 되도록 YearRange 에 맡긴다
+    private void NormalizeYear()
+    {
+        if (Year is int y && y != 0 && !Rules.IsPickableYear(y)) Year = null;
+    }
+
     public async Task OnGetAsync()
     {
+        NormalizeYear();
         Today = _clock.Today;
         Categories = (await _db.Categories.AsNoTracking().ToListAsync()).OrderBy(c => c.SortOrder).ToList();
         // 위치는 목록 계산(ListAsync)이 읽는 것을 같이 쓴다 (요청 안에서 한 번만 읽기)
@@ -128,10 +147,21 @@ public class IndexModel : PageModel
         if (_analytics != null) Orgs = await _analytics.OrgOptionsAsync();
         NewCounts = await _projects.NewCountsAsync();
         Watched = await _projects.WatchedIdsAsync();
+        if (HasYear)
+        {
+            // 가장 이른 종료일 하나만 읽는다(연도별 묶음 집계는 두 DB 의 번역이 달라질 수 있어 피한다)
+            var first = await _db.LiveProjects.AsNoTracking().Where(p => p.ClosedOn != null).OrderBy(p => p.ClosedOn)
+                .Select(p => p.ClosedOn).FirstOrDefaultAsync();
+            var thisYear = Today.Year;
+            var picked = ClosedYear is int c && Rules.IsPickableYear(c) ? c : thisYear;
+            var from = Math.Min(first?.Year ?? thisYear, picked);
+            for (var y = Math.Max(thisYear, picked); y >= from; y--) Years.Add(y);
+        }
     }
 
     public async Task<IActionResult> OnGetExcelAsync()
     {
+        NormalizeYear();
         var rows = await _dash.ListAsync(Filter());
         // 제목의 조건은 화면에서 고른 것 전부 (유형·법인 포함) — 내려받은 파일만 보고도 어떤 목록인지 알 수 있게
         var category = Category == null ? null : (await _db.Categories.AsNoTracking().Where(c => c.Id == Category.Value).Select(c => c.Name).FirstOrDefaultAsync());
@@ -148,6 +178,7 @@ public class IndexModel : PageModel
         if (category != null) parts.Add("유형: " + category);
         if (corp != null) parts.Add("법인: " + corp);
         if (Org != null && OrgName != null) parts.Add("조직: " + OrgName);
+        if (HasYear) parts.Add(ClosedYear is int y ? $"종료 연도: {y}년" : "종료 연도: 전체");
         if (!string.IsNullOrWhiteSpace(Q)) parts.Add("검색: " + Q.Trim());
         if (SpecialText is { } special) parts.Add(special);
         if (Mine) parts.Add("내 과제");
@@ -169,5 +200,5 @@ public class IndexModel : PageModel
 
     public string? OrgName => Orgs.FirstOrDefault(o => o.Id == Org)?.Name;
 
-    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due, SortKey, Desc, Current, Org);
+    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due, SortKey, Desc, Current, Org, ClosedYear);
 }

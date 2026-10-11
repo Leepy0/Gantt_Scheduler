@@ -101,6 +101,10 @@ public class EditModel : PageModel
         return Page();
     }
 
+    // 등록할 위치가 없다(사용 중인 법인이 하나도 없음) — 화면 맨 위에 첫 설정 안내를 띄운다
+    public bool NeedsSetup { get; private set; }
+    public bool IsAdmin => _me.IsAdmin;
+
     public async Task<IActionResult> OnPostAsync()
     {
         // 모델 바인딩 오류(날짜 형식 등)는 규칙 검사 전에 알려 준다
@@ -291,7 +295,9 @@ public class EditModel : PageModel
         UserNames = await _projects.UserNamesAsync();
         VendorNames = (await _db.Vendors.AsNoTracking().ToListAsync()).Where(v => v.IsActive).OrderBy(v => v.SortOrder).Select(v => v.Name).ToList();
 
-        var locations = (await _db.Locations.AsNoTracking().ToListAsync())
+        var all = await _db.Locations.AsNoTracking().ToListAsync();
+        NeedsSetup = IsNew && !all.Any(l => l.Level == 1 && l.IsActive);
+        var locations = all
             .OrderBy(l => l.Level).ThenBy(l => l.SortOrder).ThenBy(l => l.Id)
             .Select(l => new { id = l.Id, parentId = l.ParentId, level = l.Level, name = l.Name, active = l.IsActive });
         var equipment = (await _db.EquipmentTypes.AsNoTracking().ToListAsync())

@@ -753,6 +753,8 @@ function fillTemplate(template, sheets) {
         await page.selectOption('#file-stage', { label: '검수' });
         await page.click('#upload-btn');
         await page.waitForFunction(() => document.getElementById('files').innerText.includes('현장사진.png'));
+        // 과제 첨부 합계 (상한 Storage:ProjectMaxMB 는 기본 없음)
+        assert((await page.locator('#files-total').innerText()).includes('첨부 합계'), '첨부 합계가 없음');
         await shot(page, 'd11-detail-files');
 
         const href = await page.locator('#files a.row-title').getAttribute('href');
@@ -2451,7 +2453,7 @@ function fillTemplate(template, sheets) {
     await step('관리 — 단계 아래 작업 템플릿 추가·선행, 등록 화면에 템플릿 작업 n개 함께 만들기', async () => {
         await page.goto(BASE + '/Admin#category');
         await page.waitForSelector('.columns .node');
-        await page.locator('.column').first().locator('.node-main', { hasText: /^물류$/ }).click();
+        await page.locator('.column').first().locator('.node-main', { has: page.locator('.node-name', { hasText: /^물류$/ }) }).click();
         await page.locator('.column').nth(1).locator('.node-main', { hasText: '검토' }).click();
         await page.waitForSelector('[data-template-works]');
         assert((await page.locator('[data-template-works] .column-head').innerText()).includes('검토'), '작업 템플릿 판에 단계 이름이 없음');
@@ -2536,6 +2538,139 @@ function fillTemplate(template, sheets) {
         assert(P.stages.find((s) => s.name === '보고').targetDate === kstToday(40), '단계 목표일이 들어가지 않음');
         await page.click('.tabs [data-tab=activity]');
         await page.waitForFunction(() => document.getElementById('feed').textContent.includes('Excel 가져오기'));
+    });
+
+    await step('상황판 — 메뉴에서 새 창으로 열리고, 등록하지 않은 TV PC 에서 1920×1080 한 화면에 맞으며 과제가 바뀌면 다시 받음', async () => {
+        await page.goto(BASE + '/');
+        const [popup] = await Promise.all([desktop.waitForEvent('page'), page.click('#board-link')]);
+        await popup.waitForSelector('#board');
+        assert(new URL(popup.url()).pathname === '/Board', '상황판 링크가 새 창으로 열리지 않음: ' + popup.url());
+        await popup.close();
+
+        // 이름을 등록하지 않은 다른 PC(TV)
+        const tv = await browser.newContext({ viewport: { width: 1920, height: 1080 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul', extraHTTPHeaders: { 'X-Forwarded-For': '10.77.0.90' } });
+        const b = await tv.newPage();
+        watch(b, 'board');
+        await b.goto(BASE + '/Board');
+        assert(new URL(b.url()).pathname === '/Board', '등록하지 않은 PC 에서 상황판이 이름 등록으로 넘어감: ' + b.url());
+        await b.waitForSelector('.board-kpi');
+        assert((await b.locator('.board-kpi').count()) === 5, 'KPI 가 5개가 아님');
+        const over = await b.evaluate(() => [document.documentElement.scrollHeight - innerHeight, document.documentElement.scrollWidth - innerWidth]);
+        assert(over[0] <= 0 && over[1] <= 0, '상황판이 한 화면을 넘침: ' + over);
+        assert((await b.locator('[data-board-alert]').count()) > 0, '지연·위험 과제 줄이 없음');
+        await shot(b, 'd65-board', false);
+
+        // 데이터 버전: 다른 PC 가 과제에 댓글을 남기면 1분 확인에서 화면을 다시 받는다(여기서는 확인을 바로 부른다)
+        const before = await b.getAttribute('#board', 'data-stamp');
+        await b.evaluate(() => window.BoardPoll());
+        await b.waitForTimeout(300);
+        assert((await b.getAttribute('#board', 'data-stamp')) === before, '바뀐 것이 없는데 확인값이 달라짐');
+        // 바뀐 것이 없어도 '확인' 시각은 서버 응답으로 고친다(화면이 멈추지 않았음을 보이게) — 지운 뒤 다시 채워지는지 본다
+        await b.evaluate(() => { document.querySelector('#board [data-checked]').textContent = ''; window.BoardPoll(); });
+        await b.waitForFunction(() => /^\d{2}:\d{2}$/.test(document.querySelector('#board [data-checked]').textContent));
+        await openProject(page, '한국 에어컨 1라인 리프터 교체');
+        const id = +new URL(page.url()).searchParams.get('id');
+        await page.evaluate(async (pid) => {
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const r = await fetch('/Projects/Detail?handler=Comment', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                body: JSON.stringify({ projectId: pid, text: '상황판 갱신 확인' }),
+            });
+            if (!(await r.json()).ok) throw new Error('댓글 실패 ' + r.status);
+        }, id);
+        await b.evaluate(() => window.BoardPoll());
+        await b.waitForFunction((s) => document.getElementById('board').getAttribute('data-stamp') !== s, before);
+        assert((await b.locator('.board-kpi').count()) === 5, '다시 받은 화면이 비어 있음');
+        await tv.close();
+    });
+
+    await step('도움말 — 머리의 ? 로 열고, 대시보드 카드의 ? 는 그 절로 감', async () => {
+        await page.goto(BASE + '/');
+        await page.click('#help-link');
+        await page.waitForSelector('.help-toc');
+        assert((await page.locator('.help-sec').count()) >= 14, '도움말 절이 모자람');
+        await page.goto(BASE + '/');
+        await page.click('#risk-card [data-help=risk]');
+        await page.waitForSelector('#risk:target');
+        assert(new URL(page.url()).hash === '#risk', '위험 절로 가지 않음');
+        await shot(page, 'd66-help', false);
+    });
+
+    await step('완료 목록 — 종료 연도 고르기(기본 올해), 전체 연도로 바꾸면 주소에 남음', async () => {
+        await page.goto(BASE + '/Projects?state=done');
+        const year = String(new Date(Date.now() + 9 * 3600e3).getUTCFullYear());
+        assert((await page.locator('#list-year').inputValue()) === year, '기본 연도가 올해가 아님');
+        await page.selectOption('#list-year', '0');
+        await page.waitForURL(/year=0/);
+        assert((await page.locator('#list-year').inputValue()) === '0', '전체 연도가 유지되지 않음');
+        await page.click('#filters label:has(input[value=dropped])');
+        await page.waitForURL(/state=dropped/);
+        assert(!/year=0/.test(page.url()), '탭을 바꿨는데 연도가 남음');
+        await shot(page, 'd67-list-year');
+    });
+
+    // 사용자 정리: 'e2e 오타'를 'e2e 원본'으로 합치고, 가져오기로 생긴 'e2e가져오기담당'의 담당을 김물류에게 넘겨 사용 중지한다
+    await step('관리 — 사용자 합치기·담당 이관 후 사용 중지·변경 이력·사용 현황', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#admin-tabs [data-kind=user]');
+        await page.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('평영'));
+        for (const name of ['e2e 오타', 'e2e 원본']) {
+            const add = page.locator('form[data-add="1"]');
+            await add.locator('input[name=name]').fill(name);
+            await add.locator('button[type=submit]').click();
+            await page.waitForFunction((n) => [...document.querySelectorAll('.node-name')].some((x) => x.textContent === n), name);
+        }
+        // 맡은 일(진행 과제·미완료 작업 수)이 사용자 목록에 보인다
+        await page.waitForFunction(() => [...document.querySelectorAll('.node')].some((n) => n.innerText.includes('e2e가져오기담당') && n.innerText.includes('과제 1')));
+
+        // 합치기: 사용자 시트 → 합치기 시트 → 확인
+        await page.locator('.node', { hasText: 'e2e 오타' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' [data-merge]');
+        await page.click(SHEET + ' [data-merge]');
+        await page.waitForSelector(SHEET + ' select[name=intoId]');
+        const into = await page.$eval(SHEET + ' select[name=intoId]', (sel) => [...sel.options].find((o) => o.text.startsWith('e2e 원본')).value);
+        await page.selectOption(SHEET + ' select[name=intoId]', into);
+        await page.fill(SHEET + ' textarea[name=reason]', '이름 오타');
+        await shot(page, 'd70-admin-merge', false);
+        await page.click(SHEET + ' button[type=submit]');
+        await page.locator('dialog.sheet[open] [data-yes]').click();
+        await page.waitForFunction(() => ![...document.querySelectorAll('.node-name')].some((x) => x.textContent === 'e2e 오타'));
+        await page.waitForSelector(SHEET, { state: 'detached' });
+
+        // 이관: 맡은 일이 있는 사람의 '사용 중지'는 이관 시트로
+        await page.locator('.node', { hasText: 'e2e가져오기담당' }).locator('.node-main').click();
+        await page.waitForSelector(SHEET + ' [data-user-load]');
+        await page.click(SHEET + ' [data-danger]');
+        await page.waitForSelector(SHEET + ' select[name=toId]');
+        assert(await page.locator(SHEET + ' input[name=projects]').isChecked(), '진행 과제 담당이 기본 선택이 아님');
+        await page.click(SHEET + ' button[type=submit]');
+        assert((await sheetError(page)).includes('넘겨받을 사람'), '넘겨받을 사람 없이 이관됨');
+        const kim = await page.$eval(SHEET + ' select[name=toId]', (sel) => [...sel.options].find((o) => o.text.startsWith('김물류')).value);
+        await page.selectOption(SHEET + ' select[name=toId]', kim);
+        await page.fill(SHEET + ' textarea[name=reason]', '부서 이동');
+        await shot(page, 'd71-admin-reassign', false);
+        await submitSheet(page);
+        await page.waitForFunction(() => [...document.querySelectorAll('.node.off')].some((n) => n.innerText.includes('e2e가져오기담당') && n.innerText.includes('사용 중지')));
+
+        // 변경 이력 탭: 방금 한 일과 앞 단계의 기준 정보 변경(공휴일·작업 템플릿 등)
+        await page.click('#admin-tabs [data-kind=changes]');
+        await page.waitForSelector('[data-changes-list]');
+        const all = await page.locator('[data-changes-list]').innerText();
+        assert(all.includes('사용자 병합: e2e 오타 → e2e 원본'), '병합 기록이 없음');
+        assert(all.includes('담당 이관 후 사용 중지: e2e가져오기담당 → 김물류'), '이관 기록이 없음');
+        await page.selectOption('[data-changes-filter] select[name=kind]', 'holiday');
+        await page.click('[data-changes-filter] button[type=submit]');
+        await page.waitForFunction(() => {
+            const list = document.querySelector('[data-changes-list]');
+            return list && !list.innerText.includes('사용자 병합') && list.innerText.includes('공휴일');
+        });
+        await shot(page, 'd72-admin-changes');
+
+        // 사용 현황 탭: 조직별 집계와 (관리자) 사람별 마지막 접속
+        await page.click('#admin-tabs [data-kind=usage]');
+        await page.waitForSelector('[data-usage-orgs] tbody tr');
+        assert((await page.locator('[data-usage-people]').innerText()).includes('평영'), '사람별 접속이 없음');
+        await shot(page, 'd73-admin-usage');
     });
 
     await desktop.close();
@@ -2926,7 +3061,7 @@ function fillTemplate(template, sheets) {
         await shot(m, 'm20-import');
         await m.goto(BASE + '/Admin#category');
         await m.waitForSelector('.columns .node');
-        await m.locator('.column').first().locator('.node-main', { hasText: /^물류$/ }).click();
+        await m.locator('.column').first().locator('.node-main', { has: m.locator('.node-name', { hasText: /^물류$/ }) }).click();
         await m.locator('.column').nth(1).locator('.node-main', { hasText: '검토' }).click();
         await m.waitForSelector('[data-template-works] .node');
         await m.locator('[data-template-works]').scrollIntoViewIfNeeded();
@@ -2942,6 +3077,19 @@ function fillTemplate(template, sheets) {
         await closeSheet(m);
     });
 
+    await step('모바일 도움말·상황판 — 머리의 ? 로 열고 넘치지 않음', async () => {
+        await m.goto(BASE + '/');
+        assert(await m.locator('#help-link').isVisible(), '모바일 머리에 도움말이 없음');
+        await m.click('#help-link');
+        await m.waitForSelector('.help-toc');
+        await noOverflow('도움말');
+        await shot(m, 'm23-help', false);
+        await m.goto(BASE + '/Board');
+        await m.waitForSelector('.board-kpi');
+        await noOverflow('상황판');
+        await shot(m, 'm24-board', false);
+    });
+
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
         await m.goto(BASE + '/Welcome?switch=1');
         await m.waitForSelector('.welcome-card input[name=Name]');
@@ -2955,6 +3103,37 @@ function fillTemplate(template, sheets) {
         await noOverflow('사용자 IP');
         await shot(m, 'm11c-admin-user-ip', false);
         await closeSheet(m);
+    });
+
+    await step('모바일 관리 — 합치기·이관 시트, 변경 이력, 사용 현황이 화면 안에 들어옴', async () => {
+        await m.goto(BASE + '/Admin');
+        await m.click('#admin-tabs [data-kind=user]');
+        await m.waitForFunction(() => document.querySelector('.columns') && document.querySelector('.columns').innerText.includes('김물류'));
+        await m.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await m.waitForSelector(SHEET + ' [data-merge]');
+        await m.click(SHEET + ' [data-merge]');
+        await m.waitForSelector(SHEET + ' select[name=intoId]');
+        await noOverflow('합치기 시트');
+        const sel = await m.locator(SHEET + ' select[name=intoId]').boundingBox();
+        assert(sel && sel.height >= 44, '합칠 사람 칸이 터치 크기가 아님: ' + JSON.stringify(sel));
+        await shot(m, 'm25-admin-merge', false);
+        await closeSheet(m);
+        // 김물류는 맡은 일이 있어 사용 중지 단추가 이관 시트를 연다 (저장하지 않는다)
+        await m.locator('.node', { hasText: '김물류' }).locator('.node-main').click();
+        await m.waitForSelector(SHEET + ' [data-danger]');
+        await m.click(SHEET + ' [data-danger]');
+        await m.waitForSelector(SHEET + ' select[name=toId]');
+        await noOverflow('이관 시트');
+        await shot(m, 'm25b-admin-reassign', false);
+        await closeSheet(m);
+        await m.click('#admin-tabs [data-kind=changes]');
+        await m.waitForSelector('[data-changes-list]');
+        await noOverflow('변경 이력 탭');
+        await shot(m, 'm25c-admin-changes');
+        await m.click('#admin-tabs [data-kind=usage]');
+        await m.waitForSelector('[data-usage-orgs] tbody tr');
+        await noOverflow('사용 현황 탭');
+        await shot(m, 'm25d-admin-usage');
     });
 
     await mobile.close();

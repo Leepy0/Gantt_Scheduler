@@ -1,0 +1,136 @@
+@page
+@model BoardModel
+@{
+    Layout = null;
+    var d = Model.Data;
+    var k = d.Kpi;
+    var days = new[] { "일", "월", "화", "수", "목", "금", "토" };
+}
+<!DOCTYPE html>
+@* 상황판은 _Layout 을 쓰지 않는다 — 메뉴·알림 종·사용자 이름이 없고(등록 없이 여는 화면), 어두운 TV 변형(.theme-board)으로 그린다 *@
+<html lang="ko" data-build="@Model.BuildId">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>상황판 · 과제 스케줄러</title>
+    <link rel="icon" type="image/svg+xml" href="~/favicon.svg" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body class="theme-board">
+    <partial name="_Icons" />
+    <div class="board" id="board" data-stamp="@d.Stamp" data-stamp-url="@Url.Page("/Board", "Stamp")">
+        <header class="board-head">
+            <h1>과제 상황판</h1>
+            <span class="board-date num">@d.Today.ToString("yyyy-MM-dd") (@days[(int)d.Today.DayOfWeek])</span>
+            <span class="spacer"></span>
+            <span class="board-conn" id="board-conn" role="status" hidden><svg class="ic"><use href="#i-alert" /></svg>서버에 연결할 수 없어 마지막 화면을 보이는 중입니다</span>
+            @* 지연 판정의 '오늘'이 한국 날짜라 기준 시각도 한국 시간으로 적는다(대시보드와 같다) *@
+            @* '반영'은 화면을 마지막으로 다시 받은 시각, '확인'은 서버에 마지막으로 물어본 시각 — 바뀐 것이 없는 날에도 화면이 멈추지 않았음을 보이려고 나눠 적는다 *@
+            <span class="board-asof num">반영 @d.AsOf · 확인 <span data-checked>@d.AsOf.Substring(6)</span> (한국 시간)</span>
+        </header>
+
+        <section class="board-kpis" aria-label="요약">
+            <div class="board-kpi" data-board-kpi="active">
+                <span class="board-kpi-label">진행 과제</span>
+                <span class="board-kpi-value num">@k.Active</span>
+                <span class="board-kpi-sub">보류 @k.Hold</span>
+            </div>
+            <div class="board-kpi @(k.Delayed > 0 ? "alarm" : "")" data-board-kpi="delayed">
+                <span class="board-kpi-label">@if (k.Delayed > 0) {<svg class="ic"><use href="#i-alert" /></svg>}지연</span>
+                <span class="board-kpi-value num">@k.Delayed</span>
+                <span class="board-kpi-sub">목표일 초과</span>
+            </div>
+            <div class="board-kpi @(k.Risk > 0 ? "warn" : "")" data-board-kpi="risk">
+                <span class="board-kpi-label">지연 위험</span>
+                <span class="board-kpi-value num">@k.Risk</span>
+                <span class="board-kpi-sub">정체 @k.Stale</span>
+            </div>
+            <div class="board-kpi" data-board-kpi="due">
+                <span class="board-kpi-label">이번 주 목표</span>
+                <span class="board-kpi-value num">@k.DueThisWeek</span>
+                <span class="board-kpi-sub">@(Rules.SoonDays)일 안에 단계 목표가 있는 과제</span>
+            </div>
+            <div class="board-kpi" data-board-kpi="done">
+                <span class="board-kpi-label">올해 완료</span>
+                <span class="board-kpi-value num">@k.DoneThisYear</span>
+                <span class="board-kpi-sub">@(d.Today.Year)년</span>
+            </div>
+        </section>
+
+        <div class="board-main">
+            <section class="board-panel" data-pager aria-labelledby="board-alerts-h">
+                <header><h2 id="board-alerts-h">지연·위험 과제</h2><span class="board-count num">@(d.Alerts.Count)건</span><span class="spacer"></span><span class="board-page num" data-page-no></span></header>
+                @if (d.Alerts.Count == 0)
+                {
+                    <p class="board-empty"><svg class="ic"><use href="#i-check" /></svg>지연되었거나 지연 위험 신호가 있는 과제가 없습니다.</p>
+                }
+                else
+                {
+                    <ul class="board-rows" data-rows>
+                        @foreach (var a in d.Alerts)
+                        {
+                            <li class="board-alert @(a.Delayed ? "alarm" : "warn")" data-board-alert="@a.Id">
+                                <span class="board-chip @(a.Delayed ? "alarm" : "warn") num"><svg class="ic"><use href="#i-@(a.Delayed ? "alert" : "clock")" /></svg>@a.Chip</span>
+                                <div class="board-alert-body">
+                                    <div class="board-alert-title"><b>@a.Title</b><span class="muted">@a.Corporation · @a.Owner</span></div>
+                                    <p class="board-reason">@a.Reason</p>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+
+            <div class="board-side">
+                <section class="board-panel" data-pager aria-labelledby="board-week-h">
+                    <header><h2 id="board-week-h">이번 주 목표 단계</h2><span class="board-count num">@(d.Week.Count)건</span><span class="spacer"></span><span class="board-page num" data-page-no></span></header>
+                    @if (d.Week.Count == 0)
+                    {
+                        <p class="board-empty">@(Rules.SoonDays)일 안에 목표일이 있는 단계가 없습니다.</p>
+                    }
+                    else
+                    {
+                        <ul class="board-rows" data-rows>
+                            @foreach (var w in d.Week)
+                            {
+                                <li class="board-due">
+                                    <span class="board-chip @(w.DDay <= 2 ? "warn" : "plain") num">@(w.DDay == 0 ? "오늘" : $"D-{w.DDay}")</span>
+                                    <span class="board-due-date num">@w.Date.ToString("MM-dd") (@days[(int)w.Date.DayOfWeek])</span>
+                                    <span class="board-due-name"><b>@w.Stage</b><span class="muted">@w.Project · @w.Corporation</span></span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </section>
+
+                <section class="board-panel" data-pager aria-labelledby="board-corp-h">
+                    <header><h2 id="board-corp-h">법인별 현황</h2><span class="spacer"></span><span class="board-page num" data-page-no></span></header>
+                    @if (d.Corps.Count == 0)
+                    {
+                        <p class="board-empty">진행 중인 과제가 없습니다.</p>
+                    }
+                    else
+                    {
+                        <div class="board-corp-head" aria-hidden="true"><span>법인</span><span>진행</span><span>지연</span><span>위험</span><span>올해 완료</span></div>
+                        <ul class="board-rows" data-rows>
+                            @foreach (var c in d.Corps)
+                            {
+                                @* 진행 = 정상 진행 + 지연(지연·위험은 진행 과제 가운데 몇 건인지) *@
+                                <li class="board-corp" data-board-corp="@c.Id">
+                                    <b>@c.Name</b>
+                                    <span class="num" aria-label="진행 @(c.OnTrack + c.Delayed)건">@(c.OnTrack + c.Delayed)</span>
+                                    <span class="num @(c.Delayed > 0 ? "alarm" : "zero")" aria-label="지연 @(c.Delayed)건">@c.Delayed</span>
+                                    <span class="num @(c.Risk > 0 ? "warn" : "zero")" aria-label="위험 @(c.Risk)건">@c.Risk</span>
+                                    <span class="num" aria-label="올해 완료 @(c.Done)건">@c.Done</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </section>
+            </div>
+        </div>
+    </div>
+    <script src="~/js/board.js" asp-append-version="true"></script>
+</body>
+</html>

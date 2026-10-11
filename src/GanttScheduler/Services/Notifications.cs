@@ -45,6 +45,8 @@ public sealed class ActivityLog : ISaveHook
     private readonly List<Activity> _pending = new();
     private readonly List<Activity> _deferred = new();
     private readonly List<Hint> _hints = new();
+    // 받을 사람 바꿔 보내기(사용자 병합: 같은 저장에서 지워지는 사람 대신 합쳐질 사람에게) — 지워질 사용자를 가리키는 알림을 만들지 않게
+    private readonly Dictionary<int, int> _redirect = new();
 
     // 활동만으로는 알 수 없는 받을 사람. Target: 알림이 가리킬 활동(없으면 Source) — 댓글을 고치며 새로 고른 멘션은 그 댓글을 가리킨다
     private sealed record Hint(Activity Source, int UserId, string Kind, Activity? Target);
@@ -82,6 +84,9 @@ public sealed class ActivityLog : ISaveHook
     {
         if (userId is int id && id > 0) _hints.Add(new Hint(source, id, kind, target));
     }
+
+    // 이 저장에서 from 에게 갈 알림을 to 에게 보낸다 (UserAdminService.MergeAsync)
+    public void Redirect(int from, int to) => _redirect[from] = to;
 
     public async Task BeforeSaveAsync(CancellationToken ct)
     {
@@ -140,6 +145,7 @@ public sealed class ActivityLog : ISaveHook
             var per = new Dictionary<int, List<(Activity Lead, string Kind)>>();
             void Add(Activity source, int? userId, string kind, Activity? target = null)
             {
+                if (userId is int moved && _redirect.TryGetValue(moved, out var to)) userId = to;
                 if (userId is not int id || id <= 0 || id == source.UserId) return;
                 if (!per.TryGetValue(id, out var items)) per[id] = items = new();
                 items.Add((target ?? source, kind));
