@@ -55,7 +55,9 @@ public class UserAdminTests : IClassFixture<TestDb>
         var list = new List<(string, string, string)>();
         foreach (var e in db.Model.GetEntityTypes())
         {
-            var table = e.GetTableName()!;
+            // SQL Server 는 표를 스키마(pm) 아래에 둔다 — 스키마까지 붙여야 원시 SQL 이 표를 찾는다
+            var schema = e.GetSchema();
+            var table = schema == null ? e.GetTableName()! : schema + "." + e.GetTableName();
             var fkProps = e.GetForeignKeys().SelectMany(fk => fk.Properties.Select(p => (p, fk))).ToList();
             foreach (var p in e.GetProperties())
             {
@@ -76,10 +78,16 @@ public class UserAdminTests : IClassFixture<TestDb>
     private static async Task<int> CountAsync(AppDb db, string table, string column, int id)
     {
         var sql = db.GetService<Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper>();
-        return await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS " + sql.DelimitIdentifier("Value") + " FROM " + sql.DelimitIdentifier(table)
+        return await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS " + sql.DelimitIdentifier("Value") + " FROM " + Table(sql, table)
             + " WHERE " + sql.DelimitIdentifier(column) + " = {0}", id).SingleAsync();
     }
 #pragma warning restore EF1003
+
+    private static string Table(Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper sql, string table)
+    {
+        var dot = table.IndexOf('.');
+        return dot < 0 ? sql.DelimitIdentifier(table) : sql.DelimitIdentifier(table[(dot + 1)..], table[..dot]);
+    }
 
     [Fact]
     public void 병합이_옮기는_참조_목록은_EF_모델의_사용자_참조와_같다()
