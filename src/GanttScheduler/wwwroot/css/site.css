@@ -858,3 +858,45 @@ dialog.sheet:focus { outline: none; }
     .setup-item { flex-wrap: wrap; }
     .setup-item > .btn { width: 100%; }
 }
+
+/* ── 일정 엔진 확장: 저장 전 미리보기 · 예상 일정 · 의존 유형·간격 · 과제 간 단계 연결 ── */
+.preview { display: flex; flex-direction: column; gap: 8px; }
+.preview:empty { display: none; }
+.preview[aria-busy=true] { opacity: .5; }
+.preview-note { display: flex; align-items: center; gap: 4px; }
+.preview-note .ic { width: 12px; height: 12px; }
+.preview-block { display: flex; flex-direction: column; gap: 4px; }
+.preview-block h3 { display: flex; align-items: center; gap: 8px; }
+.preview-table td { vertical-align: top; }
+.preview-table .num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.preview-table .r { white-space: nowrap; }
+.preview-title { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.preview-table .hint { display: block; }
+.preview-stages { display: flex; flex-direction: column; gap: 4px; }
+.preview-stages > li { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
+.preview-stage-name { font-weight: 600; }
+.preview-stage-text { color: var(--text-2); font-size: var(--fs-xs); }
+/* 시작 전 작업의 예상 일정: 목표보다 늦어지면 노랑 점선(위험) */
+.g-bar.ghost.fc { border-color: var(--warn-mid); }
+.lg.ghost { background: transparent; border: 1px dashed var(--line-strong); }
+.lg.ghost.fc { border-color: var(--warn-mid); }
+/* 작업 시트의 선행 작업: 고른 줄에만 유형·간격 */
+.pick-list .pre-row { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.pick-list .pre-row:last-child { border-bottom: 0; }
+.pick-list .pre-row .check { flex: 1 1 220px; min-width: 0; border-bottom: 0; }
+.pre-opts { display: flex; align-items: center; gap: 8px; padding: 0 0 4px 24px; }
+.pre-opts select { width: auto; min-height: 32px; padding: 4px 8px; }
+.pre-opts input[type=number] { width: 72px; min-height: 32px; padding: 4px 8px; }
+/* 과제 간 단계 연결 */
+.cross-list > li { display: flex; align-items: center; gap: 8px; min-height: 40px; border-bottom: 1px solid var(--line); }
+.cross-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
+.cross-main a { overflow-wrap: anywhere; }
+.cross-bad { display: flex; align-items: center; gap: 4px; color: var(--alarm); font-size: var(--fs-xs); font-weight: 600; }
+.cross-bad .ic { width: 12px; height: 12px; }
+.cross-add { padding: 12px; border-radius: var(--r-sm); background: var(--surface-2); gap: 12px; }
+.stage-cross { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 8px; }
+a.chip:hover { text-decoration: none; filter: brightness(.96); }
+@media (max-width: 767px) {
+    .pre-opts { padding-left: 0; width: 100%; }
+    .pre-opts select, .pre-opts input[type=number] { min-height: var(--tap); }
+}

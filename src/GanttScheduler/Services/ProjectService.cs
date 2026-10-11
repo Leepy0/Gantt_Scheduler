@@ -18,10 +18,12 @@ public record StageInput(
     int? Version = null, bool CloseWorks = false, bool CascadeWorks = false);
 
 // ClientToday: 화면(접속한 PC)의 오늘 날짜. 진행률만 올렸을 때 넣는 실적 시작에 쓴다(Rules.UserToday)
+// Links: 선행 작업마다 유형·간격(LinkInput). 없으면 Predecessors(id 목록 — 새 연결은 '끝나면 시작'·간격 0, 있던 연결은 유형·간격 유지)를 쓴다
 public record WorkInput(
     int? Id, int StageId, string? Title, string? Owner, string? CoOwner,
     DateOnly? PlanStart, DateOnly? PlanEnd, DateOnly? ActualStart, DateOnly? ActualEnd,
-    int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null);
+    int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null,
+    List<LinkInput>? Links = null);
 
 public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text);
 
@@ -104,7 +106,8 @@ public partial class ProjectService
     {
         var p = await LoadAsync(id);
         if (p == null) return null;
-        var view = Views.Project(p, _clock.Today, await LocationsAsync(), detail: true, calendar: await CalendarAsync());
+        var view = Views.Project(p, _clock.Today, await LocationsAsync(), detail: true, calendar: await CalendarAsync(),
+            crossLinks: await CrossLinksAsync(p.Stages.Select(s => s.Id).ToList()));
         // 삭제 단추는 지울 수 있는 사람에게만 보인다 — 서비스의 검사와 같은 판정(Rules.CanDelete…)을 지금 사용자로 계산해 싣는다
         var userId = _me.User?.Id;
         var files = p.Attachments.ToDictionary(a => a.Id);
@@ -297,9 +300,10 @@ public partial class ProjectService
         var p = await RequireAsync(id);
         if (!Rules.CanDeleteProject(p, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("과제 삭제는 담당자·등록자 또는 관리자만 할 수 있습니다.");
-        // 의존 관계는 작업보다 먼저 지워야 한다 (작업 쪽 FK 가 Restrict)
+        // 의존 관계는 작업보다 먼저 지워야 한다 (작업 쪽 FK 가 Restrict). 과제 간 단계 연결도 같다(상대 과제에는 기록)
         _db.WorkLinks.RemoveRange(p.Links);
         p.Links.Clear();
+        await RemoveStageLinksAsync(p, p.Stages.Select(s => s.Id).ToList(), removedProject: true);
         _db.Projects.Remove(p);
         await _db.SaveChangesAsync();
     }
@@ -371,7 +375,7 @@ public partial class ProjectService
         foreach (var l in src.Links)
         {
             if (map.TryGetValue(l.PredecessorId, out var from) && map.TryGetValue(l.SuccessorId, out var to))
-                p.Links.Add(new WorkLink { Predecessor = from, Successor = to, LagDays = l.LagDays });
+                p.Links.Add(new WorkLink { Predecessor = from, Successor = to, LagDays = l.LagDays, Type = l.Type });
         }
         foreach (var e in src.Equipments)
             p.Equipments.Add(new ProjectEquipment { EquipmentTypeId = e.EquipmentTypeId, Quantity = e.Quantity, Note = e.Note });
@@ -599,6 +603,7 @@ public partial class ProjectService
         var s = p.Stages.First(x => x.Id == stageId);
         var works = s.Works.Count;
         RemoveLinksOf(p, s.Works.Select(w => w.Id).ToHashSet());
+        await RemoveStageLinksAsync(p, new[] { s.Id }, removedProject: false);
         p.Stages.Remove(s);
         _db.Stages.Remove(s);
         p.Activities.Add(NewActivity(ActivityType.StageRemoved, works > 0 ? $"단계 삭제: {s.Name} (작업 {works}건 포함)" : $"단계 삭제: {s.Name}"));
@@ -714,21 +719,23 @@ public partial class ProjectService
         WorkItem w;
         var batch = Guid.NewGuid();
         var planChanged = false;
-        string? linkChange = null;
+        var linkChanges = new List<string>();
 
         if (input.Id == null)
         {
             ValidateWorkDates(p, null, input.PlanStart.Value, input.PlanEnd.Value, actualStart, input.ActualEnd);
-            var wanted = ValidatePredecessors(p, null, all, input.Predecessors, input.PlanStart.Value, Rules.IsMovable(actualStart, stage), planChanged: true, cal);
+            var wanted = ValidatePredecessors(p, null, all, WantedLinks(p, null, input.Links, input.Predecessors), input.PlanStart.Value, input.PlanEnd.Value, Rules.IsMovable(actualStart, stage), planChanged: true, cal);
             w = new WorkItem
             {
                 Title = title, Owner = owner, CoOwner = coOwner, Progress = progress,
                 PlanStart = input.PlanStart.Value, PlanEnd = input.PlanEnd.Value,
                 ActualStart = actualStart, ActualEnd = input.ActualEnd, Note = note, CreatedAt = _clock.UtcNow,
             };
-            ApplyLinks(p, w, all, wanted);
+            linkChanges = ApplyLinks(p, w, all, wanted);
             stage.Works.Add(w);
             p.Activities.Add(NewActivity(ActivityType.WorkAdded, $"[{stage.Name}] 작업 추가: {title}", stageId: stage.Id));
+            foreach (var text in linkChanges)
+                p.Activities.Add(NewActivity(ActivityType.LinkChanged, $"[{title}] {text}", stageId: stage.Id));
         }
         else
         {
@@ -745,7 +752,7 @@ public partial class ProjectService
             // 실적 시작을 지우거나 열린 단계로 옮겨 이번 저장으로 밀기 대상이 되는 작업은 일정을 새로 잡는 것과 같으므로 선행을 검사한다
             var movable = Rules.IsMovable(actualStart, stage);
             var becameMovable = movable && !Rules.IsMovable(w, p.Stages.First(s => s.Id == w.StageId));
-            var wanted = ValidatePredecessors(p, w, all, input.Predecessors, input.PlanStart.Value, movable, planChanged || becameMovable, cal);
+            var wanted = ValidatePredecessors(p, w, all, WantedLinks(p, w, input.Links, input.Predecessors), input.PlanStart.Value, input.PlanEnd.Value, movable, planChanged || becameMovable, cal);
 
             if (planChanged)
             {
@@ -771,17 +778,19 @@ public partial class ProjectService
             if (w.ActualStart != actualStart) { changed.Add($"실적 시작 {Fmt(actualStart)}"); w.ActualStart = actualStart; }
             if (w.ActualEnd != input.ActualEnd) { changed.Add(input.ActualEnd == null ? "실적 종료 취소" : $"실적 종료 {Fmt(input.ActualEnd)}"); w.ActualEnd = input.ActualEnd; }
             if (w.Note != note) { changed.Add("메모"); w.Note = note; }
-            linkChange = ApplyLinks(p, w, all, wanted);
-            if (linkChange != null) changed.Add(linkChange);
+            // 선행 연결의 추가·삭제·유형·간격 변경은 연결마다 LinkChanged 로 남긴다
+            linkChanges = ApplyLinks(p, w, all, wanted);
 
             if (changed.Count > 0)
                 p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id));
+            foreach (var text in linkChanges)
+                p.Activities.Add(NewActivity(ActivityType.LinkChanged, $"[{title}] {text}", stageId: stage.Id, workId: w.Id));
             w.Version++;
         }
 
         // 이 작업의 일정이나 선행이 바뀌었으면 아직 시작하지 않은 후행 작업을 선행 일정에 맞춰 민다.
         // 다른 것만 고친 저장에서는 관계없는 작업을 옮기지 않는다
-        if (planChanged || linkChange != null)
+        if (planChanged || linkChanges.Count > 0)
         {
             var plan = new PlanBatch();
             foreach (var m in Rules.Reschedule(p, cal, new[] { w }))
@@ -803,57 +812,108 @@ public partial class ProjectService
         if (w == null || w.ActualEnd != actualEnd) Rules.ValidateDate(actualEnd, p.StartDate, "실적 종료일", "actualEnd");
     }
 
-    // 선행 작업 지정이 유효한지 검사하고, 적용할 선행 작업 id 목록을 돌려준다 (predecessors 가 null 이면 지금 그대로).
-    // w 가 null 이면 새 작업. 존재·순환은 늘 검사한다. "선행이 끝난 뒤 시작" 검사는 새 작업이거나 목표 일정·선행 집합이
-    // 바뀔 때만 한다 — 공휴일 추가 등으로 이미 생긴 위반이 제목·담당·메모·진행률만 고치는 저장까지 막지 않게(위반은 화면에 표시된다).
-    // movable: 저장 뒤의 값으로 본 밀기 대상 여부(Rules.IsMovable). 이미 시작했거나 완료된 단계의 작업은 밀지도, 위반으로 표시하지도
-    // 않으므로 날짜도 검사하지 않는다 — 표시와 검사가 같은 기준이어야 '표시는 없는데 저장이 막히는' 일이 없다
-    private static List<int> ValidatePredecessors(Project p, WorkItem? w, Dictionary<int, WorkItem> all, List<int>? predecessors,
-                                                  DateOnly planStart, bool movable, bool planChanged, WorkCalendar cal)
+    // 저장할 선행 연결 목록. Links 가 오면 그대로(유형·간격 검사), 없으면 Predecessors(id 목록)를 쓰되 새 연결은 '끝나면 시작'·간격 0,
+    // 이미 있던 연결은 유형·간격을 그대로 둔다(유형을 모르는 화면이 저장해도 지우지 않게). 둘 다 없으면 지금 그대로
+    private static List<LinkSpec> WantedLinks(Project p, WorkItem? w, List<LinkInput>? links, List<int>? predecessors)
     {
         var current = w == null ? new List<WorkLink>() : p.Links.Where(l => l.SuccessorId == w.Id).ToList();
-        var wanted = predecessors == null ? current.Select(l => l.PredecessorId).ToList() : predecessors.Distinct().ToList();
-        var predsChanged = !current.Select(l => l.PredecessorId).ToHashSet().SetEquals(wanted);
+        if (links != null)
+        {
+            var specs = new List<LinkSpec>();
+            foreach (var l in links)
+            {
+                Rules.ValidateLag(l.LagDays);
+                if (specs.All(x => x.PredecessorId != l.PredecessorId))
+                    specs.Add(new LinkSpec(l.PredecessorId, Rules.ParseLinkType(l.Type), l.LagDays));
+            }
+            return specs;
+        }
+        if (predecessors != null)
+            return predecessors.Distinct().Select(id => current.FirstOrDefault(l => l.PredecessorId == id) is { } kept
+                ? new LinkSpec(id, kept.Type, kept.LagDays) : new LinkSpec(id, LinkType.FS, 0)).ToList();
+        return current.Select(l => new LinkSpec(l.PredecessorId, l.Type, l.LagDays)).ToList();
+    }
+
+    // 선행 연결 하나 (선행 작업 Id, 유형, 간격 근무일)
+    private sealed record LinkSpec(int PredecessorId, LinkType Type, int LagDays);
+
+    // 선행 작업 지정이 유효한지 검사하고, 적용할 선행 연결 목록을 돌려준다.
+    // w 가 null 이면 새 작업. 존재·순환은 늘 검사한다(순환은 유형과 관계없이 그래프로 본다). 선행 일정 검사는 새 작업이거나 목표 일정·
+    // 선행 연결(집합·유형·간격)이 바뀔 때만 한다 — 공휴일 추가 등으로 이미 생긴 위반이 제목·담당·메모·진행률만 고치는 저장까지 막지 않게(위반은 화면에 표시된다).
+    // movable: 저장 뒤의 값으로 본 밀기 대상 여부(Rules.IsMovable). 이미 시작했거나 완료된 단계의 작업은 밀지도, 위반으로 표시하지도
+    // 않으므로 날짜도 검사하지 않는다 — 표시와 검사가 같은 기준이어야 '표시는 없는데 저장이 막히는' 일이 없다
+    private static List<LinkSpec> ValidatePredecessors(Project p, WorkItem? w, Dictionary<int, WorkItem> all, List<LinkSpec> wanted,
+                                                       DateOnly planStart, DateOnly planEnd, bool movable, bool planChanged, WorkCalendar cal)
+    {
+        var current = w == null ? new List<WorkLink>() : p.Links.Where(l => l.SuccessorId == w.Id).ToList();
+        var predsChanged = current.Count != wanted.Count
+            || wanted.Any(x => !current.Any(l => l.PredecessorId == x.PredecessorId && l.Type == x.Type && l.LagDays == x.LagDays));
         var checkDates = movable && (w == null || planChanged || predsChanged);
+        var days = Math.Max(1, cal.WorkingDays(planStart, planEnd));
 
         // 순환 검사는 이 작업으로 들어오는 기존 관계를 빼고, 지정한 것을 하나씩 더해 가며 한다
         var edges = p.Links.Where(l => w == null || l.SuccessorId != w.Id).Select(l => (l.PredecessorId, l.SuccessorId)).ToList();
-        foreach (var id in wanted)
+        foreach (var spec in wanted)
         {
+            var id = spec.PredecessorId;
             if (!all.TryGetValue(id, out var pred) || (w != null && id == w.Id))
                 throw new RuleException("선행 작업을 다시 선택해 주세요.", "predecessors");
             if (w != null && Rules.Reaches(edges, w.Id, id))
                 throw new RuleException($"'{pred.Title}' 을(를) 선행으로 두면 의존 관계가 순환합니다.", "predecessors");
             if (w != null) edges.Add((id, w.Id));
 
-            // 밀기 대상 작업(미착수·단계 미완료)은 선행 작업이 끝난 다음 근무일 이후로만 잡을 수 있다
+            // 밀기 대상 작업(미착수·단계 미완료)은 선행이 허용하는 날 이후로만 잡을 수 있다
             if (!checkDates) continue;
-            var link = current.FirstOrDefault(l => l.PredecessorId == id) ?? new WorkLink { PredecessorId = id };
-            var earliest = Rules.EarliestStart(link, pred, cal);
-            if (planStart < earliest)
-                throw new RuleException($"선행 작업 '{pred.Title}' 이(가) {Fmt(pred.PlanEnd)} 에 끝나므로 {Fmt(earliest)} 이후에 시작해야 합니다.", "planStart");
+            var link = new WorkLink { PredecessorId = id, Type = spec.Type, LagDays = spec.LagDays };
+            var earliest = Rules.EarliestStart(link, pred.PlanStart, pred.PlanEnd, days, cal);
+            if (Rules.StartsBefore(planStart, earliest, cal)) throw PredecessorError(link, pred, earliest, cal);
         }
         return wanted;
     }
 
-    // 선행 작업 목록을 wanted 로 맞춘다. 바뀐 내용 요약을 돌려준다(변화 없으면 null)
-    private string? ApplyLinks(Project p, WorkItem w, Dictionary<int, WorkItem> all, List<int> wanted)
+    // 선행 일정 위반 안내 — 유형마다 무엇을 맞춰야 하는지 다르다
+    private static RuleException PredecessorError(WorkLink link, WorkItem pred, DateOnly earliest, WorkCalendar cal)
+    {
+        var lag = link.LagDays > 0 ? $"(간격 {link.LagDays}근무일) " : "";
+        return link.Type switch
+        {
+            LinkType.SS => new RuleException($"선행 작업 '{pred.Title}' 이(가) {Fmt(pred.PlanStart)} 에 시작하므로 {lag}{Fmt(earliest)} 이후에 시작해야 합니다(같이 시작).", "planStart"),
+            LinkType.FF => new RuleException($"선행 작업 '{pred.Title}' 이(가) {Fmt(pred.PlanEnd)} 에 끝나므로 {lag}{Fmt(Rules.EarliestEnd(link, pred.PlanEnd, cal))} 이후에 끝나야 합니다(같이 끝). 시작을 {Fmt(earliest)} 이후로 잡아 주세요.", "planStart"),
+            _ => new RuleException($"선행 작업 '{pred.Title}' 이(가) {Fmt(pred.PlanEnd)} 에 끝나므로 {lag}{Fmt(earliest)} 이후에 시작해야 합니다.", "planStart"),
+        };
+    }
+
+    // 선행 연결을 wanted 로 맞춘다. 바뀐 연결마다 이력 문구를 돌려준다(변화 없으면 빈 목록)
+    private List<string> ApplyLinks(Project p, WorkItem w, Dictionary<int, WorkItem> all, List<LinkSpec> wanted)
     {
         var current = w.Id == 0 ? new List<WorkLink>() : p.Links.Where(l => l.SuccessorId == w.Id).ToList();
-        var removed = current.Where(l => !wanted.Contains(l.PredecessorId)).ToList();
-        var added = wanted.Where(id => current.All(l => l.PredecessorId != id)).ToList();
-        foreach (var l in removed)
+        var changes = new List<string>();
+        foreach (var l in current.Where(l => wanted.All(x => x.PredecessorId != l.PredecessorId)).ToList())
         {
             p.Links.Remove(l);
             _db.WorkLinks.Remove(l);
+            changes.Add($"선행 연결 삭제: {Title(all, l.PredecessorId)}");
         }
-        foreach (var id in added)
-            p.Links.Add(new WorkLink { Predecessor = all[id], PredecessorId = id, Successor = w, SuccessorId = w.Id });
-
-        if (removed.Count == 0 && added.Count == 0) return null;
-        var names = wanted.Select(id => all[id].Title).ToList();
-        return names.Count == 0 ? "선행 작업 없음" : "선행 작업 → " + string.Join(", ", names);
+        foreach (var spec in wanted)
+        {
+            var existing = current.FirstOrDefault(l => l.PredecessorId == spec.PredecessorId);
+            if (existing == null)
+            {
+                p.Links.Add(new WorkLink { Predecessor = all[spec.PredecessorId], PredecessorId = spec.PredecessorId, Successor = w, SuccessorId = w.Id,
+                    Type = spec.Type, LagDays = spec.LagDays });
+                changes.Add($"선행 연결 추가: {all[spec.PredecessorId].Title} ({Rules.LinkText(spec.Type, spec.LagDays)})");
+            }
+            else if (existing.Type != spec.Type || existing.LagDays != spec.LagDays)
+            {
+                changes.Add($"선행 연결 변경: {all[spec.PredecessorId].Title} ({Rules.LinkText(existing.Type, existing.LagDays)} → {Rules.LinkText(spec.Type, spec.LagDays)})");
+                existing.Type = spec.Type;
+                existing.LagDays = spec.LagDays;
+            }
+        }
+        return changes;
     }
+
+    private static string Title(Dictionary<int, WorkItem> all, int id) => all.TryGetValue(id, out var w) ? w.Title : $"#{id}";
 
     // 한 묶음(BatchId) 안에서 움직인 작업 일정. 같은 작업이 여러 번 움직여도(연쇄 이동 뒤 선행 맞춤 등)
     // 활동은 처음 → 마지막 일정으로 작업당 1건만 남도록 처음 값과 이유를 기억한다

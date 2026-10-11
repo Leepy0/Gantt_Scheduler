@@ -30,6 +30,11 @@ public record WorkView
     public int? SlipDays { get; init; }                 // 목표 종료의 기준선 대비 (밀리면 양수)
     public int LateDays { get; init; }                  // 지연 일수 (지연이 아니면 0)
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (Views.WorkChip)
+    // 오늘 기준 예측 일정(Rules.ForwardPass) — 작업을 읽는 화면(상세)에서만 채운다
+    public DateOnly? ExpectedStart { get; init; }
+    public DateOnly? ExpectedEnd { get; init; }
+    public int ExpectedSlip { get; init; }              // 예상 종료가 목표 종료보다 늦은 근무일 (늦지 않으면 0)
+    public bool StartLate { get; init; }                // 목표 시작일이 지났는데 아직 시작하지 않음
 }
 
 public record CheckView(int Id, string Text, bool Done, string? DoneBy, DateTime? DoneAt);
@@ -64,14 +69,21 @@ public record StageView
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (Views.StageChip)
     public ChipView? DueChip { get; init; }             // 목표일 임박 칩 (미완료·미지연이고 Rules.SoonDays 안일 때만)
     public int? GapWorkDays { get; init; }              // 앞 단계 목표일(첫 단계는 착수일)부터의 근무일 간격 (Rules.TargetGaps — 단계 일정 표)
+    public List<CrossLinkView> CrossLinks { get; init; } = new(); // 다른 과제 단계와의 연결 (상세에서만 채운다)
 }
+
+// 과제 간 단계 연결 하나를 이 단계에서 본 것. Role: 'pred' = 상대 단계가 이 단계의 선행, 'succ' = 상대 단계가 이 단계의 후행.
+// Earliest: 후행 단계 목표일이 지켜야 할 가장 이른 날(Rules.StageLinkEarliest), Violated: 후행 목표일이 그보다 이름
+public record CrossLinkView(int Id, string Role, int ProjectId, string ProjectTitle, int StageId, string StageName,
+    DateOnly? StageDate, bool StageDone, int Lag, DateOnly? Earliest, bool Violated);
 
 public record ActivityView(
     int Id, string Type, string Text, string? Reason, string User, DateTime At, int? StageId, int? WorkId);
 
 public record ItemView(int TypeId, string Name, int Quantity, string? Note);
 
-public record LinkView(int Id, int From, int To, int Lag);
+// Type: 'fs'·'ss'·'ff' (WorkLink.Type) — 간트 연결선의 시작·끝 쪽과 작업 시트의 유형 선택에 쓴다
+public record LinkView(int Id, int From, int To, int Lag, string Type = "fs");
 
 // CanDelete: 지금 사용자가 지울 수 있는지 (ProjectService.ViewAsync 가 Rules.CanDeleteAttachment 로 채운다)
 public record AttachmentView(
@@ -132,6 +144,8 @@ public record ProjectView
     public ChipView Chip { get; init; } = ChipView.None; // 상태 칩 (지연이면 '지연 D+n')
     public string StateLabel { get; init; } = "";       // 표 글자 (지연이면 '지연', 아니면 진행·보류·중단·완료)
     public bool CanDelete { get; init; }                // 지금 사용자가 과제를 지울 수 있는지 (상세 화면에서만 채운다)
+    public int ReplanCount { get; init; }               // 예측과 목표가 다른 미착수 작업 수 (Rules.ReplanMoves — 상세의 '재계획')
+    public int LinkViolations { get; init; }            // 위반한 과제 간 단계 연결 수 (대시보드 위험 판정에 쓸 수 있게 노출)
 }
 
 // 위치 트리 조회용 색인
@@ -177,6 +191,7 @@ public static class Views
     public static string Key(StageKind s) => s.ToString().ToLowerInvariant();
     public static string Key(CategoryKind s) => s.ToString().ToLowerInvariant();
     public static string Key(ActivityType s) => char.ToLowerInvariant(s.ToString()[0]) + s.ToString()[1..];
+    public static string Key(LinkType s) => s.ToString().ToLowerInvariant();
 
     public static string Label(ProjectState s) => s switch
     {
@@ -195,13 +210,15 @@ public static class Views
     }
 
     public static WorkView Work(WorkItem w, DateOnly today, WorkCalendar cal,
-        IReadOnlyDictionary<int, int>? floats = null, List<int>? predecessors = null, bool violation = false, Stage? stage = null)
+        IReadOnlyDictionary<int, int>? floats = null, List<int>? predecessors = null, bool violation = false, Stage? stage = null,
+        Rules.Expected? expected = null)
     {
         int? slack = floats != null && floats.TryGetValue(w.Id, out var f) ? f : null;
         // 완료된 단계의 작업은 지연·임계로 보지 않는다 (Rules.IsOpen)
         var open = stage == null ? w.ActualEnd == null : Rules.IsOpen(w, stage);
         var late = open && Rules.IsLate(w, today);
         var closed = stage != null && Rules.IsClosedByStage(w, stage);
+        var startLate = open && expected != null && expected.StartLate && w.ActualStart == null;
         return new WorkView
         {
             Id = w.Id, StageId = w.StageId, Version = w.Version, Title = w.Title,
@@ -217,11 +234,16 @@ public static class Views
             ClosedOn = closed ? stage!.CompletedDate : null,
             SlipDays = Rules.SlipDays(w),
             LateDays = Rules.LateDays(w, stage, today),
-            Chip = WorkChip(late, Rules.StatusOf(w), Rules.IsDoneLate(w), closed),
+            Chip = WorkChip(late, Rules.StatusOf(w), Rules.IsDoneLate(w), closed, startLate),
+            ExpectedStart = expected?.Start,
+            ExpectedEnd = expected?.End,
+            ExpectedSlip = open && expected != null ? Math.Max(0, cal.Distance(w.PlanEnd, expected.End)) : 0,
+            StartLate = startLate,
         };
     }
 
-    public static List<StageView> Stages(Project p, DateOnly today, int oceanLeadDays, bool withWorks, WorkCalendar? calendar = null)
+    public static List<StageView> Stages(Project p, DateOnly today, int oceanLeadDays, bool withWorks, WorkCalendar? calendar = null,
+        IReadOnlyList<StageLink>? crossLinks = null)
     {
         var cal = calendar ?? WorkCalendar.WeekendsOnly;
         var list = new List<StageView>();
@@ -231,11 +253,13 @@ public static class Views
 
         // 의존 관계에서 나오는 값은 작업을 내보낼 때만 계산한다
         IReadOnlyDictionary<int, int>? floats = null;
+        Dictionary<WorkItem, Rules.Expected>? expected = null;
         var preds = new Dictionary<int, List<int>>();
         var violated = new HashSet<int>();
         if (withWorks)
         {
             floats = Rules.Floats(p, cal);
+            expected = Rules.ForwardPass(p, cal, today);
             var byId = new Dictionary<int, (WorkItem Work, Stage Stage)>();
             foreach (var st in p.Stages)
                 foreach (var w in st.Works) byId[w.Id] = (w, st);
@@ -271,7 +295,8 @@ public static class Views
 
             var works = withWorks
                 ? s.Works.OrderBy(w => w.PlanStart).ThenBy(w => w.Id)
-                    .Select(w => Work(w, today, cal, floats, preds.TryGetValue(w.Id, out var ids) ? ids : null, violated.Contains(w.Id), s))
+                    .Select(w => Work(w, today, cal, floats, preds.TryGetValue(w.Id, out var ids) ? ids : null, violated.Contains(w.Id), s,
+                        expected!.GetValueOrDefault(w)))
                     .ToList()
                 : new List<WorkView>();
 
@@ -285,7 +310,7 @@ public static class Views
                 BaselineDate = s.BaselineDate, SlipDays = Rules.SlipDays(s),
                 Status = Key(status), Progress = Rules.StageProgress(s), LateDays = lateDays,
                 PlanFrom = planFrom, ActualFrom = actualFrom, ActualTo = actualTo,
-                Forecast = Rules.Forecast(s, today), ForecastOver = Rules.ForecastOverDays(s, today),
+                Forecast = Rules.Forecast(s, today, expected), ForecastOver = Rules.ForecastOverDays(s, today, expected),
                 InboundHint = s.Kind == StageKind.Inbound && s.CompletedDate == null ? inbound : null,
                 Checks = checks, CheckDone = checks.Count(c => c.Done), CheckTotal = checks.Count,
                 Works = works,
@@ -297,6 +322,7 @@ public static class Views
                           && Rules.IsSoon(Rules.DaysLeft(s.TargetDate.Value, today))
                     ? DueChip(Rules.DaysLeft(s.TargetDate.Value, today), late: false) : null,
                 GapWorkDays = gaps[index],
+                CrossLinks = CrossLinks(s, crossLinks, cal),
             });
 
             if (s.TargetDate != null) prevTarget = s.TargetDate;
@@ -306,14 +332,14 @@ public static class Views
     }
 
     public static ProjectView Project(Project p, DateOnly today, LocationIndex locations, bool detail,
-        bool withWorks = true, WorkCalendar? calendar = null)
+        bool withWorks = true, WorkCalendar? calendar = null, IReadOnlyList<StageLink>? crossLinks = null)
     {
         var corp = locations.Get(p.CorporationId);
         var lead = corp?.OceanLeadDays ?? 0;
         var current = Rules.CurrentStage(p);
         var delayed = Rules.MostDelayedStage(p, today);
         var delayDays = Rules.DelayDays(p, today);
-        var stages = Stages(p, today, lead, withWorks, calendar);
+        var stages = Stages(p, today, lead, withWorks, calendar, crossLinks);
         var endTarget = Rules.EndTarget(p);
         var baselineEnd = Rules.BaselineEnd(p);
 
@@ -332,7 +358,7 @@ public static class Views
             SlipDays = baselineEnd == null || endTarget == null ? null : endTarget.Value.DayNumber - baselineEnd.Value.DayNumber,
             CriticalCount = stages.Sum(s => s.Works.Count(w => w.Critical)),
             Stages = stages,
-            Links = withWorks ? p.Links.OrderBy(l => l.Id).Select(l => new LinkView(l.Id, l.PredecessorId, l.SuccessorId, l.LagDays)).ToList() : new List<LinkView>(),
+            Links = withWorks ? p.Links.OrderBy(l => l.Id).Select(l => new LinkView(l.Id, l.PredecessorId, l.SuccessorId, l.LagDays, Key(l.Type))).ToList() : new List<LinkView>(),
 
             Vendor = detail ? p.Vendor : null,
             Description = detail ? p.Description : null,
@@ -349,7 +375,28 @@ public static class Views
             UpdatedAt = detail ? p.UpdatedAt : null,
             Chip = ProjectChip(p.State, delayDays),
             StateLabel = StateLabel(p.State, delayDays),
+            ReplanCount = withWorks ? Rules.ReplanMoves(p, calendar ?? WorkCalendar.WeekendsOnly, today).Count : 0,
+            LinkViolations = stages.Sum(s => s.CrossLinks.Count(x => x.Violated)),
         };
+    }
+
+    // 이 단계에 걸린 과제 간 연결 (상대 단계 기준으로 보인다). 연결의 두 단계와 그 과제(제목)가 읽혀 있어야 한다
+    private static List<CrossLinkView> CrossLinks(Stage s, IReadOnlyList<StageLink>? links, WorkCalendar cal)
+    {
+        var list = new List<CrossLinkView>();
+        if (links == null || s.Id == 0) return list;
+        foreach (var l in links.OrderBy(l => l.Id))
+        {
+            if (l.PredecessorStage == null || l.SuccessorStage == null) continue;
+            var mine = l.PredecessorStageId == s.Id ? "succ" : l.SuccessorStageId == s.Id ? "pred" : null;
+            if (mine == null) continue;
+            var other = mine == "succ" ? l.SuccessorStage : l.PredecessorStage;
+            list.Add(new CrossLinkView(l.Id, mine, other.ProjectId, other.Project?.Title ?? "", other.Id, other.Name,
+                other.CompletedDate ?? other.TargetDate, other.CompletedDate != null, l.LagDays,
+                Rules.StageLinkEarliest(l, l.PredecessorStage, cal),
+                Rules.StageLinkViolated(l, l.PredecessorStage, l.SuccessorStage, cal)));
+        }
+        return list;
     }
 
     // "AGV · Belt" 처럼 대분류와 함께 표시
@@ -383,11 +430,13 @@ public static class Views
         _ => new("", null, "예정"),
     };
 
-    // 작업: 지연 → 완료(초과 완료) → 단계 완료로 끝남 → 진행 중 → 예정 순으로 본다
-    public static ChipView WorkChip(bool late, WorkStatus status, bool doneLate, bool closedByStage) =>
+    // 작업: 지연 → 완료(초과 완료) → 단계 완료로 끝남 → 시작 지연 → 진행 중 → 예정 순으로 본다.
+    // 시작 지연(목표 시작일이 지났는데 시작하지 않음)은 아직 목표 종료 전이라 '지연'(빨강)이 아닌 위험(노랑)이다
+    public static ChipView WorkChip(bool late, WorkStatus status, bool doneLate, bool closedByStage, bool startLate = false) =>
         late ? new("alarm", "alert", "지연")
         : status == WorkStatus.Done ? (doneLate ? new("warn", "clock", "초과 완료") : new("ok", "check", "완료"))
         : closedByStage ? new("ok", "check", "완료(단계)")      // '완료'로 시작해 표의 색도 완료와 같다
+        : startLate && status == WorkStatus.Planned ? new("warn", "clock", "시작 지연")
         : status == WorkStatus.InProgress ? new("accent", null, "진행 중")
         : new("", null, "예정");
 
