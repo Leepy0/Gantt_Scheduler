@@ -43,11 +43,13 @@ public class ClosedOnRulesTests
     }
 
     [Fact]
-    public void 데이터_버전은_과제_그래프_엔티티만_센다()
+    public void 데이터_버전은_상황판에_보이는_값에_닿는_엔티티만_센다()
     {
-        foreach (var e in new object[] { new Project(), new Stage(), new WorkItem(), new CheckItem(), new WorkLink(), new StageLink(), new Attachment(), new Activity() })
+        // 공휴일은 예상 종료·위험을, 법인(위치)·대분류·사용자 이름은 상황판 글자를 바꾼다
+        foreach (var e in new object[] { new Project(), new Stage(), new WorkItem(), new CheckItem(), new WorkLink(), new StageLink(), new Attachment(), new Activity(),
+                     new Holiday(), new Location(), new Category(), new AppUser() })
             Assert.True(DataVersion.Watches(e), e.GetType().Name);
-        foreach (var e in new object[] { new UserAddress(), new AppUser(), new ProjectVisit(), new ProjectWatch(), new Notification(), new Location(), new Holiday() })
+        foreach (var e in new object[] { new UserAddress(), new ProjectVisit(), new ProjectWatch(), new Notification() })
             Assert.False(DataVersion.Watches(e), e.GetType().Name);
     }
 

@@ -58,7 +58,8 @@ public class AnalyticsService
         var key = range == "1y" ? "1y" : "12w";
         var to = _clock.Today;
         var from = key == "1y" ? to.AddYears(-1).AddDays(1) : to.AddDays(-7 * TrendShortWeeks + 1);
-        var q = _db.ProjectSnapshots.AsNoTracking().Where(s => s.Date >= from && s.Date <= to);
+        // 휴지통 과제의 스냅샷은 뺀다 — 지금 숫자와 지난 숫자가 같은 과제 범위를 보게
+        var q = _db.ProjectSnapshots.AsNoTracking().Where(s => s.Date >= from && s.Date <= to && s.Project!.DeletedAt == null);
         if (filter.CategoryId is int c) q = q.Where(s => s.CategoryId == c);
         if (filter.CorporationId is int corp) q = q.Where(s => s.CorporationId == corp);
         var rows = Reporting.Filter(await q.ToListAsync(), filter with { CategoryId = null, CorporationId = null }, await OrgScopeAsync(filter.OrgUnitId));

@@ -114,7 +114,9 @@
             return [n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '',
                 n.defaultWorkDays != null ? '기본 ' + n.defaultWorkDays + '근무일' : ''].filter(Boolean).join(' · ');
         }
-        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', AdminPeople.loadText(n), n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속'].filter(Boolean).join(' · ');
+        if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', AdminPeople.loadText(n),
+            // 마지막 접속은 관리자에게만 온다 — 관리자가 아니면 '미접속'으로 잘못 보이지 않게 아예 쓰지 않는다
+            isAdmin ? (n.lastSeen ? '최근 접속 ' + n.lastSeen : '미접속') : ''].filter(Boolean).join(' · ');
         if (kind === 'holiday') return n.date;
         return usesText(n);
     }
@@ -289,11 +291,12 @@
 
     // 사용자에 연결된 접속 IP 목록. 지금 이 기기의 IP 는 해제할 수 없다(스스로 잠기지 않게)
     function ipItems(n) {
-        var list = n.addresses || [];
+        // 관리자가 아니면 서버가 접속 날짜(addresses)를 주지 않는다 — IP 만 보인다
+        var list = n.addresses || (n.ips || []).map(function (ip) { return { ip: ip }; });
         if (!list.length) return '<li class="muted">접속 이력 없음</li>';
         return list.map(function (a) {
             return '<li><span class="ip">' + esc(a.ip) + '</span>' +
-                '<span class="hint">마지막 접속 ' + esc(a.lastSeen) + (a.current ? ' · 지금 이 기기' : '') + '</span>' +
+                (a.lastSeen ? '<span class="hint">마지막 접속 ' + esc(a.lastSeen) + (a.current ? ' · 지금 이 기기' : '') + '</span>' : '') +
                 (isAdmin && !a.current ? '<button type="button" class="btn icon small ghost" data-remove-ip="' + esc(a.ip) + '" aria-label="' + esc(a.ip) + ' 연결 해제" title="연결 해제">' + icon('x') + '</button>' : '') +
                 '</li>';
         }).join('');
