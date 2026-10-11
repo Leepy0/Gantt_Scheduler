@@ -42,7 +42,7 @@ public record PreviewActuals(DateOnly? ActualStart, DateOnly? ActualEnd, int Pro
 // 재계획 저장: 미리보기에서 본 이동(작업·버전·새 일정)을 함께 보내 그사이 일정이 바뀌었으면 다시 보게 한다
 public record ReplanRow(int WorkId, int? Version, DateOnly PlanStart, DateOnly PlanEnd);
 
-public record ReplanInput(int ProjectId, string? Reason, int? Version = null, List<ReplanRow>? Rows = null);
+public record ReplanInput(int ProjectId, string? Reason, int? Version = null, List<ReplanRow>? Rows = null, int? ReasonCode = null);
 
 // 일정 변경 미리보기·오늘 기준 재계획
 public partial class ProjectService
@@ -267,6 +267,7 @@ public partial class ProjectService
     public async Task ReplanAsync(ReplanInput input)
     {
         var reason = Text(input.Reason, Limits.Reason, "사유", "reason") ?? throw new RuleException("재계획 사유를 입력해 주세요.", "reason");
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
         var p = await RequireAsync(input.ProjectId);
         CheckVersion(input.Version, p.Version, p.Id);
         var cal = await CalendarAsync();

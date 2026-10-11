@@ -16,9 +16,11 @@ public class IndexModel : PageModel
     private readonly IClock _clock;
 
     private readonly ProjectService _projects;
+    private readonly AnalyticsService? _analytics;
 
-    public IndexModel(DashboardService dash, AppDb db, ExcelExporter excel, IClock clock, ProjectService projects)
+    public IndexModel(DashboardService dash, AppDb db, ExcelExporter excel, IClock clock, ProjectService projects, AnalyticsService? analytics = null)
     {
+        _analytics = analytics;
         _dash = dash;
         _db = db;
         _excel = excel;
@@ -34,6 +36,11 @@ public class IndexModel : PageModel
     // 대시보드 숫자에서 온 조건: 그 해에 끝난 완료 과제(올해 완료), 미완료 단계 목표일이 n일 안인 진행 과제(n일 내 목표·다가오는 일정)
     [BindProperty(SupportsGet = true)] public int? DoneYear { get; set; }
     [BindProperty(SupportsGet = true)] public int? Due { get; set; }
+    // 대시보드 막대에서 온 조건: 진행·보류 과제와 올해 끝난 과제(Dashboard.InBars)
+    [BindProperty(SupportsGet = true)] public bool Current { get; set; }
+    // 조직: 과제 담당자의 소속(하위 파트 포함)
+    [BindProperty(SupportsGet = true)] public int? Org { get; set; }
+    public List<PickOption> Orgs { get; private set; } = new();
     // 머리글 정렬 (Dashboard.SortKeys). 없으면 상태 → 지연 큰 순 → 목표 종료
     [BindProperty(SupportsGet = true)] public string? Sort { get; set; }
     [BindProperty(SupportsGet = true)] public bool Desc { get; set; }
@@ -104,6 +111,8 @@ public class IndexModel : PageModel
         if (Mine) r["mine"] = "true";
         if (DoneYear != null) r["doneYear"] = DoneYear.Value.ToString();
         if (Due != null) r["due"] = Due.Value.ToString();
+        if (Current) r["current"] = "true";
+        if (Org != null) r["org"] = Org.Value.ToString();
         if (SortKey != null) r["sort"] = SortKey;
         if (Desc) r["desc"] = "true";
         return r;
@@ -116,6 +125,7 @@ public class IndexModel : PageModel
         // 위치는 목록 계산(ListAsync)이 읽는 것을 같이 쓴다 (요청 안에서 한 번만 읽기)
         Corporations = (await _projects.LocationsAsync()).All.Where(l => l.Level == 1).OrderBy(l => l.SortOrder).ThenBy(l => l.Id).ToList();
         Rows = await _dash.ListAsync(Filter());
+        if (_analytics != null) Orgs = await _analytics.OrgOptionsAsync();
         NewCounts = await _projects.NewCountsAsync();
         Watched = await _projects.WatchedIdsAsync();
     }
@@ -126,6 +136,7 @@ public class IndexModel : PageModel
         // 제목의 조건은 화면에서 고른 것 전부 (유형·법인 포함) — 내려받은 파일만 보고도 어떤 목록인지 알 수 있게
         var category = Category == null ? null : (await _db.Categories.AsNoTracking().Where(c => c.Id == Category.Value).Select(c => c.Name).FirstOrDefaultAsync());
         var corp = Corp == null ? null : (await _projects.LocationsAsync()).Get(Corp.Value)?.Name;
+        if (Org != null && _analytics != null) Orgs = await _analytics.OrgOptionsAsync();
         return File(_excel.ProjectList(rows, _clock.Today, FilterText(category, corp)), ExcelExporter.ContentType, $"과제목록_{_clock.Today:yyyyMMdd}.xlsx");
     }
 
@@ -136,6 +147,7 @@ public class IndexModel : PageModel
         var parts = new List<string> { "상태: " + label };
         if (category != null) parts.Add("유형: " + category);
         if (corp != null) parts.Add("법인: " + corp);
+        if (Org != null && OrgName != null) parts.Add("조직: " + OrgName);
         if (!string.IsNullOrWhiteSpace(Q)) parts.Add("검색: " + Q.Trim());
         if (SpecialText is { } special) parts.Add(special);
         if (Mine) parts.Add("내 과제");
@@ -152,7 +164,10 @@ public class IndexModel : PageModel
     public string? SpecialText =>
         DoneYear != null ? $"{DoneYear}년 완료"
         : Due != null ? $"단계 목표일 {Math.Clamp(Due.Value, 0, Dashboard.MaxDueDays)}일 안"
+        : Current ? $"진행·보류와 {_clock.Today.Year}년 완료 (대시보드 막대와 같은 범위)"
         : null;
 
-    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due, SortKey, Desc);
+    public string? OrgName => Orgs.FirstOrDefault(o => o.Id == Org)?.Name;
+
+    private ProjectFilter Filter() => new(Q, Category, Corp, StateKey, Mine, DoneYear, Due, SortKey, Desc, Current, Org);
 }

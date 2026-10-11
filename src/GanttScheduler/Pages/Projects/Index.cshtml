@@ -48,6 +48,13 @@
                 <option value="@c.Id" selected="@(Model.Corp == c.Id)">@c.Name</option>
             }
         </select>
+        <select name="org" aria-label="조직">
+            <option value="">조직 전체</option>
+            @foreach (var o in Model.Orgs)
+            {
+                <option value="@o.Id" selected="@(Model.Org == o.Id)">@(o.Level == 2 ? "· " : "")@o.Name</option>
+            }
+        </select>
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
         @* 정렬은 조회해도 유지한다(머리글로 바꾼다) *@
         @if (Model.SortKey != null) { <input type="hidden" name="sort" value="@Model.SortKey" /> }
@@ -68,9 +75,10 @@
         @* 대시보드 숫자에서 온 조건 — 유형·법인·검색을 바꿔도 유지하고, 상태 탭을 바꾸거나 '조건 해제'를 누르면 푼다 *@
         if (Model.DoneYear != null) { <input type="hidden" name="doneYear" value="@Model.DoneYear" data-special /> }
         if (Model.Due != null) { <input type="hidden" name="due" value="@Model.Due" data-special /> }
+        if (Model.Current) { <input type="hidden" name="current" value="true" data-special /> }
         <p class="form-note filter-note" data-special-note>
             <svg class="ic"><use href="#i-dash" /></svg><span>대시보드 조건: <b>@Model.SpecialText</b></span>
-            <a asp-page="/Projects/Index" asp-route-state="@Model.StateKey" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-q="@Model.Q" asp-route-mine="@(Model.Mine ? "true" : null)">조건 해제</a>
+            <a asp-page="/Projects/Index" asp-route-state="@Model.StateKey" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-org="@Model.Org" asp-route-q="@Model.Q" asp-route-mine="@(Model.Mine ? "true" : null)">조건 해제</a>
         </p>
     }
 </form>

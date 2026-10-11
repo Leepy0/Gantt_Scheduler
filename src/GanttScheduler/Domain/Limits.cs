@@ -21,6 +21,7 @@ public static class Limits
     public const int ContainerName = 50;
     public const int VendorName = 100;         // 협력사 기준 정보와 과제의 협력사
     public const int HolidayName = 50;
+    public const int DelayReasonName = 50;     // 지연 사유 분류 (S10)
 
     // 과제·작업
     public const int ProjectTitle = 200;

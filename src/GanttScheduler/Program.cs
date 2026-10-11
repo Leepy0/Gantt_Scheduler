@@ -94,6 +94,11 @@ builder.Services.AddHostedService<NotifyWorker>();
 builder.Services.AddSingleton(_ => TrashOptions.From(config));
 builder.Services.AddScoped<TrashService>();
 builder.Services.AddHostedService<TrashWorker>();
+// 분석: 하루 한 번 과제의 진척 스냅샷(추세·전주 대비·신규 지연)을 남긴다 (Snapshot:Enabled, Snapshot:Hour)
+builder.Services.AddSingleton(_ => SnapshotOptions.From(config));
+builder.Services.AddScoped<SnapshotService>();
+builder.Services.AddScoped<AnalyticsService>();
+builder.Services.AddHostedService<SnapshotWorker>();
 
 // 위조 방지 토큰의 암호화 키를 데이터 폴더에 둔다. 서버가 다시 시작돼도(업데이트·재활용) 열려 있던 화면의 저장이 그대로 통한다
 var keyDir = AppPaths.Keys(config, builder.Environment.ContentRootPath);

@@ -54,8 +54,9 @@ public partial class HttpTests
         var html = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/"));
         Assert.Contains("/Projects?state=active&due=7", html);
         Assert.Contains($"/Projects?state=done&doneYear={year}", html);
-        Assert.Matches("data-bar-category=\"\\d+\" href=\"/Projects\\?state=all&category=\\d+\"", html);
-        Assert.Matches("data-bar-corp=\"\\d+\" href=\"/Projects\\?state=all&corp=\\d+\"", html);
+        // 막대는 진행·보류 + 올해 완료만 센다 — 누르면 같은 범위(current)의 목록
+        Assert.Matches("data-bar-category=\"\\d+\" href=\"/Projects\\?state=all&current=true&category=\\d+\"", html);
+        Assert.Matches("data-bar-corp=\"\\d+\" href=\"/Projects\\?state=all&current=true&corp=\\d+\"", html);
 
         // 목록: 대시보드 조건 안내와 해제 링크, 상태 탭을 바꾸면 풀리는 숨은 입력
         var list = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync($"/Projects?state=done&doneYear={year}"));

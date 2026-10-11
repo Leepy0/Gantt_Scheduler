@@ -13,6 +13,15 @@
         return '+' + gap + '근무일';
     }
 
+    // 일정 변경 사유의 분류(선택) — 상세 페이지 데이터의 reasons. 분류가 없으면 칸을 그리지 않는다
+    function reasonCodeHtml() {
+        var list = App.data().reasons || [];
+        if (!list.length) return '';
+        return '<label class="field" data-field="reasonCode"><span class="label">사유 분류 <span class="opt">선택</span></span>' +
+            '<select name="reasonCode"><option value="">고르지 않음</option>' +
+            list.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + '</option>'; }).join('') + '</select></label>';
+    }
+
     // ctx: { project(), api(handler, body), previewUrl, mergeField, conflict(문구), userToday() }
     function open(ctx) {
         var P = ctx.project();
@@ -62,7 +71,7 @@
             '<div data-reason hidden class="form">' +
             '<p class="form-warn" data-reason-note>' + icon('clock') + '<span></span></p>' +
             '<label class="field" data-field="reason"><span class="label">변경 사유</span>' +
-            '<textarea name="reason" rows="2" maxlength="' + ((App.data().limits || {}).reason || '') + '" placeholder="목표일을 바꾸는 이유 (바꾼 단계 모두에 남습니다)"></textarea></label></div>' +
+            '<textarea name="reason" rows="2" maxlength="' + ((App.data().limits || {}).reason || '') + '" placeholder="목표일을 바꾸는 이유 (바꾼 단계 모두에 남습니다)"></textarea></label>' + reasonCodeHtml() + '</div>' +
             '<p class="hint" data-summary></p>';
 
         var form = null;
@@ -210,7 +219,8 @@
             onSubmit: async function (f) {
                 var rows = changedRows();
                 if (!rows.length) { App.toast('바꾼 날짜가 없습니다.'); return; }
-                await ctx.api('SaveSchedule', { projectId: P.id, rows: rows, reason: f.elements.reason.value });
+                await ctx.api('SaveSchedule', { projectId: P.id, rows: rows, reason: f.elements.reason.value,
+                    reasonCode: f.elements.reasonCode && f.elements.reasonCode.value && f.elements.reason.value ? +f.elements.reasonCode.value : null });
                 App.toast('단계 일정 ' + rows.length + '개를 저장했습니다.');
             }
         });

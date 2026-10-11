@@ -27,7 +27,9 @@ public record DashboardView(
 // 대시보드 조건(URL 쿼리). 유형·법인·내 과제는 화면 전체(숫자·목록 링크 포함)를 좁힌다.
 // Scope: 간트 범위 'focus'(지연 + 위험 + FocusDays 안 목표, 기본)·'delayed'(지연만)·'all'(전체 진행 과제).
 // Sort: 간트 순서 'delay'(지연 큰 순, 기본)·'end'(목표 종료 빠른 순)·'recent'(최근 변경 순)
-public record DashboardQuery(bool Mine = false, int? CategoryId = null, int? CorporationId = null, string? Scope = null, string? Sort = null)
+// OrgUnitId: 담당자 소속이 그 조직(하위 파트 포함)인 과제만 (Rules.InOrg)
+public record DashboardQuery(bool Mine = false, int? CategoryId = null, int? CorporationId = null, string? Scope = null, string? Sort = null,
+    int? OrgUnitId = null)
 {
     public string ScopeKey => Scope is "delayed" or "all" ? Scope : "focus";
     public string SortKey => Sort is "end" or "recent" ? Sort : "delay";
@@ -42,8 +44,9 @@ public record RiskContext(WorkCalendar Calendar, IReadOnlyList<StageLink> CrossL
 // DoneYear: 그 해에 끝난 완료 과제(Rules.CompletedOn — 대시보드 '올해 완료'와 같은 판정).
 // DueDays: 미완료 단계 목표일이 오늘부터 그 일수 안에 있는 진행 과제('n일 내 목표'·다가오는 일정과 같은 판정)
 // Sort·Desc: 목록 머리글 정렬(Dashboard.SortKeys — 없으면 상태 → 지연 큰 순 → 목표 종료). Excel 도 같은 순서로 내보낸다
+// Current: 대시보드 막대와 같은 범위(진행·보류 + 올해 완료 — Dashboard.InBars). OrgUnitId: 담당자 소속이 그 조직(하위 파트 포함)인 과제(Rules.InOrg)
 public record ProjectFilter(string? Q, int? CategoryId, int? CorporationId, string? State, bool Mine, int? DoneYear = null, int? DueDays = null,
-    string? Sort = null, bool Desc = false);
+    string? Sort = null, bool Desc = false, bool Current = false, int? OrgUnitId = null);
 
 public class DashboardService
 {
@@ -71,6 +74,7 @@ public class DashboardService
             return q;
         }, withLinks: true);
         if (query.Mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
+        if (query.OrgUnitId is int org) all = all.Where(p => Rules.InOrg(p.Owner?.OrgUnit, org)).ToList();
         var view = Dashboard.Build(all, await _projects.LocationsAsync(), _clock.Today, query, await RiskAsync());
         // 지연·위험 과제의 최근 사유 한 줄 — 카드에 보이는 과제 Id 목록으로 한 번에 읽는다. 목록 매개 변수(IN)의 예외라 길이에 상한을 둔다:
         // 위험 카드는 보이는 RiskShown 건만, 지연 카드는 지연 큰 순으로 앞의 NotesMax 건만(그 뒤 행은 사유 줄 없이 보인다)
@@ -115,6 +119,10 @@ public static class Dashboard
         "dropped" => ProjectState.Dropped,
         _ => null,
     };
+
+    // 유형·법인 막대에 넣는 과제: 진행·보류 과제와 올해 끝난 완료 과제. 역대 완료·중단 과제까지 세면 진행·지연 비교가 묻힌다
+    public static bool InBars(Project p, DateOnly today) =>
+        p.State is ProjectState.Active or ProjectState.Hold || (p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == today.Year);
 
     public static bool IsMine(Project p, int userId) =>
         p.OwnerId == userId || p.Stages.Any(s => s.Works.Any(w => w.OwnerId == userId || w.CoOwnerId == userId));
@@ -162,12 +170,14 @@ public static class Dashboard
                 list.Count);
         }
 
-        // 이름이 아니라 Id 로 묶는다 — 막대가 목록 조건(유형·법인 Id)과 같은 묶음이어야 숫자가 맞는다
-        var byCategory = all.GroupBy(p => p.CategoryId)
+        // 이름이 아니라 Id 로 묶는다 — 막대가 목록 조건(유형·법인 Id)과 같은 묶음이어야 숫자가 맞는다.
+        // 막대는 진행·보류 + 올해 완료만 센다(InBars) — 막대를 누르면 가는 목록도 같은 범위(ProjectFilter.Current)
+        var bars = all.Where(p => InBars(p, today)).ToList();
+        var byCategory = bars.GroupBy(p => p.CategoryId)
             .Select(g => (Sort: g.First().Category?.SortOrder ?? 0, Stat: Stat(g.Key, g.First().Category?.Name ?? "", g)))
             .OrderBy(x => x.Sort).ThenBy(x => x.Stat.Id).Select(x => x.Stat).ToList();
 
-        var byCorp = all.GroupBy(p => p.CorporationId)
+        var byCorp = bars.GroupBy(p => p.CorporationId)
             .Select(g => Stat(g.Key, locations.Get(g.Key)?.Name ?? "", g))
             .OrderByDescending(s => s.Total).ThenBy(s => s.Name).ToList();
 
@@ -242,6 +252,8 @@ public static class Dashboard
         if (f.CorporationId != null) q = q.Where(p => p.CorporationId == f.CorporationId.Value);
         // 대시보드 숫자에서 온 조건: 그 숫자와 같은 판정으로 거른다
         if (f.DoneYear is int year) q = q.Where(p => p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == year);
+        if (f.Current) q = q.Where(p => InBars(p, today));
+        if (f.OrgUnitId is int org) q = q.Where(p => Rules.InOrg(p.Owner?.OrgUnit, org));
         if (f.DueDays is int days) q = q.Where(p => p.State == ProjectState.Active && Rules.HasStageDueWithin(p, today, Math.Clamp(days, 0, MaxDueDays)));
 
         q = (f.State ?? "") switch

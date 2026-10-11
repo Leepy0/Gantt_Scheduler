@@ -62,6 +62,8 @@ public class DetailModel : PageModel
             me = new { id = _me.Id, name = _me.Name, isAdmin = _me.IsAdmin },
             seen = new { since, count = view.Activities?.Count(a => a.New) ?? 0 },
             kinds = Reporting.Kinds.Select(k => new { key = k.Key, label = k.Label }),
+            // 일정 변경 사유 시트의 '분류' 고르기(선택) — 변경 분석의 원인 파레토
+            reasons = await _projects.DelayReasonsAsync(),
             // 입력칸 maxlength — 서버 검사·DB 열 길이와 같은 값(Limits)을 화면에 숫자로 따로 적지 않는다
             limits = new
             {

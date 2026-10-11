@@ -26,13 +26,28 @@ public class IndexModel : PageModel
     public MyView Data { get; private set; } = null!;
     public List<NewsItem> News { get; private set; } = new();
     public List<WatchedProject> Watched { get; private set; } = new();
-    public string Name => _me.Name;
+    public string Name { get; private set; } = "";
 
-    public async Task OnGetAsync()
+    // 다른 사람의 할 일(부하 화면의 칸에서 연다): 읽기 전용 — 새 소식·관심 과제는 개인 것이라 보이지 않고, 바로 갱신 단추도 없다
+    [BindProperty(SupportsGet = true, Name = "user")] public int? ViewUserId { get; set; }
+    public bool ReadOnly { get; private set; }
+
+    public async Task<IActionResult> OnGetAsync()
     {
+        Name = _me.Name;
+        if (ViewUserId is int other && other != _me.Id)
+        {
+            var name = await _projects.UserNameAsync(other);
+            if (name == null) return NotFound();
+            Name = name;
+            ReadOnly = true;
+            Data = await _insights.MyAsync(other);
+            return Page();
+        }
         Data = await _insights.MyAsync();
         News = await _projects.NewsAsync();
         Watched = await _projects.WatchedProjectsAsync();
+        return Page();
     }
 
     // 빠른 갱신: 저장한 뒤 그 행을 서버가 다시 나눠(지연·이번 주·이후) 돌려준다. 내 할 일에서 빠졌으면(완료 등) work 는 null.

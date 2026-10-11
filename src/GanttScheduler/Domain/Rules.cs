@@ -931,4 +931,122 @@ public static class Rules
     public static (DateOnly Start, DateOnly End) PlaceTemplateWork(DateOnly stageStart, int offsetWorkDays, int durationWorkDays, WorkCalendar cal) =>
         Place(cal.AddWorkingDays(cal.NextWorkingDay(stageStart), Math.Clamp(offsetWorkDays, 0, MaxTemplateOffset)),
               Math.Clamp(durationWorkDays, 1, MaxTemplateDuration), cal);
+
+    // ── 분석: 스냅샷 대상·조직 범위·진척 증감·일정 변경 밀림·단계 체류·부하 (S10) ──────────
+
+    // 그날 스냅샷에 남길 과제: 휴지통이 아닌 진행·보류 과제와 그날 모든 단계를 끝낸 완료 과제. 중단은 남기지 않는다
+    public static bool InSnapshot(Project p, DateOnly date) =>
+        p.DeletedAt == null
+        && (p.State is ProjectState.Active or ProjectState.Hold || (p.State == ProjectState.Done && CompletedOn(p) == date));
+
+    // 조직 범위: 그 조직이거나 그 아래 파트(조직은 그룹 → 파트 두 단계). 과제는 담당자의 소속으로 본다
+    public static bool InOrg(int? unitId, int? parentId, int orgId) => unitId == orgId || (unitId != null && parentId == orgId);
+
+    public static bool InOrg(OrgUnit? unit, int orgId) => unit != null && InOrg(unit.Id, unit.ParentId, orgId);
+
+    // 과제 진척 증감(%p): 작업 진행률 변경(이전·새 값)을 과제 진행률 계산(단계 평균의 평균 — ProjectProgress)의 비중으로 환산해 더한다.
+    // 작업 하나의 d%p 는 단계 진행률을 d/작업 수, 과제 진행률을 그 값/단계 수만큼 움직인다. 지금 구조(단계·작업 수)로 환산하고,
+    // 지금은 없는 작업의 변경은 뺀다. 단계 완료로 진행률 100 이 되는 몫은 작업 변경(단계 완료로 닫음)으로 들어온다
+    public static int ProgressGain(Project p, IEnumerable<(int WorkId, int Old, int New)> changes)
+    {
+        if (p.Stages.Count == 0) return 0;
+        var stageOf = new Dictionary<int, Stage>();
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works) stageOf[w.Id] = s;
+        double sum = 0;
+        foreach (var (workId, old, @new) in changes)
+            if (stageOf.TryGetValue(workId, out var s) && s.Works.Count > 0)
+                sum += (@new - old) / (double)s.Works.Count / p.Stages.Count;
+        return (int)Math.Round(sum, MidpointRounding.AwayFromZero);
+    }
+
+    // 일정 변경 값('yyyy-MM-dd' 또는 작업 일정 'yyyy-MM-dd~yyyy-MM-dd')의 기준일 — 작업은 종료일. '미정'·알 수 없는 값은 null
+    public static DateOnly? ScheduleValueEnd(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var part = value.Contains('~') ? value[(value.LastIndexOf('~') + 1)..] : value;
+        return DateOnly.TryParseExact(part.Trim(), "yyyy-MM-dd", out var d) ? d : null;
+    }
+
+    // 일정 변경 한 건이 밀어낸 달력 일수(새 − 이전, 당기면 음수). 처음 정하거나 지운 값('미정')은 셀 수 없어 null
+    public static int? ScheduleSlip(string? oldValue, string? newValue) =>
+        ScheduleValueEnd(oldValue) is DateOnly o && ScheduleValueEnd(newValue) is DateOnly n ? n.DayNumber - o.DayNumber : null;
+
+    // 지금 단계에 들어온 날: 앞 단계 완료일 중 가장 늦은 날(첫 단계는 착수일) — 리드타임 표본(Reporting.LeadSamples)과 같은 기준점
+    public static DateOnly StageEntered(Project p, Stage current)
+    {
+        var entered = p.StartDate;
+        foreach (var s in Ordered(p))
+        {
+            if (ReferenceEquals(s, current)) break;
+            if (s.CompletedDate is DateOnly d && d > entered) entered = d;
+        }
+        return entered;
+    }
+
+    // 진행 과제의 지금 단계 체류 근무일(들어온 날부터 오늘까지의 근무일 거리 — 리드타임 소요일과 같은 단위). 지금 단계가 없으면 null
+    public static int? StageDwell(Project p, WorkCalendar cal, DateOnly today) =>
+        p.State == ProjectState.Active && CurrentStage(p) is { } cur ? Math.Max(0, cal.Distance(StageEntered(p, cur), today)) : null;
+
+    // 부하 가중치: 담당 1.0, 부담당 0.5
+    public const double OwnerWeight = 1.0;
+    public const double CoOwnerWeight = 0.5;
+
+    // 부하 한 칸: 사람 × 주(월~일). Assigned = 그 주에 걸린 미완료 작업의 근무일 × 가중치 합, Available = 그 주 근무일 수(주말·공휴일 제외).
+    // Ratio = Assigned / Available (근무일이 없는 주는 0). 100% 를 넘으면 과부하
+    public record LoadCell(DateOnly Week, double Assigned, int Available)
+    {
+        public double Ratio => Available == 0 ? 0 : Assigned / Available;
+        public bool Over => Ratio > 1.0 + 1e-9;
+    }
+
+    // 배정 하나: 사람, 가중치, 그 작업이 걸린 기간(예상 일정 — 늦어진 작업은 오늘 이후로 밀린 기간)
+    public record LoadAssignment(int UserId, double Weight, DateOnly Start, DateOnly End);
+
+    // 사람 × 주 부하. weekStart 는 첫 주의 월요일, weeks 주. 기간 중 근무일만 센다(WorkCalendar) — 공휴일이 낀 주는 가용일도 줄어든다
+    public static Dictionary<int, List<LoadCell>> Load(IEnumerable<LoadAssignment> assignments, DateOnly weekStart, int weeks, WorkCalendar cal)
+    {
+        var avail = Enumerable.Range(0, weeks).Select(i => cal.WorkingDays(weekStart.AddDays(7 * i), weekStart.AddDays(7 * i + 6))).ToArray();
+        var sums = new Dictionary<int, double[]>();
+        var end = weekStart.AddDays(7 * weeks - 1);
+        foreach (var a in assignments)
+        {
+            if (a.End < weekStart || a.Start > end || a.End < a.Start) continue;
+            if (!sums.TryGetValue(a.UserId, out var row)) sums[a.UserId] = row = new double[weeks];
+            for (var i = 0; i < weeks; i++)
+            {
+                var from = weekStart.AddDays(7 * i);
+                var to = from.AddDays(6);
+                var s = a.Start > from ? a.Start : from;
+                var e = a.End < to ? a.End : to;
+                if (e >= s) row[i] += cal.WorkingDays(s, e) * a.Weight;
+            }
+        }
+        return sums.ToDictionary(kv => kv.Key,
+            kv => kv.Value.Select((v, i) => new LoadCell(weekStart.AddDays(7 * i), Math.Round(v, 1), avail[i])).ToList());
+    }
+
+    // 과제의 부하 배정: 진행 과제의 열린 작업(IsOpen)마다 담당·부담당. 기간은 오늘 기준 예상 일정(ForwardPass)이다 —
+    // 기한이 지난 미완료 작업은 오늘부터 남은 기간으로 잡혀 지난 주에 묻히지 않는다
+    public static IEnumerable<LoadAssignment> LoadAssignments(Project p, WorkCalendar cal, DateOnly today,
+        IReadOnlyDictionary<WorkItem, Expected>? expected = null)
+    {
+        if (p.State != ProjectState.Active) yield break;
+        expected ??= ForwardPass(p, cal, today);
+        foreach (var s in p.Stages)
+            foreach (var w in s.Works.Where(w => IsOpen(w, s)))
+            {
+                var (start, end) = expected.TryGetValue(w, out var e) ? (e.Start, e.End) : (w.PlanStart, w.PlanEnd);
+                if (start < today) start = today;           // 이미 지난 날의 몫은 다시 배정하지 않는다
+                if (end < start) end = start;
+                if (w.OwnerId is int o) yield return new LoadAssignment(o, OwnerWeight, start, end);
+                if (w.CoOwnerId is int c && c != w.OwnerId) yield return new LoadAssignment(c, CoOwnerWeight, start, end);
+            }
+    }
+
+    // 보고 기간 미달: 목표일(작업은 목표 종료일)이 기간 [from, to] 안이고 기준일까지 지났는데 끝나지 않았다(기준일 판정 — DoneBy).
+    // 이번 기간(asOf = 오늘)이면 오늘이 목표인 것은 아직 미달이 아니다. 단계가 끝났으면 그 작업은 단계와 함께 끝난 것으로 본다(IsOpen 과 같은 기준)
+    public static bool MissedIn(DateOnly? due, DateOnly? done, DateOnly? stageDone, DateOnly from, DateOnly to, DateOnly asOf, DateOnly today) =>
+        due is DateOnly d && d >= from && d <= to && (asOf >= today ? d < today : d <= asOf)
+        && !DoneBy(done, asOf, today) && !DoneBy(stageDone, asOf, today);
 }

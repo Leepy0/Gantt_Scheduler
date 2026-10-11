@@ -4,6 +4,7 @@
 
     var data = App.data();
     var LIM = data.limits || {};     // 입력 길이 상한 (서버 Limits)
+    var REASONS = data.reasons || []; // 일정 변경 사유 분류 [{id, name}] — 사유 시트의 '분류'(선택). 변경 분석의 원인 파레토
     var P = data.project;
     var today = data.today;
     // 알릴 사람으로 고를 수 있는 사람 [{id, name}]과 '새 활동' 기준(상세를 연 때 서버가 정한 since — 마지막으로 본 시각)
@@ -808,6 +809,17 @@
             (optional ? ' <span class="opt">선택</span>' : '') + '</span>' + inner + '</label>';
     }
 
+    // 일정 변경 사유의 분류 고르기(선택). 분류가 하나도 없으면 칸을 그리지 않는다
+    function reasonCodeHtml() {
+        if (!REASONS.length) return '';
+        return field('reasonCode', '사유 분류', '<select name="reasonCode"><option value="">고르지 않음</option>' +
+            REASONS.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + '</option>'; }).join('') + '</select>', true);
+    }
+    function reasonCodeOf(form) {
+        var el = form.elements.reasonCode;
+        return el && el.value ? +el.value : null;
+    }
+
     // 저장 전 미리보기(plan-preview.js) 주소
     function previewUrl(params) { return PlanPreview.url(params); }
 
@@ -990,6 +1002,7 @@
         if (!isNew) {
             html += '<div data-reason hidden class="form">' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유"></textarea>') +
+                reasonCodeHtml() +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
                 cascadeWorksHtml(s) +
                 '</div>';
@@ -1234,6 +1247,7 @@
                     targetDate: f.targetDate.value || null,
                     completedDate: isNew ? null : (f.completedDate.value || null),
                     reason: f.reason ? f.reason.value : null,
+                    reasonCode: f.reason && f.reason.value ? reasonCodeOf(form) : null,
                     cascade: f.cascade ? f.cascade.checked : false,
                     cascadeWorks: f.cascadeWorks ? f.cascadeWorks.checked : false,
                     closeWorks: f.closeWorks ? f.closeWorks.checked : false,
@@ -1269,6 +1283,7 @@
             html: '<div class="form-note" data-target-note></div>' +
                 field('targetDate', '바꿀 목표일', '<input type="date" name="targetDate" required value="' + newDate + '" />') +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유" required></textarea>') +
+                reasonCodeHtml() +
                 (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동</label>' : '') +
                 cascadeWorksHtml(s) +
                 '<div data-target-preview></div>',
@@ -1301,7 +1316,7 @@
                 var f = form.elements;
                 await api('SaveStage', {
                     projectId: P.id, id: s.id, name: s.name, targetDate: f.targetDate.value || null, completedDate: s.completedDate,
-                    reason: f.reason.value, cascade: f.cascade ? f.cascade.checked : false,
+                    reason: f.reason.value, reasonCode: reasonCodeOf(form), cascade: f.cascade ? f.cascade.checked : false,
                     cascadeWorks: f.cascadeWorks ? f.cascadeWorks.checked : false, version: s.version
                 });
                 App.toast('목표일을 변경했습니다.');
@@ -1343,6 +1358,7 @@
                 field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + to + '" />') +
                 '</div>' +
                 field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
+                reasonCodeHtml() +
                 '<div data-plan-preview></div>',
             primary: '변경',
             onOpen: function (form) {
@@ -1368,7 +1384,7 @@
             onClose: function (saved) { if (preview) preview.stop(); if (!saved) renderSchedule(true); },
             onSubmit: async function (form) {
                 var f = form.elements;
-                await api('SaveWork', workPayload(w, { planStart: f.planStart.value || null, planEnd: f.planEnd.value || null, reason: f.reason.value }));
+                await api('SaveWork', workPayload(w, { planStart: f.planStart.value || null, planEnd: f.planEnd.value || null, reason: f.reason.value, reasonCode: reasonCodeOf(form) }));
                 App.toast('목표 일정을 변경했습니다.');
             }
         });
@@ -1386,7 +1402,8 @@
             html: '<p class="hint">시작일이 지났거나 늦어진 선행 작업 때문에 예측 일정이 목표보다 늦은 미착수 작업의 목표 일정을 예측대로 옮깁니다. ' +
                 '진행 중·완료 작업과 단계 목표일은 바꾸지 않습니다.</p>' +
                 '<div data-replan-preview></div>' +
-                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>'),
+                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>') +
+                reasonCodeHtml(),
             primary: '재계획',
             onOpen: function (form) {
                 preview = PlanPreview.attach(form.querySelector('[data-replan-preview]'), {
@@ -1406,7 +1423,7 @@
                 var r = preview && preview.result();
                 if (!r || !r.moved.length) { App.toast('옮길 작업이 없습니다.'); return false; }
                 await api('Replan', {
-                    projectId: P.id, reason: form.elements.reason.value, version: P.version,
+                    projectId: P.id, reason: form.elements.reason.value, reasonCode: reasonCodeOf(form), version: P.version,
                     rows: r.moved.map(function (m) { return { workId: m.id, version: m.version, planStart: m.newStart, planEnd: m.newEnd }; })
                 });
                 App.toast('작업 ' + r.moved.length + '건을 예측 일정으로 옮겼습니다.');
@@ -1548,7 +1565,7 @@
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
             (isNew ? '' : '<div data-reason hidden>' +
-                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + '</div>') +
+                field('reason', '변경 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + reasonCodeHtml() + '</div>') +
             '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span></span>' + preHtml +
             '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
@@ -1755,6 +1772,7 @@
                     progress: +f.progress.value,
                     note: f.note.value,
                     reason: f.reason ? f.reason.value : null,
+                    reasonCode: f.reason && f.reason.value ? reasonCodeOf(form) : null,
                     version: isNew ? null : w.version,
                     links: selectedLinks(form),
                     clientToday: App.localToday()

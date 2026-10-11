@@ -384,13 +384,13 @@ function fillTemplate(template, sheets) {
         const bar = page.locator('[data-bar-category]').first();
         const total = +(await bar.locator('.bar-num').innerText());
         await bar.click();
-        await page.waitForURL(/state=all&category=\d+/);
+        await page.waitForURL(/state=all&current=true&category=\d+/);
         assert((await page.locator('.ptable-row').count()) === total, '유형 막대 건수와 목록 건수가 다름');
         await page.goto(BASE + '/');
         const corp = page.locator('[data-bar-corp]').first();
         const corpTotal = +(await corp.locator('.bar-num').innerText());
         await corp.click();
-        await page.waitForURL(/state=all&corp=\d+/);
+        await page.waitForURL(/state=all&current=true&corp=\d+/);
         assert((await page.locator('.ptable-row').count()) === corpTotal, '법인 막대 건수와 목록 건수가 다름');
     });
 
@@ -1372,6 +1372,107 @@ function fillTemplate(template, sheets) {
         assert(filtered > 0 && filtered < total, '구분 필터가 적용되지 않음');
         assert((await page.locator('.history .chip').allInnerTexts()).every((t) => t === '일정 변경'), '다른 구분이 섞여 있음');
         await shot(page, 'd17-insights-history');
+    });
+
+    await step('사유 분류 — 단계 목표일을 바꿀 때 분류를 고르면 변경 분석의 원인 파레토에 오름', async () => {
+        await openProject(page, '광주 냉장고 3라인 AGV 도입');
+        await stageRow(page, '안정화').click();
+        await page.waitForSelector(SHEET);
+        const cur = await page.inputValue(SHEET + ' input[name=targetDate]');
+        assert(cur, '안정화 목표일이 없음');
+        const next = new Date(Date.parse(cur + 'T00:00:00Z') + 3 * 86400e3).toISOString().slice(0, 10);
+        await page.fill(SHEET + ' input[name=targetDate]', next);
+        await page.fill(SHEET + ' textarea[name=reason]', '설비 부품 입고 지연');
+        const options = await page.locator(SHEET + ' select[name=reasonCode] option').allInnerTexts();
+        assert(options.includes('자재·납품 지연'), '사유 분류 선택지가 없음: ' + options.join(','));
+        await page.selectOption(SHEET + ' select[name=reasonCode]', { label: '자재·납품 지연' });
+        await shot(page, 'd15c-reason-code');
+        await submitSheet(page);
+        await page.goto(BASE + '/Insights/Changes');
+        await page.waitForSelector('[data-pareto]');
+        assert((await page.locator('[data-pareto-row="자재·납품 지연"]').count()) === 1, '파레토에 분류가 없음');
+        assert(+(await page.locator('[data-kpi=decisions] .kpi-value').innerText()) > 0, '결정 수가 0');
+        assert((await page.locator('[data-replan-top] tbody tr').count()) > 0, '재계획 상위 과제가 없음');
+        assert((await page.locator('[data-changes-group=category] tbody tr').count()) > 0, '유형별 월간 결정 표가 없음');
+        await shot(page, 'd15d-changes');
+    });
+
+    await step('추세·부하·단계 병목 — 스냅샷 추이와 법인 × 기기 수량, 사람 × 주 부하, 칸을 누르면 그 사람의 할 일(읽기 전용)', async () => {
+        await page.goto(BASE + '/Insights/Trend');
+        await page.waitForSelector('[data-trend-note]');
+        assert((await page.locator('[data-trend] svg path.series').count()) >= 4, '추세 그래프가 없음(시작 직후 스냅샷)');
+        assert((await page.locator('[data-equipment] tbody tr').count()) >= 1, '법인 × 기기 수량 표가 없음');
+        await shot(page, 'd15e-trend');
+        await page.click('[data-range-year]');
+        await page.waitForURL(/range=1y/);
+        await page.waitForSelector('[data-trend-note]');
+
+        await page.goto(BASE + '/Insights/Load');
+        await page.waitForSelector('[data-load-note]');
+        assert((await page.locator('[data-load-person]').count()) >= 2, '부하 표에 사람이 부족함');
+        assert((await page.locator('[data-load] thead th').count()) === 9, '부하 표가 8주가 아님');
+        await shot(page, 'd15f-load');
+        const other = page.locator('[data-load-person]').filter({ hasNotText: '평영' }).locator('.load-cell a').first();
+        const who = await other.locator('xpath=ancestor::tr').getAttribute('data-load-person');
+        await other.click();
+        await page.waitForSelector('[data-my-readonly]');
+        assert((await page.locator('h1').innerText()).includes(who), '다른 사람의 할 일 제목이 아님');
+        assert((await page.locator('[data-quick]').count()) === 0 && (await page.locator('#news').count()) === 0, '읽기 전용인데 바로 갱신·새 소식이 보임');
+        await shot(page, 'd15g-my-readonly');
+
+        await page.goto(BASE + '/Insights/LeadTime');
+        assert((await page.locator('.lead-table thead').first().innerText()).includes('진행 중 · 평균 초과'), '단계 병목 열이 없음');
+        assert((await page.locator('[data-lead-active]').allInnerTexts()).some((t) => t.includes('진행 중')), '진행 중 과제 수가 없음');
+    });
+
+    await step('기간 보고 — 월·직접 지정 기간, 조직·변동만 조건, 지연·위험 요약, 변경 이력 Excel', async () => {
+        await page.goto(BASE + '/Insights/Weekly');
+        await page.waitForSelector('[data-delay-summary]');
+        assert((await page.locator('[data-delay-summary] tbody tr').count()) >= 2, '지연·위험 요약이 부족함');
+        await page.click('[data-period-month]');
+        await page.waitForURL(/period=month/);
+        assert((await page.locator('.weekly dt').allInnerTexts()).some((t) => t.includes('다음 달 계획')) || (await page.locator('.weekly').count()) === 0, '월간 보고 문구가 아님');
+        assert((await page.locator('a[aria-label="이전 달"]').count()) === 1, '이전 달 단추가 없음');
+        await shot(page, 'd16c-report-month');
+        await page.click('[data-period-custom]');
+        await page.waitForURL(/period=custom/);
+        await page.fill('#report-filters input[name=from]', kstToday(-20));
+        await page.fill('#report-filters input[name=to]', kstToday(0));
+        await page.selectOption('#report-filters select[name=org]', { label: '물류기술그룹' });
+        await page.check('#report-filters input[name=changed]');
+        await page.click('#report-filters button[type=submit]');
+        await page.waitForURL(/changed=true/);
+        assert((await page.locator('[data-report-range]').innerText()).includes(kstToday(-20)), '직접 지정 기간이 아님');
+        assert((await page.locator('[data-weekly-quiet]').count()) === 0, '변동 있는 과제만인데 접힌 표가 있음');
+        await shot(page, 'd16d-report-custom');
+        const xlsx = await desktop.request.get(BASE + '/Insights/Weekly?handler=Excel&period=month');
+        assert(xlsx.ok(), '월간 보고 Excel 실패 ' + xlsx.status());
+        fs.writeFileSync(path.join(EXPORTS, '월간보고.xlsx'), await xlsx.body());
+
+        await page.goto(BASE + '/Insights/History?kind=schedule');
+        await page.waitForSelector('#history-excel');
+        const href = await page.getAttribute('#history-excel', 'href');
+        assert(href.includes('handler=Excel') && href.includes('kind=schedule'), '이력 Excel 링크에 조건이 없음: ' + href);
+        const res = await desktop.request.get(BASE + href);
+        assert(res.ok(), '변경 이력 Excel 실패 ' + res.status());
+        const body = await res.body();
+        fs.writeFileSync(path.join(EXPORTS, '변경이력.xlsx'), body);
+        if (!process.env.FAKE_EXPORT) assert(body.subarray(0, 2).toString('latin1') === 'PK', '변경 이력 Excel 형식이 아님');
+
+        // 대시보드: 조직 조건과 막대 범위 안내
+        await page.goto(BASE + '/?scope=focus');
+        await page.waitForSelector('#dash-filters select[name=org]');
+        assert((await page.locator('[data-bars-scope]').count()) === 1, '막대 범위 안내가 없음');
+        const bar = await page.getAttribute('[data-bar-category]', 'href');
+        assert(bar.includes('current=true'), '막대 링크가 같은 범위가 아님: ' + bar);
+        await page.goto(BASE + bar);
+        await page.waitForSelector('[data-special-note]');
+        await page.goto(BASE + '/?reset=1');
+
+        await page.goto(BASE + '/Admin#reason');
+        await page.waitForSelector('.columns .node');
+        assert((await page.locator('.columns .node').count()) >= 7, '지연 사유 분류가 부족함');
+        await shot(page, 'd18e-admin-reason');
     });
 
     await step('활동 더 보기 — 최근 50건만 먼저 싣고 나머지는 나눠 받음, 이 과제 전체 이력으로 이동', async () => {
@@ -2669,6 +2770,20 @@ function fillTemplate(template, sheets) {
         await m.waitForSelector('.update-version');
         await noOverflow('업데이트');
         await shot(m, 'm11-update');
+    });
+
+    await step('모바일 분석 확장 — 추세·변경 분석·부하·기간 보고가 화면 안에 들어옴', async () => {
+        for (const [url, name, shotName] of [['/Insights/Trend', '추세', 'm09b-trend'], ['/Insights/Changes', '변경 분석', 'm09c-changes'],
+            ['/Insights/Load', '부하', 'm09d-load'], ['/Insights/Weekly?period=month', '월간 보고', 'm09e-report-month']]) {
+            await m.goto(BASE + url);
+            await m.waitForSelector('.tabs');
+            await noOverflow(name);
+            await shot(m, shotName);
+        }
+        // 조건 고르기 칸은 터치 크기
+        await m.goto(BASE + '/Insights/Trend');
+        const sel = await m.locator('[data-analytics-filter] select').first().boundingBox();
+        assert(sel && sel.height >= 40, '모바일 조건 칸이 작음: ' + JSON.stringify(sel));
     });
 
     await step('모바일 활동 더 보기·과제 전체 이력', async () => {

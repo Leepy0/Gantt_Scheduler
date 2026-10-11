@@ -322,6 +322,8 @@ public class Activity
     public DateTime? EditedAt { get; set; }
     public DateTime? DeletedAt { get; set; }
     public List<ActivityMention> Mentions { get; set; } = new();
+    // 일정 변경 사유의 분류(DelayReason.Id, 선택). FK 없는 느슨한 참조 — 분류를 사용 중지해도 옛 기록은 그대로 남는다
+    public int? ReasonCode { get; set; }
 }
 
 // ── 의존 표현 확장: 작업 의존 유형, 과제 간 단계 의존 ─────────────────────
@@ -459,4 +461,39 @@ public class TemplateWork
     public int? PredecessorTemplateWorkId { get; set; }
     public TemplateWork? PredecessorTemplateWork { get; set; }
     public int SortOrder { get; set; }
+}
+
+// ── 분석: 일별 진척 스냅샷·지연 사유 분류 ─────────────────────────────────
+
+// 하루 한 번(SnapshotWorker) 남기는 과제의 그날 모습. 상태·지연은 저장하지 않고 계산하므로(규칙 3) 과거 시점의 지연 건수·진행률은
+// 여기에만 남는다. 값은 그날의 Rules/Views 계산 결과 그대로다. 서버가 꺼져 있던 날은 행이 없다(지어내지 않는다).
+// 추세 화면·주간 보고 '전주 대비'·신규 지연/지연 해소에만 쓰고 지금 상태 표시에는 쓰지 않는다
+public class ProjectSnapshot
+{
+    public int Id { get; set; }
+    public DateOnly Date { get; set; }              // 한국 날짜
+    public int ProjectId { get; set; }
+    public Project? Project { get; set; }
+    public ProjectState State { get; set; }
+    public int Progress { get; set; }
+    public int DelayDays { get; set; }
+    public int RiskDays { get; set; }
+    public bool AtRisk { get; set; }                // 지연 위험(Rules.AtRisk) — 위험 과제 수 추세
+    public DateOnly? EndTarget { get; set; }
+    public int? SlipDays { get; set; }
+    public string? CurrentStage { get; set; }
+    // 묶어 보기 조건 — 그날의 값(나중에 유형·법인·담당이 바뀌어도 그날 기준으로 센다). FK 없는 참조
+    public int CategoryId { get; set; }
+    public int CorporationId { get; set; }
+    public int OwnerId { get; set; }
+    public int? OrgUnitId { get; set; }             // 담당자의 그날 소속
+}
+
+// 지연(일정 변경) 사유 분류 — 기준 정보. 다른 기준 정보처럼 지우지 않고 사용 중지한다(옛 활동의 ReasonCode 가 가리킨다)
+public class DelayReason
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
 }
