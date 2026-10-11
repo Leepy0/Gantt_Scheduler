@@ -72,8 +72,9 @@ public class DashboardService
         }, withLinks: true);
         if (query.Mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
         var view = Dashboard.Build(all, await _projects.LocationsAsync(), _clock.Today, query, await RiskAsync());
-        // 지연·위험 과제의 최근 사유 한 줄 — 과제 Id 목록으로 한 번에 읽는다
-        var ids = view.Delayed.Select(p => p.Id).Concat(view.Risk!.Select(p => p.Id)).ToList();
+        // 지연·위험 과제의 최근 사유 한 줄 — 카드에 보이는 과제 Id 목록으로 한 번에 읽는다. 목록 매개 변수(IN)의 예외라 길이에 상한을 둔다:
+        // 위험 카드는 보이는 RiskShown 건만, 지연 카드는 지연 큰 순으로 앞의 NotesMax 건만(그 뒤 행은 사유 줄 없이 보인다)
+        var ids = view.Delayed.Take(Dashboard.NotesMax).Select(p => p.Id).Concat(view.Risk!.Take(Dashboard.RiskShown).Select(p => p.Id)).ToList();
         return view with { Notes = await _projects.RecentNotesAsync(ids) };
     }
 
@@ -103,6 +104,7 @@ public static class Dashboard
     public const int MaxDueDays = 90;          // 목록의 '목표일 n일 안' 조건으로 받는 가장 긴 기간
     public const int FocusDays = 28;           // 대시보드 간트 기본 범위('주요')에 넣는 목표일 기간 (4주)
     public const int RiskShown = 8;            // 대시보드 '지연 위험' 카드에 보이는 과제 수
+    public const int NotesMax = 40;            // 대시보드 '지연 과제' 카드에서 최근 사유를 붙이는 과제 수 상한(RecentNotesAsync 의 IN 목록 길이)
 
     // 목록 상태 탭이 DB 에서 거를 과제 상태 ('delayed' 는 진행 과제 중 지연, 'all'·모르는 값은 null = 거르지 않음)
     public static ProjectState? StateOf(string? tab) => tab switch

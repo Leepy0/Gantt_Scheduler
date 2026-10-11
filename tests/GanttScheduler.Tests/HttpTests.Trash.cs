@@ -73,6 +73,8 @@ public partial class HttpTests
             Assert.Contains($"data-restore=\"{id}\"", html);
             Assert.Contains("id=\"trash-link\"", await client.GetStringAsync("/Admin"));
             var trashToken = TokenOf(html);
+            // 화면이 본 과제 버전 (복원·영구 삭제 때 다시 보낸다)
+            var seen = int.Parse(System.Text.RegularExpressions.Regex.Match(html, $"data-purge=\"{id}\" data-version=\"(\\d+)\"").Groups[1].Value);
 
             var restore = await client.SendAsync(TrashJson(trashToken, "Restore", new { id }));
             Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
@@ -82,7 +84,14 @@ public partial class HttpTests
             Assert.Equal(HttpStatusCode.BadRequest, (await client.SendAsync(TrashJson(trashToken, "Purge", new { id }))).StatusCode);
 
             Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Json(token, "Delete", new { id }))).StatusCode);
-            var purge = await client.SendAsync(TrashJson(trashToken, "Purge", new { id }));
+            // 낡은 휴지통 화면(복원 전에 본 삭제 건)에서 누른 영구 삭제는 409 — 그 사이 복원·다시 지운 새 삭제 건을 확인 없이 지우지 않는다
+            var stalePurge = await client.SendAsync(TrashJson(trashToken, "Purge", new { id, version = seen }));
+            Assert.Equal(HttpStatusCode.Conflict, stalePurge.StatusCode);
+            Assert.True((await stalePurge.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("conflict").GetBoolean());
+            var fresh = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/Admin/Trash"));
+            var now = int.Parse(System.Text.RegularExpressions.Regex.Match(fresh, $"data-purge=\"{id}\" data-version=\"(\\d+)\"").Groups[1].Value);
+            Assert.True(now > seen);
+            var purge = await client.SendAsync(TrashJson(trashToken, "Purge", new { id, version = now }));
             Assert.Equal(HttpStatusCode.OK, purge.StatusCode);
             Assert.False(Directory.Exists(folder));
             var after = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/Admin/Trash"));

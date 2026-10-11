@@ -4,7 +4,8 @@ using Microsoft.EntityFrameworkCore;
 namespace GanttScheduler.Services;
 
 // 휴지통 목록 한 줄 (관리 > 휴지통)
-public record TrashItem(int Id, string Title, string Owner, string? DeletedBy, DateTime DeletedAt, string? Reason, int Stages, int Attachments);
+// Version 은 복원·영구 삭제 때 화면이 다시 보낸다 — 낡은 휴지통 화면이 그 사이 복원·수정 후 다시 지워진 다른 삭제 건을 확인 없이 지우지 않게
+public record TrashItem(int Id, string Title, string Owner, string? DeletedBy, DateTime DeletedAt, string? Reason, int Stages, int Attachments, int Version = 0);
 
 // 영구 삭제 기록 한 줄
 public record PurgeLogView(int ProjectId, string Title, string? DeletedBy, DateTime? DeletedAt, string? Reason, DateTime PurgedAt, string PurgedBy);
@@ -22,11 +23,11 @@ public partial class ProjectService
             .Select(p => new
             {
                 p.Id, p.Title, Owner = p.Owner!.Name, DeletedBy = p.DeletedBy!.Name, p.DeletedAt, p.DeleteReason,
-                Stages = p.Stages.Count, Attachments = p.Attachments.Count,
+                Stages = p.Stages.Count, Attachments = p.Attachments.Count, p.Version,
             })
             .ToListAsync();
         return rows.OrderByDescending(r => r.DeletedAt).ThenByDescending(r => r.Id)
-            .Select(r => new TrashItem(r.Id, r.Title, r.Owner ?? "", r.DeletedBy, r.DeletedAt!.Value, r.DeleteReason, r.Stages, r.Attachments)).ToList();
+            .Select(r => new TrashItem(r.Id, r.Title, r.Owner ?? "", r.DeletedBy, r.DeletedAt!.Value, r.DeleteReason, r.Stages, r.Attachments, r.Version)).ToList();
     }
 
     // 최근 영구 삭제 기록 (최신 순)
@@ -41,10 +42,12 @@ public partial class ProjectService
             .Select(p => (p.Id, p.DeletedById)).ToList();
 
     // 휴지통에서 되살린다. 지운 권한이 있는 사람(담당자·등록자·관리자)만. 단계·작업·첨부·활동·과제 간 연결은 그대로 남아 있었으므로 표시만 지운다
-    public async Task RestoreAsync(int id)
+    // version 은 화면이 본 과제 Version (없으면 확인하지 않는다)
+    public async Task RestoreAsync(int id, int? version = null)
     {
         var p = await _db.Projects.FirstOrDefaultAsync(x => x.Id == id && x.DeletedAt != null)
             ?? throw new RuleException("휴지통에서 과제를 찾을 수 없습니다. 이미 복원했거나 영구 삭제했을 수 있습니다.");
+        CheckVersion(version, p.Version, p.Id);
         if (!Rules.CanDeleteProject(p, _me.User?.Id, _me.IsAdmin))
             throw new RuleException("과제 복원은 담당자·등록자 또는 관리자만 할 수 있습니다.");
         var when = ProjectService.Fmt(KoreaClock.KstDate(p.DeletedAt!.Value));
@@ -60,11 +63,13 @@ public partial class ProjectService
     // 휴지통의 과제를 영구 삭제한다(되돌릴 수 없다). 관리자만 — auto 면 보관 기간이 지난 자동 정리(권한 검사 없음, 행위자는 지운 사람).
     // 과제 행과 의존 관계만 읽고 단계·작업·체크·첨부·활동·기준선 차수·방문·관심은 DB cascade 가 지운다(그래프를 읽으면 EF 가 행마다 DELETE 를 보낸다).
     // 과제·활동이 사라지므로 '누가 지웠고 언제 영구 삭제됐는지'를 DeletedProjectLog 에 남긴다. 첨부 파일 폴더는 부른 쪽이 지운다(TrashService)
-    public async Task<PurgeLogView> PurgeAsync(int id, bool auto = false)
+    // version 은 화면이 본 과제 Version — 수동 영구 삭제는 관리자가 본 그 삭제 건일 때만 지운다(자동 정리는 넘기지 않는다)
+    public async Task<PurgeLogView> PurgeAsync(int id, bool auto = false, int? version = null)
     {
         if (!auto && !_me.IsAdmin) throw new RuleException("영구 삭제는 관리자만 할 수 있습니다.");
         var p = await _db.Projects.Include(x => x.Links).Include(x => x.DeletedBy).FirstOrDefaultAsync(x => x.Id == id && x.DeletedAt != null)
             ?? throw new RuleException("휴지통에서 과제를 찾을 수 없습니다. 이미 복원했거나 영구 삭제했을 수 있습니다.");
+        CheckVersion(version, p.Version, p.Id);
         var log = new DeletedProjectLog
         {
             ProjectId = p.Id, Title = p.Title, DeletedBy = p.DeletedBy?.Name, DeletedAt = p.DeletedAt, Reason = p.DeleteReason,

@@ -54,8 +54,8 @@
                         }
                     </span>
                     <span class="trash-actions">
-                        <button type="button" class="btn small" data-restore="@t.Id" data-title="@t.Title"><svg class="ic"><use href="#i-refresh" /></svg>복원</button>
-                        <button type="button" class="btn small danger" data-purge="@t.Id" data-title="@t.Title"><svg class="ic"><use href="#i-trash" /></svg>영구 삭제</button>
+                        <button type="button" class="btn small" data-restore="@t.Id" data-version="@t.Version" data-title="@t.Title"><svg class="ic"><use href="#i-refresh" /></svg>복원</button>
+                        <button type="button" class="btn small danger" data-purge="@t.Id" data-version="@t.Version" data-title="@t.Title"><svg class="ic"><use href="#i-trash" /></svg>영구 삭제</button>
                     </span>
                 </li>
             }
@@ -79,9 +79,9 @@
                     {
                         <tr>
                             <td>@l.Title <span class="muted num">#@l.ProjectId</span></td>
-                            <td>@(l.DeletedBy ?? "-")@if (l.DeletedAt is DateTime d) {<text> · </text><time datetime="@d.ToString("O")">@d.ToString("yyyy-MM-dd HH:mm")</time>}</td>
-                            <td>@(l.Reason ?? "-")</td>
-                            <td>@l.PurgedBy · <time datetime="@l.PurgedAt.ToString("O")">@l.PurgedAt.ToString("yyyy-MM-dd HH:mm")</time></td>
+                            <td data-label="삭제">@(l.DeletedBy ?? "-")@if (l.DeletedAt is DateTime d) {<text> · </text><time datetime="@d.ToString("O")">@d.ToString("yyyy-MM-dd HH:mm")</time>}</td>
+                            <td data-label="사유">@(l.Reason ?? "-")</td>
+                            <td data-label="영구 삭제">@l.PurgedBy · <time datetime="@l.PurgedAt.ToString("O")">@l.PurgedAt.ToString("yyyy-MM-dd HH:mm")</time></td>
                         </tr>
                     }
                 </tbody>

@@ -15,7 +15,7 @@
         if (!ok) return;
         await App.busy(btn, async function () {
             try {
-                await App.post(url('Restore'), { id: +btn.dataset.restore });
+                await App.post(url('Restore'), { id: +btn.dataset.restore, version: +btn.dataset.version });
                 App.toast('과제를 복원했습니다.');
                 window.location.reload();
             } catch (err) { App.toast(err.message, 'error'); }
@@ -31,7 +31,7 @@
         if (!ok) return;
         await App.busy(btn, async function () {
             try {
-                await App.post(url('Purge'), { id: +btn.dataset.purge });
+                await App.post(url('Purge'), { id: +btn.dataset.purge, version: +btn.dataset.version });
                 App.toast('과제를 영구 삭제했습니다.');
                 window.location.reload();
             } catch (err) { App.toast(err.message, 'error'); }

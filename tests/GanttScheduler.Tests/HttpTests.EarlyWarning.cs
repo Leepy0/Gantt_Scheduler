@@ -59,6 +59,13 @@ public partial class HttpTests
         var today2 = DateOnly.FromDateTime(KoreaClock.ToKst(DateTime.UtcNow)).ToString("yyyy-MM-dd");
         var done = await OkJsonAsync(await client.SendAsync(MyProgress(token, new { workId, version = 1, progress = 100, actualEnd = today2 })));
         Assert.Equal(JsonValueKind.Null, done.GetProperty("work").ValueKind);
+
+        // 그 사이 (다른 화면에서) 완료된 작업을 옛 버전으로 보내면 409 이고 최신 행은 null — 화면은 옛 값으로 다시 그리지 않고 행을 뺀다
+        var gone = await client.SendAsync(MyProgress(token, new { workId, version = 1, progress = 50 }));
+        Assert.Equal(HttpStatusCode.Conflict, gone.StatusCode);
+        var goneBody = JsonDocument.Parse(await gone.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(goneBody.GetProperty("conflict").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, goneBody.GetProperty("work").ValueKind);
     }
 
     [Fact]
@@ -74,6 +81,9 @@ public partial class HttpTests
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/Projects?state=risk")).StatusCode);
         var excel = await client.GetAsync("/Projects?handler=Excel&state=all&sort=end&desc=true");
         Assert.Equal(HttpStatusCode.OK, excel.StatusCode);
+        // 머리글이 없는 정렬 키(좁은 화면의 고르기)도 Excel 제목에 한국어 이름으로 적는다
+        Assert.Equal(("지연 일수", "최근 변경", "목표 종료"),
+            (Pages.Projects.IndexModel.SortName("delay"), Pages.Projects.IndexModel.SortName("recent"), Pages.Projects.IndexModel.SortName("end")));
 
         var dash = await client.GetStringAsync("/?scope=all&sort=recent");
         Assert.Contains("id=\"risk-card\"", dash);

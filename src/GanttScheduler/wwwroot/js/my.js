@@ -110,8 +110,12 @@
                 render(li, err.data.work, true);
                 if (err.data.work.group !== w.group) place(li, err.data.work);
                 recount();
-            } else if (err.status === 409) {
-                render(li, w, true);
+            } else if (err.status === 409 && err.data && err.data.conflict) {
+                // 그 사이 다른 사람이 완료했거나 담당을 바꿔 내 할 일에서 빠짐 — 옛 값으로 다시 그리면 누를 때마다 409 만 나므로 행을 뺀다
+                App.toast('"' + w.title + '" 작업은 다른 사용자가 먼저 바꿔 내 할 일에서 빠졌습니다.');
+                li.remove();
+                recount();
+                return;
             } else {
                 render(li, w, true);
             }

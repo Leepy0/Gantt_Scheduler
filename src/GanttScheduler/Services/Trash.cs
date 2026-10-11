@@ -47,13 +47,13 @@ public class TrashService
 
     public Task<List<PurgeLogView>> LogAsync() => _projects.PurgeLogAsync();
 
-    public Task RestoreAsync(int id) => _projects.RestoreAsync(id);
+    public Task RestoreAsync(int id, int? version = null) => _projects.RestoreAsync(id, version);
 
     // 영구 삭제: DB 를 먼저 커밋하고 첨부 폴더를 지운다(폴더를 못 지워도 경고만 — 서버 상태의 고아 파일 정리가 나중에 치운다).
     // 활동까지 사라지므로 파일 로그에 한 줄을 남긴다(관리 변경 이력이 따로 없어서)
-    public async Task<PurgeLogView> PurgeAsync(int id, bool auto = false)
+    public async Task<PurgeLogView> PurgeAsync(int id, bool auto = false, int? version = null)
     {
-        var done = await _projects.PurgeAsync(id, auto);
+        var done = await _projects.PurgeAsync(id, auto, version);
         _files.RemoveProjectFiles(id);
         _log.LogWarning("과제 영구 삭제: #{Id} {Title} — 삭제 {DeletedBy} {DeletedAt:yyyy-MM-dd HH:mm}Z, 영구 삭제 {PurgedBy}",
             done.ProjectId, done.Title, done.DeletedBy ?? "-", done.DeletedAt, done.PurgedBy);

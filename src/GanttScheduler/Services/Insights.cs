@@ -146,6 +146,13 @@ public class InsightService
             ? v.Late.Concat(v.Soon).Concat(v.Later).FirstOrDefault(w => w.WorkId == workId)
             : null;
 
+    // 작업 Id 만 알 때(저장 충돌로 과제 Id 를 모를 때) 그 작업의 내 할 일 행. 작업이 지워졌거나 내 할 일이 아니면 null
+    public async Task<MyWork?> MyWorkAsync(int workId)
+    {
+        var projectId = await _db.WorkItems.AsNoTracking().Where(w => w.Id == workId).Select(w => (int?)w.Stage!.ProjectId).FirstOrDefaultAsync();
+        return projectId is int id ? await MyWorkAsync(id, workId) : null;
+    }
+
     // from 이 속한 주(월~일)의 보고
     public async Task<WeeklyReport> WeeklyAsync(DateOnly? day, bool mine)
     {

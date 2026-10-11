@@ -1075,6 +1075,13 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 @media (max-width: 767px) {
     .trash-actions { width: 100%; }
     .trash-actions .btn { flex: 1; min-height: 48px; }
+    /* 좁은 화면에서는 기록 표를 행 목록으로 쌓는다 — 가로로 밀지 않아도 누가·언제·왜 지웠는지 바로 읽히게 */
+    .trash-log { min-width: 0; }
+    .trash-log thead { display: none; }
+    .trash-log tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .trash-log td { display: block; padding: 2px 0; border: 0; white-space: normal; }
+    .trash-log td:first-child { font-weight: 600; }
+    .trash-log td[data-label]::before { content: attr(data-label) " "; color: var(--text-3); font-size: var(--fs-xs); }
 }
 /* ── 조기 경보·대시보드/목록 정리·빠른 갱신 ─────────────────────────── */
 /* 지연 위험 KPI: 두 숫자(위험·정체)가 각각 목록 탭으로 간다. 노랑은 임박·위험 전용 */

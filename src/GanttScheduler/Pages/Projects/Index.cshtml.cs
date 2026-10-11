@@ -139,9 +139,14 @@ public class IndexModel : PageModel
         if (!string.IsNullOrWhiteSpace(Q)) parts.Add("검색: " + Q.Trim());
         if (SpecialText is { } special) parts.Add(special);
         if (Mine) parts.Add("내 과제");
-        if (SortKey != null) parts.Add("정렬: " + (Columns.FirstOrDefault(c => c.Key == SortKey).Label ?? SortKey) + (Desc ? " ↓" : " ↑"));
+        if (SortKey != null) parts.Add("정렬: " + SortName(SortKey) + (Desc ? " ↓" : " ↑"));
         return string.Join(" · ", parts);
     }
+
+    // 정렬 키의 한국어 이름 (Excel 제목). 머리글이 없는 키(지연·최근 변경 — 좁은 화면의 고르기와 기억한 정렬로만 고른다)도 이름을 둔다
+    public static string SortName(string key) =>
+        Columns.FirstOrDefault(c => c.Key == key).Label
+        ?? key switch { "delay" => "지연 일수", "recent" => "최근 변경", _ => "기본 순서" };
 
     // 대시보드 숫자에서 온 조건의 설명 (없으면 null)
     public string? SpecialText =>

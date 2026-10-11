@@ -10,24 +10,19 @@ public partial class ProjectService
     public const int RecentNoteDays = 60;
 
     // 모든 과제 간 단계 연결(양쪽 단계와 과제 제목까지). 대시보드·목록은 과제 수백 건의 단계 Id 를 조건으로 넘기지 않고
-    // 연결 표 전체를 읽는다 — 연결은 과제 수보다 훨씬 적고, 긴 IN 목록은 SQL Server 매개 변수 한도에 걸린다
+    // 연결 표 전체를 양쪽 단계·과제와 조인해 한 번에 읽는다(목록 매개 변수 없이) — 연결은 과제 수보다 훨씬 적다
     public async Task<List<StageLink>> AllCrossLinksAsync()
     {
-        var links = await _db.StageLinks.AsNoTracking().ToListAsync();
-        if (links.Count == 0) return links;
-        var ids = links.SelectMany(l => new[] { l.PredecessorStageId, l.SuccessorStageId }).Distinct().ToList();
-        var stages = (await _db.Stages.AsNoTracking().Include(s => s.Project).Where(s => ids.Contains(s.Id)).ToListAsync()).ToDictionary(s => s.Id);
-        foreach (var l in links)
-        {
-            l.PredecessorStage = stages.GetValueOrDefault(l.PredecessorStageId);
-            l.SuccessorStage = stages.GetValueOrDefault(l.SuccessorStageId);
-        }
+        var links = await _db.StageLinks.AsNoTracking()
+            .Include(l => l.PredecessorStage).ThenInclude(s => s!.Project)
+            .Include(l => l.SuccessorStage).ThenInclude(s => s!.Project)
+            .ToListAsync();
         // 휴지통에 간 과제의 연결은 지우지 않고 남겨 두므로(복원하면 돌아온다) 화면·위반 계산에서만 뺀다 — CrossLinksAsync 와 같은 규칙
         return links.Where(l => l.PredecessorStage?.Project is { DeletedAt: null } && l.SuccessorStage?.Project is { DeletedAt: null }).ToList();
     }
 
     // 과제마다 최근 사유 한 줄: 최근 RecentNoteDays 일 안에 사유가 붙은 변경 또는 (지우지 않은) 댓글 중 가장 최근 것.
-    // 지연·위험 카드의 과제 Id 목록으로 한 번에 읽고 과제별 고르기는 메모리에서 한다(그룹 집계는 DB 로 옮기지 않는다 — DESIGN 6장)
+    // 지연·위험 카드에 보이는 과제 Id 목록(상한 있음 — DashboardService.BuildAsync)으로 한 번에 읽고 과제별 고르기는 메모리에서 한다(그룹 집계는 DB 로 옮기지 않는다 — DESIGN 6장)
     public async Task<Dictionary<int, RecentNote>> RecentNotesAsync(IReadOnlyCollection<int> projectIds)
     {
         var result = new Dictionary<int, RecentNote>();

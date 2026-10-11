@@ -2510,6 +2510,10 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         await m.waitForFunction(() => !document.querySelector('#trash-list') || !document.querySelector('#trash-list').innerText.includes('컨베이어 개선'));
         assert((await m.locator('#purge-log').innerText()).includes('컨베이어 개선'), '영구 삭제 기록이 없음');
         await noOverflow('휴지통 기록');
+        // 좁은 화면에서는 기록을 행 목록으로 쌓는다 — 영구 삭제(누가·언제) 칸이 가로로 밀지 않아도 화면 안에 보여야 한다
+        const purged = await m.locator('#purge-log td[data-label="영구 삭제"]').first().boundingBox();
+        const vw = m.viewportSize().width;
+        assert(purged && purged.x >= 0 && purged.x + purged.width <= vw + 1, '모바일 영구 삭제 기록의 영구 삭제 칸이 화면 밖에 있음');
         await shot(m, 'm14c-trash-log');
     });
 

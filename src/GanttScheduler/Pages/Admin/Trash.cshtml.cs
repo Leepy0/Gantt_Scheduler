@@ -19,7 +19,8 @@ public class TrashModel : PageModel
         _me = me;
     }
 
-    public record IdInput(int Id);
+    // Version: 화면이 본 과제 Version — 그 사이 복원·수정 뒤 다시 지워졌으면 409 로 새로고침을 안내한다
+    public record IdInput(int Id, int? Version);
 
     public List<TrashRow> Rows { get; private set; } = new();
     public List<PurgeLogView> Log { get; private set; } = new();
@@ -34,9 +35,9 @@ public class TrashModel : PageModel
         return Page();
     }
 
-    public Task<IActionResult> OnPostRestoreAsync([FromBody] IdInput input) => Run(() => _trash.RestoreAsync(input.Id));
+    public Task<IActionResult> OnPostRestoreAsync([FromBody] IdInput input) => Run(() => _trash.RestoreAsync(input.Id, input.Version));
 
-    public Task<IActionResult> OnPostPurgeAsync([FromBody] IdInput input) => Run(() => _trash.PurgeAsync(input.Id));
+    public Task<IActionResult> OnPostPurgeAsync([FromBody] IdInput input) => Run(() => _trash.PurgeAsync(input.Id, version: input.Version));
 
     private async Task<IActionResult> Run(Func<Task> action)
     {
@@ -46,6 +47,10 @@ public class TrashModel : PageModel
         {
             await action();
             return new JsonResult(new { ok = true });
+        }
+        catch (ConflictException)
+        {
+            return new JsonResult(new { ok = false, conflict = true, error = "그 사이 이 과제가 복원되었거나 바뀌었습니다. 목록을 새로고침해 주세요." }) { StatusCode = StatusCodes.Status409Conflict };
         }
         catch (RuleException ex)
         {
