@@ -518,11 +518,13 @@ public class ExcelExporter
         cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
     }
 
-    // 기준선 대비 일수: 밀리면 빨강(+n), 당겨지면 초록(-n)
+    // 기준선 대비 일수: 밀리면 빨강(+n), 당겨지면 초록(-n). 글자가 아니라 숫자로 넣고 표시 형식으로 부호를 붙인다 —
+    // 글자('+3')면 정렬·필터가 사전순이 되고 합계를 낼 수 없다
     private static void Slip(IXLCell cell, int? days)
     {
         if (days == null) return;
-        cell.Value = Signed(days.Value);
+        cell.Value = days.Value;
+        cell.Style.NumberFormat.Format = "+0;-0;0";
         if (days.Value > 0) cell.Style.Font.FontColor = Alarm;
         else if (days.Value < 0) cell.Style.Font.FontColor = Ok;
     }

@@ -257,3 +257,73 @@ public class WeeklyServiceTests : IClassFixture<TestDb>
         Assert.Equal(2, decision.More!.Count);
     }
 }
+
+// 대시보드 숫자와 목록 조건이 같은 판정을 쓰는지 (KPI·막대·다가오는 일정 → 목록), Excel 기준선 대비 숫자
+public class DashboardLinkTests : IClassFixture<TestDb>
+{
+    private readonly TestDb _db;
+    private DateOnly Today => _db.Clock.Today;
+    public DashboardLinkTests(TestDb db) => _db = db;
+
+    [Fact]
+    public async Task 대시보드_숫자를_누른_목록은_그_숫자와_같은_과제를_보인다()
+    {
+        using var s = _db.NewScope();
+        var all = await s.Projects.AllAsync();
+        var locations = await s.Projects.LocationsAsync();
+        var d = Dashboard.Build(all, locations, Today);
+        List<ProjectView> List(ProjectFilter f) => Dashboard.Filter(all, locations, Today, f, _db.Me.Id);
+
+        // 올해 완료: 마지막 단계 완료 연도 기준 — 역대 완료 전체가 아니다
+        var doneYear = List(new ProjectFilter(null, null, null, "done", false, DoneYear: Today.Year));
+        Assert.Equal(d.Kpi.DoneThisYear, doneYear.Count);
+        Assert.True(List(new ProjectFilter(null, null, null, "done", false)).Count >= doneYear.Count);
+
+        // n일 내 목표: 그 기간에 목표일이 있는 단계를 가진 진행 과제 (KPI 는 단계 수, 목록은 과제)
+        var due = List(new ProjectFilter(null, null, null, "active", false, DueDays: Rules.SoonDays));
+        var dueStages = all.Where(p => p.State == ProjectState.Active)
+            .SelectMany(p => p.Stages.Where(x => x.CompletedDate == null && x.TargetDate != null && Rules.IsSoon(Rules.DaysLeft(x.TargetDate.Value, Today))).Select(_ => p.Id)).ToList();
+        Assert.Equal(d.Kpi.DueThisWeek, dueStages.Count);
+        Assert.Equal(dueStages.Distinct().OrderBy(x => x), due.Select(v => v.Id).OrderBy(x => x));
+
+        // 다가오는 일정: 앞 몇 건만 보이고 전체 건수를 함께 준다
+        Assert.True(d.Upcoming.Count <= Dashboard.UpcomingShown);
+        Assert.True(d.UpcomingTotal >= d.Upcoming.Count);
+
+        // 유형·법인 막대: Id 로 묶고, 그 Id 조건의 목록(전체 상태) 건수와 같다
+        foreach (var g in d.ByCategory)
+            Assert.Equal(g.Total, List(new ProjectFilter(null, g.Id, null, "all", false)).Count);
+        foreach (var g in d.ByCorporation)
+            Assert.Equal(g.Total, List(new ProjectFilter(null, null, g.Id, "all", false)).Count);
+    }
+
+    [Fact]
+    public void 이름이_같은_유형도_막대를_따로_센다()
+    {
+        Project P(int id, int categoryId) => new()
+        {
+            Id = id, CategoryId = categoryId, Category = new Category { Id = categoryId, Name = "물류", SortOrder = categoryId }, CorporationId = 1,
+            State = ProjectState.Active, StartDate = Today, Stages = { new Stage { Name = "검토", SortOrder = 1 } },
+        };
+        var d = Dashboard.Build(new List<Project> { P(1, 10), P(2, 20), P(3, 20) }, new LocationIndex(Array.Empty<Location>()), Today);
+        Assert.Equal(new[] { (10, 1), (20, 2) }, d.ByCategory.Select(g => (g.Id, g.Total)).ToArray());
+    }
+
+    [Fact]
+    public void Excel_기준선_대비는_숫자에_부호_표시_형식이다()
+    {
+        var rows = new List<ProjectView>
+        {
+            new() { Id = 1, Title = "밀림", SlipDays = 3, Chip = ChipView.None, StateLabel = "진행" },
+            new() { Id = 2, Title = "당김", SlipDays = -2, Chip = ChipView.None, StateLabel = "진행" },
+        };
+        var bytes = new ExcelExporter().ProjectList(rows, Today, "상태: 진행 · 유형: 물류 · 법인: 한국");
+        using var book = new ClosedXML.Excel.XLWorkbook(new MemoryStream(bytes));
+        var ws = book.Worksheets.First();
+        Assert.Contains("유형: 물류 · 법인: 한국", ws.Cell(2, 1).GetString());
+        Assert.Equal(3, ws.Cell(5, 14).GetValue<int>());
+        Assert.Equal(-2, ws.Cell(6, 14).GetValue<int>());
+        Assert.Equal("+0;-0;0", ws.Cell(5, 14).Style.NumberFormat.Format);
+        Assert.Equal("+3", ws.Cell(5, 14).GetFormattedString());
+    }
+}

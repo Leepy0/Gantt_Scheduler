@@ -45,4 +45,33 @@ public partial class HttpTests
         Assert.Contains("30MB 이하", html);
         Assert.Contains("\"maxMB\":30", html);
     }
+
+    [Fact]
+    public async Task 대시보드_숫자와_막대는_같은_조건의_목록으로_잇고_목록_Excel_제목에_유형_법인을_적는다()
+    {
+        var client = await RegisteredClientAsync();
+        var year = new GanttScheduler.Services.KoreaClock().Today.Year;
+        var html = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync("/"));
+        Assert.Contains("/Projects?state=active&due=7", html);
+        Assert.Contains($"/Projects?state=done&doneYear={year}", html);
+        Assert.Matches("data-bar-category=\"\\d+\" href=\"/Projects\\?state=all&category=\\d+\"", html);
+        Assert.Matches("data-bar-corp=\"\\d+\" href=\"/Projects\\?state=all&corp=\\d+\"", html);
+
+        // 목록: 대시보드 조건 안내와 해제 링크, 상태 탭을 바꾸면 풀리는 숨은 입력
+        var list = System.Net.WebUtility.HtmlDecode(await client.GetStringAsync($"/Projects?state=done&doneYear={year}"));
+        Assert.Contains($"{year}년 완료", list);
+        Assert.Contains("data-special", list);
+
+        int category, corp;
+        using (var s = _factory.Db.NewScope())
+        {
+            category = await s.Db.Categories.Where(c => c.Name == "물류 자동화").Select(c => c.Id).FirstAsync();
+            corp = await s.Db.Locations.Where(l => l.Level == 1 && l.Name == "베트남").Select(l => l.Id).FirstAsync();
+        }
+        var bytes = await client.GetByteArrayAsync($"/Projects?handler=Excel&state=all&category={category}&corp={corp}");
+        using var book = new ClosedXML.Excel.XLWorkbook(new MemoryStream(bytes));
+        var sub = book.Worksheets.First().Cell(2, 1).GetString();
+        Assert.Contains("유형: 물류 자동화", sub);
+        Assert.Contains("법인: 베트남", sub);
+    }
 }

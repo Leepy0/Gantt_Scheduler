@@ -592,6 +592,14 @@ public static class Rules
 
     public static bool IsSoon(int daysLeft) => daysLeft >= 0 && daysLeft <= SoonDays;
 
+    // 과제를 끝낸 날: 모든 단계를 완료했으면 가장 늦은 단계 완료일 (대시보드 '올해 완료'와 목록의 완료 연도 조건이 같은 판정을 쓴다)
+    public static DateOnly? CompletedOn(Project p) =>
+        AllStagesDone(p) ? p.Stages.Max(s => s.CompletedDate!.Value) : null;
+
+    // 미완료 단계 중 목표일이 오늘부터 days 일 안(오늘 포함)인 것이 있는가 (대시보드 'n일 내 목표'·다가오는 일정과 목록의 조건)
+    public static bool HasStageDueWithin(Project p, DateOnly today, int days) =>
+        p.Stages.Any(s => s.CompletedDate == null && s.TargetDate != null && DaysLeft(s.TargetDate.Value, today) is var d && d >= 0 && d <= days);
+
     // 미완료 단계의 목표일이 지남
     public static bool IsLate(Stage s, DateOnly today) => s.CompletedDate == null && s.TargetDate != null && s.TargetDate.Value < today;
 
