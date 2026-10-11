@@ -53,7 +53,7 @@ jobs:
       # 빌드할 커밋. workflow_run 에서는 GITHUB_SHA 가 main 의 최신 커밋이라 CI 가 검사한 커밋을 따로 쓴다
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
           fetch-depth: 0   # 변경 내용용 이전 태그 조회

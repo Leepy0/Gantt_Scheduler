@@ -100,6 +100,9 @@
                 html += '<option value="' + top.id + '"' + (top.id === selected ? ' selected' : '') + '>' + esc(top.name) + '</option>';
             } else {
                 html += '<optgroup label="' + esc(top.name) + '">';
+                // 하위 타입이 생기기 전에 대분류로 고른 과제: 그 값을 목록 맨 앞에 남겨 그대로 저장할 수 있게 한다
+                // (없으면 선택이 '종류 선택'으로 돌아가 과제명만 고쳐도 저장이 거절된다)
+                if (top.id === selected) html += '<option value="' + top.id + '" selected>' + esc(top.name) + ' (대분류 전체)</option>';
                 subs.forEach(function (s) {
                     html += '<option value="' + s.id + '"' + (s.id === selected ? ' selected' : '') + '>' + esc(top.name + ' · ' + s.name) + '</option>';
                 });
@@ -170,5 +173,21 @@
             var input = f.querySelector('input:not([type=hidden]), select, textarea');
             if (input) input.focus();
         }
+    }
+
+    // ── 유형 템플릿 작업 (등록 화면) ─────────────────────────────────
+    // 고른 유형에 작업 템플릿이 있으면 '템플릿 작업 n개 함께 만들기'를 보인다 (기본 켬)
+    var twField = document.getElementById('template-works-field');
+    if (twField) {
+        var twCount = {};
+        meta.categories.forEach(function (c) { twCount[c.id] = c.templateWorks || 0; });
+        var syncTemplateWorks = function () {
+            var checked = document.querySelector('input[name="Form.CategoryId"]:checked');
+            var n = checked ? (twCount[+checked.value] || 0) : 0;
+            twField.hidden = n === 0;
+            document.getElementById('template-works-label').textContent = '템플릿 작업 ' + n + '개 함께 만들기';
+        };
+        document.querySelectorAll('input[name="Form.CategoryId"]').forEach(function (r) { r.addEventListener('change', syncTemplateWorks); });
+        syncTemplateWorks();
     }
 })();

@@ -2,6 +2,19 @@
 (function () {
     'use strict';
 
+    // 마지막으로 본 조건(유형·법인·내 과제·간트 범위·정렬)을 기억했다가, 조건 없이 대시보드를 열면 그 조건으로 연다.
+    // '조건 해제'(reset=1)는 기억도 지운다. 저장소를 못 쓰면 App.pref 가 조용히 건너뛴다
+    var search = location.search.replace(/^\?/, '');
+    if (/(^|&)reset=1(&|$)/.test(search)) {
+        App.pref.set('dash.query', '');
+        history.replaceState(null, '', location.pathname);
+    } else if (!search) {
+        var saved = App.pref.get('dash.query', '');
+        if (saved) { location.replace(location.pathname + '?' + saved); return; }
+    } else {
+        App.pref.set('dash.query', search);
+    }
+
     var data = App.data();
     var host = document.getElementById('gantt');
     var zoom = App.pref.get('dash.zoom', 'week');
@@ -16,9 +29,13 @@
             p.stages.forEach(function (s, i) {
                 bars = bars.concat(Gantt.stageBars(s, i, lane, true));
             });
+            // 지연(빨강) → 지연 위험(노랑, 예상 초과 일수) → 진행률. 정체는 글자로 덧붙인다 (판정은 서버 값)
             var side = p.delayDays > 0
                 ? '<span class="alarm">' + App.icon('alert') + '</span><span class="alarm">D+' + p.delayDays + '</span>'
-                : '<span>' + p.progress + '%</span>';
+                : p.atRisk
+                    ? '<span class="warn" title="' + App.esc(p.risk || '지연 위험') + '">' + App.icon('clock') + (p.riskDays > 0 ? '+' + p.riskDays : '위험') + '</span>'
+                    : '<span>' + p.progress + '%</span>';
+            if (p.stale) side += '<span class="muted" title="최근 변경 없음">정체</span>';
             return {
                 key: 'p' + p.id,
                 cls: 'project',
@@ -52,6 +69,14 @@
             App.pref.set('dash.zoom', zoom);
             render(false);
         });
+    });
+
+    // 정렬: 고르면 그 조건의 주소로 간다(서버가 같은 순서로 그린다)
+    var sortPick = document.getElementById('gantt-sort');
+    if (sortPick) sortPick.addEventListener('change', function () { location.href = sortPick.value; });
+    // 유형·법인은 바꾸는 즉시 조회
+    document.querySelectorAll('#dash-filters select').forEach(function (el) {
+        el.addEventListener('change', function () { document.getElementById('dash-filters').submit(); });
     });
 
     var todayBtn = document.getElementById('go-today');

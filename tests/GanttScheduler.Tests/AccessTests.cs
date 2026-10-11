@@ -222,7 +222,7 @@ public class AccessTests : IClassFixture<TestDb>
         var calls = new List<Func<Task>>
         {
             () => s.Masters.SaveAsync(new MasterSave("location", 1, null, null, "새 법인", null, null, null, null, null, null)),
-            () => s.Masters.ToggleAsync(new MasterRef("location", 1, loc.Id, 0)),
+            () => s.Masters.ToggleAsync(new MasterRef("location", 1, loc.Id, 0, Active: false)),
             () => s.Masters.MoveAsync(new MasterRef("location", 1, loc.Id, 1)),
             () => s.Masters.SaveAsync(new MasterSave("user", 1, s.Me.Id, null, "일반사용자", null, null, null, null, true, null)),
             () => s.Masters.AddAddressAsync(new MasterIp(s.Me.Id, "10.66.3.1")),
@@ -243,7 +243,7 @@ public class AccessTests : IClassFixture<TestDb>
         var ex = await Assert.ThrowsAsync<RuleException>(() =>
             s.Masters.SaveAsync(new MasterSave("user", 1, s.Me.Id, null, "관리자갑", null, null, null, null, false, null)));
         Assert.Equal("isAdmin", ex.Field);
-        await Assert.ThrowsAsync<RuleException>(() => s.Masters.ToggleAsync(new MasterRef("user", 1, s.Me.Id, 0)));
+        await Assert.ThrowsAsync<RuleException>(() => s.Masters.ToggleAsync(new MasterRef("user", 1, s.Me.Id, 0, Active: false)));
         Assert.True((await s.Db.Users.SingleAsync(u => u.Id == s.Me.Id)).IsAdmin);
     }
 
@@ -344,6 +344,22 @@ public class AccessTests : IClassFixture<TestDb>
         }
     }
 
+    [Fact]
+    public async Task 사람별_마지막_접속은_관리자에게만_준다()
+    {
+        int userId;
+        using (var s = _db.NewScope())
+            userId = (await s.Users.RegisterAsync("10.66.5.1", "접속기록사람", null)).Id;
+        using (var s = _db.NewScope("일반사용자"))
+        {
+            var node = (await s.Masters.ListAsync("user")).Single(n => n.Id == userId);
+            Assert.Null(node.LastSeen);
+            Assert.Null(node.Addresses);
+        }
+        using (var s = _db.NewScope(admin: true))
+            Assert.Equal(Today, (await s.Masters.ListAsync("user")).Single(n => n.Id == userId).LastSeen);
+    }
+
     // ── 담당자 이름 처리 ───────────────────────────────────────────────
 
     [Fact]
@@ -416,7 +432,7 @@ public class AccessTests : IClassFixture<TestDb>
         using (var s = _db.NewScope())
             await s.Projects.SaveWorkAsync(new WorkInput(w2.Id, stage.Id, "작업2", "바뀐담당", "새부담당B", w2.PlanStart, w2.PlanEnd, null, null, 0, null, null, w2.Version));
         using (var s = _db.NewScope())
-            await s.Projects.UpdateAsync(id, new ProjectInput(view.Title, view.CategoryId, view.LocationId, "바뀐과제담당", null, null, null, null, null, view.Version));
+            await s.Projects.UpdateAsync(id, new ProjectInput(view.Title, view.CategoryId, view.LocationId, "바뀐과제담당", view.StartDate, null, null, null, null, view.Version));
 
         view = await ViewAsync(id);
         Assert.Equal("바뀐과제담당", view.Owner);
@@ -441,8 +457,10 @@ public class AccessTests : IClassFixture<TestDb>
             await s.Projects.SaveWorkAsync(new WorkInput(null, stage.Id, "작업", "곧중지", null, Today, Today.AddDays(2), null, null, 0, null, null));
         using (var s = _db.NewScope())
         {
+            // 맡은 일이 있는 사람은 관리 화면에서 바로 끌 수 없으므로(담당 이관을 거친다) 담당이 남은 채 사용 중지된 옛 데이터처럼 바로 바꾼다
             var u = await s.Db.Users.SingleAsync(x => x.Name == "곧중지");
-            await s.Masters.ToggleAsync(new MasterRef("user", 1, u.Id, 0));
+            u.IsActive = false;
+            await s.Db.SaveChangesAsync();
         }
 
         var view = await ViewAsync(id);
@@ -451,7 +469,7 @@ public class AccessTests : IClassFixture<TestDb>
         using (var s = _db.NewScope())
             await s.Projects.SaveWorkAsync(new WorkInput(work.Id, stage.Id, "작업", "곧중지", null, work.PlanStart, work.PlanEnd, Today, null, 30, null, null, work.Version));
         using (var s = _db.NewScope())
-            await s.Projects.UpdateAsync(id, new ProjectInput("테스트 중지 담당자(수정)", view.CategoryId, view.LocationId, "곧중지", null, null, null, null, null, view.Version));
+            await s.Projects.UpdateAsync(id, new ProjectInput("테스트 중지 담당자(수정)", view.CategoryId, view.LocationId, "곧중지", view.StartDate, null, null, null, null, view.Version));
 
         // 새로 지정하는 것은 거절한다 — 부담당·다른 작업·새 과제
         work = (await ViewAsync(id)).Stages[0].Works.Single();

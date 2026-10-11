@@ -29,6 +29,11 @@ public sealed class AppFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Storage__KeyPath", Path.Combine(_uploads, "keys"));
         Environment.SetEnvironmentVariable("Update__Path", Path.Combine(_uploads, "updates"));
         Environment.SetEnvironmentVariable("Update__Source", "");
+        // 파일 로그·백업도 임시 폴더에 (프로젝트 폴더의 App_Data 에 남지 않게)
+        Environment.SetEnvironmentVariable("Logs__Path", Path.Combine(_uploads, "logs"));
+        Environment.SetEnvironmentVariable("Backup__FilesPath", Path.Combine(_uploads, "backups"));
+        // 일별 진척 스냅샷은 배경에서 DB 에 쓴다 — 시험의 DB 명령 수·데이터를 흔들지 않게 끈다(스냅샷 시험은 서비스로 직접 한다)
+        Environment.SetEnvironmentVariable("Snapshot__Enabled", "false");
         // Program.cs 가 시작하자마자 읽는 설정이라 환경 변수로 넘긴다
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         Environment.SetEnvironmentVariable("Seed__Demo", "true");
@@ -118,6 +123,11 @@ public partial class HttpTests : IClassFixture<AppFactory>
     [InlineData("/Admin/Update")]
     [InlineData("/My")]
     [InlineData("/Insights/LeadTime")]
+    [InlineData("/Insights/LeadTime?year=2026")]
+    [InlineData("/Projects?state=done&year=2025")]
+    [InlineData("/Projects?state=dropped&year=0")]
+    [InlineData("/Help")]
+    [InlineData("/Board")]
     [InlineData("/Insights/Weekly")]
     [InlineData("/Insights/Weekly?day=2026-09-28&mine=true")]
     [InlineData("/Insights/History")]
@@ -182,7 +192,7 @@ public partial class HttpTests : IClassFixture<AppFactory>
         Assert.Equal("idle", st.GetProperty("phase").GetString());
 
         // 통합테스터는 관리자가 아니다 (테스트 DB 에 관리자가 이미 있다)
-        foreach (var handler in new[] { "Check", "Download", "Apply", "Rollback", "Discard", "Settings", "DismissFailure", "Upload" })
+        foreach (var handler in new[] { "Check", "Download", "Apply", "Rollback", "Discard", "Settings", "DismissFailure", "Upload", "Backup" })
         {
             var req = new HttpRequestMessage(HttpMethod.Post, "/Admin/Update?handler=" + handler)
             {

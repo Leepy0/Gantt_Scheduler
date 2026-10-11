@@ -35,7 +35,7 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -79,7 +79,7 @@ jobs:
           # DB 를 쓰지 않는 테스트(규칙 계산, 서비스 등록 명령, 업데이트 파일 처리)와 SQLite 전용 테스트는 위 단계에서 이미 돌았다.
           # 여기서는 DB 를 거치는 테스트만 다시 돌린다. 새 테스트 클래스는 기본으로 포함된다(빼도 되는 것만 여기 적는다)
           dotnet test GanttScheduler.slnx -c Release --no-build --logger "console;verbosity=normal" \
-            --filter "FullyQualifiedName!~GanttScheduler.Tests.RulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ScheduleRulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ServiceInstallerTests.&FullyQualifiedName!~GanttScheduler.Tests.UpdateTests.&FullyQualifiedName!~GanttScheduler.Tests.OpsTests." \
+            --filter "FullyQualifiedName!~GanttScheduler.Tests.RulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ScheduleRulesTests.&FullyQualifiedName!~GanttScheduler.Tests.ServiceInstallerTests.&FullyQualifiedName!~GanttScheduler.Tests.UpdateTests.&FullyQualifiedName!~GanttScheduler.Tests.OpsTests.&FullyQualifiedName!~GanttScheduler.Tests.FileLogTests." \
             2>&1 | tee out/logs/test-sqlserver.log
 
       - name: 화면 점검 (데스크톱·모바일)

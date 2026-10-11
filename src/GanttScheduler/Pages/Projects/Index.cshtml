@@ -3,12 +3,8 @@
 @{
     ViewData["Title"] = "과제";
     ViewData["Nav"] = "projects";
-    // Excel 내보내기는 현재 필터 그대로
-    var excelRoute = new Dictionary<string, string> { ["state"] = Model.StateKey };
-    if (!string.IsNullOrWhiteSpace(Model.Q)) excelRoute["q"] = Model.Q;
-    if (Model.Category != null) excelRoute["category"] = Model.Category.Value.ToString();
-    if (Model.Corp != null) excelRoute["corp"] = Model.Corp.Value.ToString();
-    if (Model.Mine) excelRoute["mine"] = "true";
+    // Excel 내보내기는 현재 필터·정렬 그대로 (같은 순서로 내보낸다)
+    var excelRoute = Model.Route();
 }
 
 <div class="page-head">
@@ -17,6 +13,9 @@
     <span class="spacer"></span>
     <a class="btn" asp-page="/Projects/Index" asp-page-handler="Excel" asp-all-route-data="excelRoute" title="Excel 내보내기">
         <svg class="ic"><use href="#i-download" /></svg><span class="hide-sm">Excel</span>
+    </a>
+    <a class="btn" asp-page="/Projects/Import" id="btn-import" title="Excel 로 과제 가져오기">
+        <svg class="ic"><use href="#i-upload" /></svg><span class="hide-sm">가져오기</span>
     </a>
     <a class="btn primary" asp-page="/Projects/Edit"><svg class="ic"><use href="#i-plus" /></svg>과제 등록</a>
 </div>
@@ -33,7 +32,7 @@
     <div class="filter-row">
         <label class="search">
             <svg class="ic"><use href="#i-search" /></svg>
-            <input type="search" name="q" value="@Model.Q" placeholder="과제명·담당자·위치 검색" aria-label="검색" />
+            <input type="search" name="q" value="@Model.Q" placeholder="과제명·담당자·위치·협력사 검색" aria-label="검색" title="과제명·과제 담당·법인·위치·협력사·작업 담당자 이름으로 찾습니다" />
         </label>
         <select name="category" aria-label="유형">
             <option value="">유형 전체</option>
@@ -49,39 +48,87 @@
                 <option value="@c.Id" selected="@(Model.Corp == c.Id)">@c.Name</option>
             }
         </select>
+        <select name="org" aria-label="조직">
+            <option value="">조직 전체</option>
+            @foreach (var o in Model.Orgs)
+            {
+                <option value="@o.Id" selected="@(Model.Org == o.Id)">@(o.Level == 2 ? "· " : "")@o.Name</option>
+            }
+        </select>
+        @if (Model.HasYear)
+        {
+            @* 완료·중단 탭: 종료일(완료 = 마지막 단계 완료일, 중단 = 중단 처리일)의 연도. 기본은 올해 — 해가 갈수록 끝난 과제가 목록을 채우지 않게 *@
+            <select name="year" id="list-year" aria-label="종료 연도" title="완료는 마지막 단계 완료일, 중단은 중단한 날의 연도">
+                @foreach (var y in Model.Years)
+                {
+                    <option value="@y" selected="@(Model.ClosedYear == y)">@(y)년 종료</option>
+                }
+                <option value="0" selected="@(Model.ClosedYear == null)">전체 연도</option>
+            </select>
+        }
         <label class="check"><input type="checkbox" name="mine" value="true" checked="@Model.Mine" />내 과제</label>
+        @* 정렬은 조회해도 유지한다(머리글로 바꾼다) *@
+        @if (Model.SortKey != null) { <input type="hidden" name="sort" value="@Model.SortKey" /> }
+        @if (Model.Desc) { <input type="hidden" name="desc" value="true" /> }
+        <label class="sort-pick list-sort">
+            <span>정렬</span>
+            <select id="list-sort" aria-label="정렬">
+                @foreach (var (key, desc, label) in GanttScheduler.Pages.Projects.IndexModel.SortChoices)
+                {
+                    <option value="@Url.Page("/Projects/Index", Model.ChoiceRoute(key, desc))" data-sort="@(key ?? "")" selected="@(Model.SortKey == key && (key == null || Model.Desc == desc))">@label</option>
+                }
+            </select>
+        </label>
         <button type="submit" class="btn">조회</button>
     </div>
+    @if (Model.SpecialText != null)
+    {
+        @* 대시보드 숫자에서 온 조건 — 유형·법인·검색을 바꿔도 유지하고, 상태 탭을 바꾸거나 '조건 해제'를 누르면 푼다 *@
+        if (Model.DoneYear != null) { <input type="hidden" name="doneYear" value="@Model.DoneYear" data-special /> }
+        if (Model.Due != null) { <input type="hidden" name="due" value="@Model.Due" data-special /> }
+        if (Model.Current) { <input type="hidden" name="current" value="true" data-special /> }
+        <p class="form-note filter-note" data-special-note>
+            <svg class="ic"><use href="#i-dash" /></svg><span>대시보드 조건: <b>@Model.SpecialText</b></span>
+            <a asp-page="/Projects/Index" asp-route-state="@Model.StateKey" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp" asp-route-org="@Model.Org" asp-route-q="@Model.Q" asp-route-mine="@(Model.Mine ? "true" : null)">조건 해제</a>
+        </p>
+    }
 </form>
 
 @if (Model.Rows.Count == 0)
 {
     <section class="card">
         <p class="empty">
-            조건에 맞는 과제가 없습니다.
-            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a>
+            @(Model.ClosedYear is int emptyYear ? $"{emptyYear}년에 끝난 과제 중 조건에 맞는 것이 없습니다." : "조건에 맞는 과제가 없습니다.")
+            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a> · <a href="@Url.Content("~/Help#state")" data-help="state">상태는 어떻게 정해지나요?</a>
         </p>
     </section>
 }
 else
 {
     <section class="card flush">
-        <div class="ptable" role="table" aria-label="과제 목록">
+        <div class="ptable watchable" role="table" aria-label="과제 목록">
+            @* 머리글을 누르면 그 열로 정렬한다(다시 누르면 반대 방향). 정렬은 서버가 하고 Excel 도 같은 순서다 *@
             <div class="ptable-head" role="row">
-                <span role="columnheader">과제</span>
-                <span role="columnheader">위치</span>
-                <span role="columnheader">담당</span>
-                <span role="columnheader">현재 단계</span>
-                <span role="columnheader">진행률</span>
-                <span role="columnheader">목표 종료</span>
-                <span role="columnheader">상태</span>
+                @foreach (var (key, label) in GanttScheduler.Pages.Projects.IndexModel.Columns)
+                {
+                    var sorted = Model.AriaSort(key);
+                    <span role="columnheader" aria-sort="@sorted">
+                        <a class="sort-link" data-sort="@key" asp-page="/Projects/Index" asp-all-route-data="Model.SortRoute(key)">@label@if (sorted != "none") {<svg class="ic" aria-hidden="true"><use href="@(sorted == "descending" ? "#i-down" : "#i-up")" /></svg>}</a>
+                    </span>
+                }
             </div>
             @foreach (var p in Model.Rows)
             {
+                var fresh = Model.NewCounts.GetValueOrDefault(p.Id);
+                var watched = Model.Watched.Contains(p.Id);
+                @* 관심 과제 별은 행 링크 밖에 둔다(링크 안의 단추는 쓸 수 없다) — collab.js 가 누름을 처리한다 *@
+                <div class="prow">
+                <button type="button" class="btn icon small watch" data-watch="@p.Id" data-title="@p.Title" aria-pressed="@(watched ? "true" : "false")"
+                        aria-label="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기") — @p.Title" title="@(watched ? "관심 과제에서 빼기" : "관심 과제로 두기")"><svg class="ic"><use href="#i-star" /></svg></button>
                 <a class="ptable-row" role="row" asp-page="/Projects/Detail" asp-route-id="@p.Id">
                     <span class="c-title" role="cell">
                         <span class="row-title">@p.Title</span>
-                        <span class="row-sub">@p.Category</span>
+                        <span class="row-sub">@p.Category@if (fresh > 0) {<text> · </text><span class="new-count" title="마지막으로 본 뒤 다른 사람이 남긴 활동">새 활동 @fresh</span>}</span>
                     </span>
                     <span class="c-loc" role="cell">
                         <span>@p.Corporation</span>
@@ -104,8 +151,20 @@ else
                         <span class="num">@p.Progress%</span>
                     </span>
                     <span class="c-end num" role="cell">@(p.EndTarget?.ToString("yyyy-MM-dd") ?? "-")</span>
-                    <span class="c-state" role="cell"><partial name="_StatusChip" model="p.Chip" /></span>
+                    <span class="c-state" role="cell">
+                        <partial name="_StatusChip" model="p.Chip" />
+                        @* 조기 경보: 지연 전 위험(노랑 — 예상 초과 일수)과 정체. 이유는 마우스를 올리면 보인다 *@
+                        @if (p.AtRisk)
+                        {
+                            <span class="chip warn" data-risk title="@string.Join(" · ", p.Risks.Select(r => r.Text))"><svg class="ic"><use href="#i-clock" /></svg>@(p.RiskDays > 0 ? $"예상 +{p.RiskDays}일" : "위험")</span>
+                        }
+                        @if (p.Stale)
+                        {
+                            <span class="chip" data-stale title="@(Rules.StaleDays)일 넘게 변경 없음"><svg class="ic"><use href="#i-pause" /></svg>정체</span>
+                        }
+                    </span>
                 </a>
+                </div>
             }
         </div>
     </section>
@@ -113,8 +172,37 @@ else
 
 @section Scripts {
     <script>
-        // 상태 탭·선택 상자는 바꾸는 즉시 조회
-        document.querySelectorAll('#filters input[type=radio], #filters select, #filters input[type=checkbox]')
-            .forEach(function (el) { el.addEventListener('change', function () { document.getElementById('filters').submit(); }); });
+        // 정렬: 고른 정렬을 기억해(App.pref) 정렬 없이 목록을 열면 그 정렬로 연다. 머리글·고르기 상자 어느 쪽으로 골라도 같다
+        (function () {
+            var params = new URLSearchParams(location.search);
+            if (params.has('sort')) {
+                App.pref.set('list.sort', params.get('sort') + (params.get('desc') === 'true' ? ':desc' : ''));
+            } else {
+                var saved = App.pref.get('list.sort', '');
+                if (saved) {
+                    var parts = saved.split(':');
+                    params.set('sort', parts[0]);
+                    if (parts[1] === 'desc') params.set('desc', 'true');
+                    location.replace(location.pathname + '?' + params.toString());
+                    return;
+                }
+            }
+            var pick = document.getElementById('list-sort');
+            if (pick) pick.addEventListener('change', function () {
+                // '기본 순서'는 기억도 지운다
+                if (pick.selectedOptions[0].dataset.sort === '') App.pref.set('list.sort', '');
+                location.href = pick.value;
+            });
+        })();
+        // 상태 탭·선택 상자는 바꾸는 즉시 조회. 상태 탭을 바꾸면 대시보드에서 온 조건(완료 연도·목표일 n일 안)과 종료 연도는 푼다(새 탭은 올해부터).
+        // 종료 연도를 직접 고르면 대시보드의 완료 연도 조건(doneYear)도 푼다 — 두 연도가 엇갈려 빈 목록이 되지 않게
+        document.querySelectorAll('#filters input[type=radio], #filters select:not(#list-sort), #filters input[type=checkbox]')
+            .forEach(function (el) {
+                el.addEventListener('change', function () {
+                    if (el.type === 'radio' || el.id === 'list-year') document.querySelectorAll('#filters [data-special]').forEach(function (h) { h.remove(); });
+                    if (el.type === 'radio') { var y = document.getElementById('list-year'); if (y) y.remove(); }
+                    document.getElementById('filters').submit();
+                });
+            });
     </script>
 }

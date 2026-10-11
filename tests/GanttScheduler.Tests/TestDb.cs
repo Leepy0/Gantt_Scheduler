@@ -43,7 +43,8 @@ public sealed class TestDb : IDisposable
         db.SaveChanges();
     }
 
-    public AppDb Open()
+    // version: 데이터 버전 카운터(상황판)를 함께 넘겨 저장이 버전을 올리는지 볼 때
+    public AppDb Open(DataVersion? version = null)
     {
         var builder = new DbContextOptionsBuilder<AppDb>();
         // 운영(DbSetup.Configure)과 같은 실행 전략(재시도)으로 연다 — 서비스가 트랜잭션을 직접 열면 운영에서는
@@ -51,7 +52,7 @@ public sealed class TestDb : IDisposable
         if (UseSqlServer)
             builder.UseSqlServer(SqlServerConnection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema).EnableRetryOnFailure());
         else builder.UseSqlite($"Data Source={_sqlitePath}");
-        return new AppDb(builder.Options);
+        return new AppDb(builder.Options, version);
     }
 
     // 요청 하나에 해당하는 서비스 묶음 (새 DbContext).

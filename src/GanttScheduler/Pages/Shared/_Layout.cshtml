@@ -1,11 +1,12 @@
 @inject CurrentUser Me
 @inject UpdateService Updates
 @inject IClock Clock
+@inject OpsAlerts Alerts
 @{
-    // 관리자에게만 새 버전·적용 대기를 알린다
-    var badge = Me.IsAdmin ? Updates.Badge() : null;
     var nav = ViewData["Nav"] as string ?? "";
     var bare = ViewData["Bare"] as bool? ?? false;
+    // 관리자에게만 서버 문제(업데이트 실패·디스크 부족·백업 오래됨·내년 공휴일 없음)와 새 버전을 알린다 — 가장 중요한 것 하나와 나머지 수
+    var alerts = Me.IsAdmin && !bare ? await Alerts.ForAdminAsync(Context.RequestServices.GetRequiredService<GanttScheduler.Data.AppDb>()) : null;
 }
 <!DOCTYPE html>
 @* data-today: 한국 날짜(지연 판정의 '오늘'). 화면이 오래 열려 있으면 /version 응답의 today 로 갱신한다
@@ -31,13 +32,26 @@
                 <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")" aria-current="@(nav == "projects" ? "page" : null)">과제</a>
                 <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")" aria-current="@(nav == "insights" ? "page" : null)">분석</a>
                 <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)">관리</a>
+                @* 상황판은 TV·회의실 화면에 띄워 두는 것이라 새 창으로 연다 *@
+                <a asp-page="/Board" target="_blank" rel="noopener" class="top-board" id="board-link" title="TV 상황판 — 새 창에서 열립니다"><svg class="ic"><use href="#i-tv" /></svg>상황판</a>
             </nav>
-            @if (badge != null)
+            @if (alerts is { Count: > 0 })
             {
-                <a class="chip accent top-update" asp-page="/Admin/Update" title="서버 업데이트">
-                    <svg class="ic"><use href="#i-download" /></svg><span>@badge.Value.Text</span>
+                var top = alerts[0];
+                var more = alerts.Count > 1 ? $" 외 {alerts.Count - 1}건" : "";
+                var all = string.Join(" · ", alerts.Select(a => a.Text));
+                <a class="chip @(top.Level == "warn" ? "warn" : "accent") top-update" id="ops-alert" href="@Url.Content("~" + top.Href)" title="@all" aria-label="관리자 알림: @all">
+                    <svg class="ic"><use href="#i-@(top.Level == "warn" ? "alert" : "download")" /></svg><span>@top.Text@more</span>
                 </a>
             }
+            @* 도움말: 데스크톱·모바일 모두 머리에 둔다(모바일의 하단 탭은 다섯 칸이 차 있다) *@
+            <a class="bell help-link @(nav == "help" ? "on" : "")" id="help-link" asp-page="/Help" aria-label="도움말" title="도움말">
+                <svg class="ic"><use href="#i-help" /></svg>
+            </a>
+            @* 알림 종: 읽지 않은 수는 화면이 따로 묻는다(/api/unread — collab.js). 모든 화면 요청에 알림 조회를 붙이지 않기 위해서다 *@
+            <a class="bell" id="bell" asp-page="/My/Notifications" aria-label="알림" title="알림">
+                <svg class="ic"><use href="#i-bell" /></svg><span class="bell-count" id="bell-count" hidden></span>
+            </a>
             @* 내 이름을 누르면 이 기기의 사용자를 바꾼다 (IP 가 다른 사람에게 넘어왔거나 공용 PC 인 경우) *@
             <a class="me" asp-page="/Welcome" asp-route-switch="1" asp-route-returnUrl="@(Context.Request.PathBase + Context.Request.Path + Context.Request.QueryString)"
                title="@(Views.OrgName(Me.User?.OrgUnit) ?? "소속 미지정") · 접속 IP @Me.Ip · 눌러서 사용자 바꾸기" aria-label="@Me.Name — 사용자 바꾸기">
@@ -63,6 +77,7 @@
     @Html.AntiForgeryToken()
     <script>window.APP_BASE = '@Url.Content("~/")';</script>
     <script src="~/js/app.js" asp-append-version="true"></script>
+    <script src="~/js/collab.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
