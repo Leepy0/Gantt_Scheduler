@@ -24,6 +24,8 @@ const results = [];      // { name, ok, error, skipped, url, screen, texts }
 const problems = [];     // 콘솔 오류·실패한 요청
 // 일부러 404 를 받는 요청 (없는 과제 화면, 삭제된 과제의 변경 확인)
 const expected404 = ['/Projects/Detail?id=999999', 'handler=Stamp'];
+// 일부러 흉내 내는 서버 오류 (오류 번호 안내 점검 — 응답을 가로채 500 을 돌려준다)
+const expected5xx = ['/__e2e-error'];
 const ONLY = (process.env.ONLY || '').split('|').map((x) => x.trim()).filter(Boolean);
 // ONLY 와 관계없이 도는 단계 (이름 앞부분). 이름 등록이 없으면 다른 화면이 열리지 않는다
 const SETUP = ['처음 접속하면', '이름·소속'];
@@ -93,6 +95,7 @@ function watch(page, label) {
     page.on('response', (r) => {
         // 400·409 는 규칙 위반·동시 수정 응답으로 일부러 유발하는 단계가 있다. 그 밖의 404·500 대는 문제로 본다
         if (r.status() === 404 && expected404.some((u) => r.url().includes(u))) return;
+        if (r.status() >= 500 && expected5xx.some((u) => r.url().includes(u))) return;
         if (r.status() >= 500 || r.status() === 404) problems.push(`[${label}] ${r.status()} ${r.request().method()} ${r.url()}`);
     });
 }
@@ -1084,7 +1087,8 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
             const s = (await r.json()).status;
             return { on: s.signatureCheck, keyId: s.keyId || '', canApply: s.canApply };
         });
-        const sigText = await page.locator('.update-body dl').innerText();
+        // 첫 카드(현재 버전)의 목록 — 아래에 백업 카드의 목록도 있다
+        const sigText = await page.locator('.update-body dl').first().innerText();
         if (sig.on) assert(sigText.includes('켜짐') && sigText.includes(sig.keyId), '서명 검증 켜짐·공개키 표시가 없음: ' + sigText);
         else assert(sigText.includes('서명 검증 꺼짐'), '서명 검증 꺼짐 안내가 없음: ' + sigText);
         assert((await page.locator('#upload-form input[type=file]').getAttribute('multiple')) !== null, '배포 정보·서명 파일을 함께 고를 수 없음');
@@ -1105,6 +1109,76 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.unroute('**/Admin/Update?handler=Check');
         await page.click('.start-failure [data-act=dismiss-failure]');
         await page.waitForSelector('.start-failure', { state: 'detached' });
+    });
+
+    await step('서버 상태 — 관리 화면에서 들어가 점검 결과·첨부 대조·최근 경고를 보고, 첫 설정이 덜 됐으면 점검표', async () => {
+        await page.goto(BASE + '/Admin');
+        await page.click('#status-link');
+        await page.waitForSelector('#checks');
+        for (const key of ['db', 'schema', 'disk', 'folders', 'pdf', 'holidays', 'backup', 'setup'])
+            assert((await page.locator(`#checks tr[data-check=${key}]`).count()) === 1, '점검 항목이 없음: ' + key);
+        assert((await page.locator('#checks tr[data-check=db] .chip').innerText()).includes('정상'), 'DB 연결 점검이 정상이 아님');
+        assert((await page.locator('#attachments').innerText()).includes('기록'), '첨부 대조가 없음');
+        // 샘플 데이터는 첫 설정이 끝난 상태라 점검표가 없다
+        assert((await page.locator('#setup').count()) === 0, '첫 설정이 끝났는데 점검표가 보임');
+        await page.click('#logs [data-logs=error]');
+        await page.waitForSelector('#logs [data-logs=error].on');
+        await page.click('#logs [data-logs=all]');
+        await shot(page, 'd43-status');
+        // 처음 설치한 서버처럼 법인·내년 공휴일이 없다고 답하게 해 점검표를 그린다
+        await page.route('**/Admin/Status?handler=Data', async (route) => {
+            const res = await route.fetch();
+            const body = await res.json();
+            body.report.setupDone = false;
+            body.report.setup.forEach((x) => { if (x.key === 'corp' || x.key === 'holiday-next') { x.done = false; x.detail = '0개'; } });
+            await route.fulfill({ response: res, json: body });
+        });
+        await page.click('#status-refresh');
+        await page.waitForSelector('#setup');
+        const setup = await page.locator('#setup').innerText();
+        assert(setup.includes('첫 설정 점검표') && setup.includes('법인·위치'), '첫 설정 점검표가 없음: ' + setup);
+        assert((await page.locator('#setup [data-setup=corp] a').getAttribute('href')).endsWith('/Admin#location'), '법인 설정 바로 가기가 없음');
+        await shot(page, 'd43b-status-setup');
+        await page.unroute('**/Admin/Status?handler=Data');
+        // 점검표의 바로 가기는 관리 화면의 그 탭을 연다
+        await page.click('#setup [data-setup=corp] a');
+        await page.waitForSelector('#admin-tabs [data-kind=location].on');
+        await page.goto(BASE + '/Admin#holiday');
+        await page.waitForSelector('#admin-tabs [data-kind=holiday].on');
+    });
+
+    await step('업데이트 — 지금 백업하면 목록에 남고, 진단 정보를 보고 내려받음', async () => {
+        await page.goto(BASE + '/Admin/Update#backup');
+        await page.waitForSelector('#backup');
+        const before = await page.locator('#backup tr[data-backup]').count();
+        await page.click('#backup [data-act=backup]');
+        await page.waitForSelector('.toast');
+        await page.waitForFunction((n) => document.querySelectorAll('#backup tr[data-backup]').length === n + 1, before);
+        const row = await page.locator('#backup tr[data-backup]').first().innerText();
+        assert(row.includes('지금 백업') && row.includes('성공') && row.includes('평영'), '백업 목록이 이상함: ' + row);
+        assert(/gantt-\d{8}-\d{6}/.test(row), '백업 이름이 없음: ' + row);
+        await page.click('#diagnostics [data-act=diag]');
+        await page.waitForSelector('#diag-state');
+        assert((await page.locator('#diag-state').innerText()).includes('지금 버전'), '진단 상태 요약이 없음');
+        const [download] = await Promise.all([page.waitForEvent('download'), page.click('#diag-download')]);
+        const file = path.join(EXPORTS, '업데이트진단.txt');
+        await download.saveAs(file);
+        const text = fs.readFileSync(file, 'utf8');
+        assert(text.includes('== 상태 요약 ==') && text.includes('apply.log'), '진단 파일 내용이 이상함');
+        await shot(page, 'd44-update-backup');
+    });
+
+    await step('오류 번호 — 서버 오류 안내와 오류 화면에 번호를 보임', async () => {
+        await page.goto(BASE + '/Projects');
+        // 서버가 오류 번호 머리글과 함께 500 을 준 경우 (본문이 JSON 이 아니어도)
+        await page.route('**/__e2e-error', (r) => r.fulfill({ status: 500, contentType: 'text/plain', headers: { 'X-Error-Id': '0HE2E:00000042' }, body: 'boom' }));
+        const message = await page.evaluate(() => App.get(App.url('/__e2e-error')).then(() => '', (e) => e.message));
+        assert(message.includes('500') && message.includes('오류 번호 0HE2E:00000042'), '오류 번호가 안내에 없음: ' + message);
+        await page.unroute('**/__e2e-error');
+        await page.goto(BASE + '/Error');
+        const id = (await page.locator('#error-id code').innerText()).trim();
+        assert(id.length > 4, '오류 화면에 오류 번호가 없음');
+        await shot(page, 'd45-error-number', false);
     });
 
     await step('새 버전 알림 — 서버가 바뀌면 새로 고침 안내, 끊기면 연결 안내', async () => {
@@ -1289,6 +1363,19 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await noOverflow('업데이트 시작 실패 안내');
         await shot(m, 'm11d-update-start-failure');
         await m.unroute('**/Admin/Update?handler=Check');
+    });
+
+    await step('모바일 서버 상태·백업·진단 정보', async () => {
+        await m.goto(BASE + '/Admin/Status');
+        await m.waitForSelector('#checks');
+        await noOverflow('서버 상태');
+        await shot(m, 'm12-status');
+        await m.goto(BASE + '/Admin/Update#backup');
+        await m.waitForSelector('#backup tr[data-backup]');
+        await m.click('#diagnostics [data-act=diag]');
+        await m.waitForSelector('#diag-state');
+        await noOverflow('업데이트 백업·진단');
+        await shot(m, 'm12b-update-backup');
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
