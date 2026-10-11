@@ -879,7 +879,8 @@ public class MasterService
         Diff("기간(근무일)", e.Id == 0 ? null : e.DurationWorkDays, duration);
         if (e.PredecessorTemplateWorkId != input.PredecessorId)
         {
-            var names = await _db.TemplateWorks.AsNoTracking().Where(t => t.StageTemplateId == e.StageTemplateId).ToDictionaryAsync(t => t.Id, t => t.Title);
+            var names = (await _db.TemplateWorks.AsNoTracking().Where(t => t.StageTemplateId == e.StageTemplateId).Select(t => new { t.Id, t.Title }).ToListAsync())
+                .ToDictionary(t => t.Id, t => t.Title);
             Diff("선행", e.PredecessorTemplateWorkId is int a ? names.GetValueOrDefault(a) : null, input.PredecessorId is int b ? names.GetValueOrDefault(b) : null);
         }
         e.Title = title;
@@ -914,7 +915,8 @@ public class MasterService
     // 모은 칸으로 한 줄: 새 항목은 '추가', 바뀐 칸이 없으면 남기지 않는다. 새 항목의 Id 는 저장 때 정해지므로 함수로 넘긴다
     private void LogSave(string kind, object entity, Func<int> id, string what, string name)
     {
-        var created = _db.Entry(entity).State == EntityState.Added;
+        // 저장 전이라 새 항목은 아직 Id 가 0 이다 (섀도 빌드의 가짜 EF 에는 Entry 상태가 없어 Id 로 가른다)
+        var created = id() == 0;
         if (created)
         {
             var details = _diff.Where(d => d.Label != "이름" && d.Label != "내용" && d.New != null).Select(d => $"{d.Label} {d.New}").ToList();
