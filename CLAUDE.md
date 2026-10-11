@@ -20,7 +20,7 @@
 src/GanttScheduler/
   Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
   Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
-  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정), Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
+  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정, .Progress: 빠른 갱신, .Risk: 조기 경보 조회), Dashboard, Insights(리드타임·주간 보고·변경 이력·내 할 일), AttachmentService,
                MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
                Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateKey(배포 파일 서명 확인),
                UpdateApplier(파일 교체 도우미 모드 — 새 버전 시작 확인·자동 되돌리기 포함),
@@ -30,7 +30,7 @@ src/GanttScheduler/
                Notifications(ActivityLog — 활동 기록과 알림 계산, 저장 훅), Notify(메일 요약 NotifyWorker·SMTP)
   Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files}, Insights/{LeadTime,Weekly,History},
                Admin/{Index,Update,Status}, Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,edit,stage-draft,admin,org,update,status}.js
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,quick,my,edit,stage-draft,admin,org,update,status}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)
