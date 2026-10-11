@@ -108,6 +108,12 @@ public class UpdateService
     // 새 버전 확인이 실패하기 시작한 시각 (계속 실패하면 관리자 칩으로 알린다 — OpsAlerts)
     public DateTime? CheckFailedSince { get { lock (_gate) return _state.CheckFailedSince; } }
 
+    // 관리자 칩(OpsAlerts)용: 시작되지 않은 버전과 마지막 적용 결과. Status() 는 폴더 쓰기 시험을 하므로 화면마다 부르지 않는다
+    public (StartFailure? StartFailure, UpdateLog? Last) Problems()
+    {
+        lock (_gate) return (_state.StartFailure, _state.History.OrderByDescending(h => h.At).FirstOrDefault());
+    }
+
     // IIS 아래에서 돌고 있는지 (ASP.NET Core 모듈이 넣어 주는 환경 변수로 판단)
     public static bool UnderIis =>
         !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_IIS_PHYSICAL_PATH"))

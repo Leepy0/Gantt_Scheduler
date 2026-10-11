@@ -77,6 +77,9 @@ public class OpsChecks
     }
 
     private string Root => _env.ContentRootPath;
+    // 업데이트 상태는 한 번만 읽는다 — Status() 는 프로그램 폴더 쓰기 시험을 한다
+    private UpdateStatus? _status;
+    private UpdateStatus UpdateStatus => _status ??= _updates.Status();
     public string DataDir => Path.Combine(Root, "App_Data");
     public string StorageDir => AppPaths.Uploads(_cfg, Root);
 
@@ -100,7 +103,7 @@ public class OpsChecks
             LastBackup(),
             SetupCheck(setup),
         };
-        var st = _updates.Status();
+        var st = UpdateStatus;
         var target = _backups.Target;
         var server = new ServerInfo(st.Version, st.ChannelName, st.Host, _env.EnvironmentName, ProcessStarted, target.Describe, _paths.AppDir,
             DataDir, _log.Dir, StorageDir, _backups.Options.FilesPath);
@@ -287,7 +290,7 @@ public class OpsChecks
     public CheckResult UpdateSource()
     {
         const string name = "업데이트 확인";
-        var st = _updates.Status();
+        var st = UpdateStatus;
         if (st.Channel is not ("release" or "dev")) return new CheckResult("update", name, CheckLevel.Ok, $"{st.ChannelName} — 스스로 교체하지 않습니다. 받아 오는 곳: {st.Source}");
         if (!_updates.SourceConfigured)
             return new CheckResult("update", name, CheckLevel.Warn, "Update:Source 가 비어 있어 새 버전을 확인하지 않습니다.", "배포 파일을 직접 올려 적용하거나 Update:Source 를 지정하세요.", "/Admin/Update");
@@ -304,7 +307,7 @@ public class OpsChecks
 
     public CheckResult Signature()
     {
-        var st = _updates.Status();
+        var st = UpdateStatus;
         return st.SignatureCheck
             ? new CheckResult("signature", "배포 파일 서명 확인", CheckLevel.Ok, "켜짐 · 공개키 " + st.KeyId)
             : new CheckResult("signature", "배포 파일 서명 확인", CheckLevel.Warn, "꺼짐 — 이 빌드에는 공개키가 없어 배포 파일의 출처를 확인하지 않고 SHA-256 으로 손상만 확인합니다.",
@@ -496,6 +499,7 @@ public class OpsAlerts
     private DateTime _cachedAt = DateTime.MinValue;
     private (string Root, long Free, long Total)? _disk;
     private bool _nextYearMissing;
+    private bool _setupMissing;
     private static readonly DateTime Started = DateTime.UtcNow;
 
     public OpsAlerts(UpdateService updates, BackupService backups, IClock clock, IHostEnvironment env)
@@ -512,11 +516,16 @@ public class OpsAlerts
         await RefreshAsync(db);
         var list = new List<OpsAlert>();
         var now = _clock.UtcNow;
-        var st = _updates.Status();
+        var (failure, last) = _updates.Problems();
 
-        if (st.StartFailure != null)
-            list.Add(new("update-failed", "warn", $"v{st.StartFailure.Version} 시작 실패", "/Admin/Update"));
-        else if (st.History.FirstOrDefault() is { Ok: false } last && now - last.At < TimeSpan.FromDays(7))
+        // 처음 설치한 서버는 법인이 없어 과제를 등록할 수 없다(등록 화면의 위치 선택이 막힌다) — 첫 설정 점검표로 보낸다
+        bool setup;
+        lock (_gate) setup = _setupMissing;
+        if (setup) list.Add(new("setup", "warn", "첫 설정 필요", "/Admin/Status"));
+
+        if (failure != null)
+            list.Add(new("update-failed", "warn", $"v{failure.Version} 시작 실패", "/Admin/Update"));
+        else if (last is { Ok: false } && now - last.At < TimeSpan.FromDays(7))
             list.Add(new("update-failed", "warn", "업데이트 실패", "/Admin/Update"));
 
         if (_updates.CheckFailedSince is { } since && now - since > TimeSpan.FromDays(3))
@@ -550,6 +559,9 @@ public class OpsAlerts
         lock (_gate) if (DateTime.UtcNow - _cachedAt < CacheFor) return;
         var disk = OpsChecks.DriveOf(Path.Combine(_env.ContentRootPath, "App_Data"));
         var missing = false;
+        var setupMissing = false;
+        try { setupMissing = !await db.Locations.AsNoTracking().AnyAsync(l => l.IsActive && l.Level == 1); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { /* 아래 공휴일과 같은 이유로 칩은 조용히 넘어간다 */ }
         if (_clock.Today.Month >= 10)
         {
             var next = _clock.Today.Year + 1;
@@ -565,6 +577,7 @@ public class OpsAlerts
         {
             _disk = disk;
             _nextYearMissing = missing;
+            _setupMissing = setupMissing;
             _cachedAt = DateTime.UtcNow;
         }
     }

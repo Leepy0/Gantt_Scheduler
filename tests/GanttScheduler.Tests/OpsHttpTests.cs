@@ -122,6 +122,41 @@ public class OpsHttpTests : IClassFixture<AppFactory>
     }
 
     [Fact]
+    public async Task 관리자_상단_칩은_서버_문제를_알리고_일반_사용자에게는_보이지_않는다()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gantt-alert-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // 방금 실패한 야간 백업 기록이 있는 서버
+            File.WriteAllText(Path.Combine(dir, BackupService.ListFile), JsonSerializer.Serialize(new[]
+            {
+                new BackupEntry("gantt-x", DateTime.UtcNow.AddMinutes(-5), BackupKinds.Nightly, "자동", false, "쓰기 권한 없음", "Sqlite",
+                    null, true, null, null, null, 1, null),
+            }));
+            using var f = _factory.WithWebHostBuilder(b => b.ConfigureAppConfiguration((_, c) =>
+                c.AddInMemoryCollection(new Dictionary<string, string?> { ["Backup:FilesPath"] = dir })));
+            var client = await ClientAsync(f);
+            SetAdmin(false);
+            Assert.DoesNotContain("id=\"ops-alert\"", await client.GetStringAsync("/Projects"));
+
+            SetAdmin(true);
+            try
+            {
+                var html = WebUtility.HtmlDecode(await client.GetStringAsync("/Projects"));
+                Assert.Contains("id=\"ops-alert\"", html);
+                // 칩에는 가장 중요한 것 하나가, title 에는 모든 알림이 보인다 (디스크가 부족한 시험 서버면 그것이 먼저일 수 있다)
+                Assert.Matches("id=\"ops-alert\"[^>]*title=\"[^\"]*백업 실패", html);
+            }
+            finally { SetAdmin(false); }
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { /* 정리 실패는 무시 */ }
+        }
+    }
+
+    [Fact]
     public async Task 준비_상태는_사용자_확인_없이_DB_와_디스크를_보고_200을_준다()
     {
         // 등록하지 않은 클라이언트도 (감시 도구)

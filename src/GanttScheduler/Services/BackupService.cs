@@ -397,14 +397,20 @@ public class BackupService
         return msg;
     }
 
-    // 야간 자동 백업을 할 때인지: 켜져 있고, 한국 시간으로 정한 시각이 지났고, 오늘(한국 날짜) 야간 백업을 아직 하지 않았을 때
+    // 정한 시각에 서버가 꺼져 있었으면 이 시간 안에 켜졌을 때만 따라잡는다 — 오후에 다시 시작한 서버가 근무 시간에 큰 백업을 돌리지 않게
+    public static readonly TimeSpan NightlyCatchUp = TimeSpan.FromHours(4);
+
+    // 야간 자동 백업을 할 때인지: 켜져 있고, 가장 최근의 정한 시각(한국 시간)이 지난 지 NightlyCatchUp 안이고,
+    // 그 시각 뒤로 야간 백업을 아직 하지 않았을 때. 자정을 넘기는 시각(23:30 등)도 같은 규칙이다
     public static bool DueNightly(BackupOptions o, DateTime utcNow, IEnumerable<BackupEntry> list)
     {
         if (!o.Nightly) return false;
         var kst = KoreaClock.ToKst(utcNow);
-        if (TimeOnly.FromDateTime(kst) < o.NightlyAt) return false;
-        var today = DateOnly.FromDateTime(kst);
-        return !list.Any(e => e.Kind == BackupKinds.Nightly && KoreaClock.KstDate(e.At) == today);
+        var slot = DateOnly.FromDateTime(kst).ToDateTime(o.NightlyAt);
+        if (slot > kst) slot = slot.AddDays(-1);
+        if (kst - slot >= NightlyCatchUp) return false;
+        // 실패했어도 같은 회차는 되풀이하지 않는다(실패 기록이 남고 서버 상태 화면·칩이 알린다)
+        return !list.Any(e => e.Kind == BackupKinds.Nightly && KoreaClock.ToKst(e.At) >= slot);
     }
 
     private static void TryDelete(string path)
@@ -413,7 +419,7 @@ public class BackupService
     }
 }
 
-// 야간 자동 백업 (Backup:Nightly). 1분마다 때가 됐는지 본다 — 실패한 날은 그날 다시 하지 않는다(실패 기록이 남고 서버 상태 화면이 알린다)
+// 야간 자동 백업 (Backup:Nightly). 1분마다 때가 됐는지 본다(DueNightly) — 실패한 회차는 다시 하지 않는다(실패 기록이 남고 서버 상태 화면이 알린다)
 public class BackupWorker : BackgroundService
 {
     private readonly BackupService _backups;

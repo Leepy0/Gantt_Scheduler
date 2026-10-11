@@ -84,11 +84,17 @@ public sealed class JsonErrorMiddleware
         catch (Exception ex) when (ErrorNumber.WantsJson(ctx.Request) && !ctx.Response.HasStarted && !ctx.RequestAborted.IsCancellationRequested)
         {
             var id = ctx.TraceIdentifier;
-            _log.LogError(ex, "처리하지 못한 오류 (오류 번호 {ErrorId}): {Method} {Path}", id, ctx.Request.Method, ctx.Request.Path.Value);
+            // 요청 자체가 잘못된 경우(본문 크기 한도 413 등)는 서버 오류가 아니라 그 상태 코드로 알린다 — 화면이 413 을 따로 안내한다
+            var status = ex is BadHttpRequestException bad ? bad.StatusCode : StatusCodes.Status500InternalServerError;
+            if (status >= 500) _log.LogError(ex, "처리하지 못한 오류 (오류 번호 {ErrorId}): {Method} {Path}", id, ctx.Request.Method, ctx.Request.Path.Value);
+            else _log.LogWarning("잘못된 요청 {Status} (오류 번호 {ErrorId}): {Method} {Path} — {Message}", status, id, ctx.Request.Method, ctx.Request.Path.Value, ex.Message);
             ctx.Response.Clear();
-            ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            ctx.Response.StatusCode = status;
             ctx.Response.Headers.CacheControl = "no-store";
-            await ctx.Response.WriteAsJsonAsync(new { ok = false, error = ErrorNumber.Message(id), errorId = id });
+            var error = status >= 500 ? ErrorNumber.Message(id)
+                : status == StatusCodes.Status413PayloadTooLarge ? $"보낸 내용이 서버의 요청 크기 한도를 넘었습니다. (오류 번호 {id})"
+                : $"요청을 처리하지 못했습니다({status}). 화면을 새로 고친 뒤 다시 시도해 주세요. (오류 번호 {id})";
+            await ctx.Response.WriteAsJsonAsync(new { ok = false, error, errorId = id });
         }
     }
 }

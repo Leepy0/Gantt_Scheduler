@@ -1124,6 +1124,8 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.click('#logs [data-logs=error]');
         await page.waitForSelector('#logs [data-logs=error].on');
         await page.click('#logs [data-logs=all]');
+        // 전체 화면 캡처는 고정 머리글이 지금 스크롤 위치에 찍히므로 맨 위로 올린 뒤 찍는다
+        await page.evaluate(() => window.scrollTo(0, 0));
         await shot(page, 'd43-status');
         // 처음 설치한 서버처럼 법인·내년 공휴일이 없다고 답하게 해 점검표를 그린다
         await page.route('**/Admin/Status?handler=Data', async (route) => {
@@ -1165,6 +1167,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await download.saveAs(file);
         const text = fs.readFileSync(file, 'utf8');
         assert(text.includes('== 상태 요약 ==') && text.includes('apply.log'), '진단 파일 내용이 이상함');
+        await page.evaluate(() => window.scrollTo(0, 0));
         await shot(page, 'd44-update-backup');
     });
 
@@ -1375,6 +1378,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await m.click('#diagnostics [data-act=diag]');
         await m.waitForSelector('#diag-state');
         await noOverflow('업데이트 백업·진단');
+        await m.evaluate(() => window.scrollTo(0, 0));
         await shot(m, 'm12b-update-backup');
     });
 

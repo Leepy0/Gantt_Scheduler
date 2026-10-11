@@ -207,6 +207,24 @@ public sealed class BackupTests : IDisposable
         Assert.False(BackupService.DueNightly(on, after, new List<BackupEntry> { Entry(BackupKinds.Nightly, after.AddMinutes(-5)) }));
         // 어제 한 야간 백업이나 오늘의 '지금 백업'은 상관없다
         Assert.True(BackupService.DueNightly(on, after, new List<BackupEntry> { Entry(BackupKinds.Nightly, after.AddDays(-1)), Entry(BackupKinds.Manual, after.AddMinutes(-5)) }));
+        // 그 시각에 꺼져 있던 서버는 4시간 안에 켜졌을 때만 따라잡는다 — 오후에 다시 시작한 서버가 근무 시간에 백업하지 않는다
+        Assert.True(BackupService.DueNightly(on, before.AddHours(3), none));      // 한국 04:20 (정한 시각 + 2시간 50분)
+        Assert.False(BackupService.DueNightly(on, before.AddHours(5), none));     // 한국 06:20 (+ 4시간 50분)
+        Assert.False(BackupService.DueNightly(on, before.AddHours(13), none));    // 한국 14:20
+    }
+
+    [Fact]
+    public void 자정을_넘기는_야간_백업_시각도_한_회차에_한_번()
+    {
+        var on = new BackupOptions { Nightly = true, NightlyAt = new TimeOnly(23, 30) };
+        BackupEntry Entry(DateTime at) => new("x", at, BackupKinds.Nightly, "자동", true, null, "Sqlite", null, true, null, null, null, 1, null);
+        var night = new DateTime(2026, 10, 10, 14, 40, 0, DateTimeKind.Utc);    // 한국 10-10 23:40
+        var afterMidnight = night.AddMinutes(40);                                // 한국 10-11 00:20 — 같은 회차(10-10 23:30)
+        Assert.True(BackupService.DueNightly(on, night, new List<BackupEntry>()));
+        Assert.True(BackupService.DueNightly(on, afterMidnight, new List<BackupEntry>()));
+        Assert.False(BackupService.DueNightly(on, afterMidnight, new List<BackupEntry> { Entry(night) }));
+        // 다음 날 23:30 회차는 새로 한다
+        Assert.True(BackupService.DueNightly(on, night.AddDays(1), new List<BackupEntry> { Entry(night) }));
     }
 
     [Theory]

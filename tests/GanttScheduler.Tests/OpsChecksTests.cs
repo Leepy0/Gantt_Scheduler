@@ -161,6 +161,7 @@ public sealed class OpsChecksTests : IDisposable
         var setup = await k.Ops.SetupAsync(CancellationToken.None);
         Assert.True(setup.Single(s => s.Key == "corp").Done);
         Assert.True(setup.Single(s => s.Key == "org").Done);
+        Assert.DoesNotContain(await k.Alerts.ForAdminAsync(k.Db), a => a.Key == "setup");
 
         using (var s = _db.NewScope())
         {
@@ -177,6 +178,10 @@ public sealed class OpsChecksTests : IDisposable
         Assert.Equal(CheckLevel.Warn, check.Level);
         Assert.Contains("법인·위치", check.Message);
         Assert.False((await k.Ops.ReportAsync(CancellationToken.None)).SetupDone);
+        // 법인이 없으면 과제를 등록할 수 없으므로 관리자 칩이 점검표(서버 상태)로 보낸다
+        k.Alerts.Invalidate();
+        var alert = (await k.Alerts.ForAdminAsync(k.Db))[0];
+        Assert.Equal(("setup", "/Admin/Status"), (alert.Key, alert.Href));
     }
 
     [Fact]
@@ -283,6 +288,37 @@ public sealed class OpsChecksTests : IDisposable
         Assert.Equal("v0.3.1 시작 실패", alerts[0].Text);
         Assert.Equal("v0.3.2 업데이트", alerts[^1].Text);
         Assert.Equal("accent", alerts[^1].Level);
+    }
+
+    [Fact]
+    public async Task 관리자_알림은_교체_실패_확인_연속_실패_백업_실패_오래된_백업을_알린다()
+    {
+        var now = _db.Clock.UtcNow;
+        var data = Path.Combine(_root, "App_Data", "updates");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, "state.json"), System.Text.Json.JsonSerializer.Serialize(new UpdateState
+        {
+            History = { new UpdateLog(now.AddDays(-1), "apply", "0.3.0", "0.3.1", "평영", false, "파일이 잠겨 있습니다.") },
+            CheckFailedSince = now.AddDays(-4),
+        }));
+        var backups = Path.Combine(_root, "App_Data", "backups");
+        Directory.CreateDirectory(backups);
+        void Backups(params BackupEntry[] list) => File.WriteAllText(Path.Combine(backups, BackupService.ListFile), System.Text.Json.JsonSerializer.Serialize(list));
+        BackupEntry Entry(bool ok, DateTime at) => new("gantt-x", at, BackupKinds.Nightly, "자동", ok, ok ? null : "쓰기 권한 없음", "Sqlite", null, true, null, null, null, 1, null);
+
+        Backups(Entry(false, now.AddHours(-1)), Entry(true, now.AddDays(-1)));
+        var k = Make();
+        var keys = (await k.Alerts.ForAdminAsync(k.Db)).Select(a => a.Key).ToList();
+        Assert.Equal("update-failed", keys[0]);
+        Assert.Contains("check-failing", keys);
+        Assert.Contains("backup-failed", keys);
+
+        // 야간 백업을 켠 서버는 성공한 백업이 이틀 넘게 없으면 알린다 (끈 서버는 DBA 백업을 쓰므로 알리지 않는다)
+        Backups(Entry(true, now.AddDays(-3)));
+        Assert.DoesNotContain("backup-old", (await Make().Alerts.ForAdminAsync(k.Db)).Select(a => a.Key));
+        Assert.Contains("backup-old", (await Make(new() { ["Backup:Nightly"] = "true" }).Alerts.ForAdminAsync(k.Db)).Select(a => a.Key));
+        Backups(Entry(true, now.AddHours(-3)));
+        Assert.DoesNotContain("backup-old", (await Make(new() { ["Backup:Nightly"] = "true" }).Alerts.ForAdminAsync(k.Db)).Select(a => a.Key));
     }
 
     [Fact]

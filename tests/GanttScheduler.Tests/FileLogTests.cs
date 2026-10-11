@@ -116,6 +116,18 @@ public sealed class FileLogTests : IDisposable
     }
 
     [Fact]
+    public async Task 크기_한도를_넘은_요청은_서버_오류가_아니라_그_상태_코드로_알린다()
+    {
+        var ctx = Context("application/json");
+        var mw = new JsonErrorMiddleware(_ => throw new BadHttpRequestException("too large", StatusCodes.Status413PayloadTooLarge), NullLogger<JsonErrorMiddleware>.Instance);
+        await mw.InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, ctx.Response.StatusCode);
+        ctx.Response.Body.Position = 0;
+        using var doc = await JsonDocument.ParseAsync(ctx.Response.Body);
+        Assert.Contains("크기 한도", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task 화면_요청의_예외는_오류_화면이_처리하도록_넘긴다()
     {
         var mw = new JsonErrorMiddleware(_ => throw new InvalidOperationException("x"), NullLogger<JsonErrorMiddleware>.Instance);
