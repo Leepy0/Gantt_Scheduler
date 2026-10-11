@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace Microsoft.EntityFrameworkCore
 {
+    public enum EntityState { Detached, Unchanged, Deleted, Modified, Added }
+
     public enum DeleteBehavior { Cascade, Restrict, NoAction, SetNull }
 
     public class DbUpdateException : Exception
@@ -88,7 +90,13 @@ namespace Microsoft.EntityFrameworkCore
         public DatabaseFacade Database { get; }
 
         // 진짜 EF 는 DetectChanges 로 컬렉션에 더한 엔티티의 FK 를 채운다. 가짜는 저장할 때 채우므로 아무 일도 하지 않는다
-        public ChangeTracking.ChangeTracker ChangeTracker { get; } = new();
+        public ChangeTracking.ChangeTracker ChangeTracker => _tracker ??= new(this);
+        private ChangeTracking.ChangeTracker? _tracker;
+
+        // 가짜는 수정을 추적하지 않는다 — 추가·삭제만 항목으로 보인다(상황판 데이터 버전이 쓴다)
+        internal IEnumerable<ChangeTracking.EntityEntry> PendingEntries() =>
+            _added.Select(e => new ChangeTracking.EntityEntry(e, EntityState.Added))
+                .Concat(_removed.Select(e => new ChangeTracking.EntityEntry(e, EntityState.Deleted)));
 
         public DbSet<T> Set<T>() where T : class => new(this);
 
@@ -386,8 +394,19 @@ namespace Microsoft.EntityFrameworkCore.ChangeTracking
 {
     public class ChangeTracker
     {
+        private readonly DbContext? _db;
+        public ChangeTracker() { }
+        public ChangeTracker(DbContext db) => _db = db;
         public void DetectChanges() { }
         public void Clear() { }
+        public IEnumerable<EntityEntry> Entries() => _db?.PendingEntries().ToList() ?? new List<EntityEntry>();
+    }
+
+    public class EntityEntry
+    {
+        public EntityEntry(object entity, EntityState state) { Entity = entity; State = state; }
+        public object Entity { get; }
+        public EntityState State { get; }
     }
 }
 

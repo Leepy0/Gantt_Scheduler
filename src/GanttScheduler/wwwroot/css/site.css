@@ -1370,5 +1370,5 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 @media (max-width: 767px) {
     .help { grid-template-columns: minmax(0, 1fr); }
     .help-toc { position: static; }
-    .help-toc ol { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+    .help-toc ol { padding-left: 28px; }
 }

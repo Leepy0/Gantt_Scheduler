@@ -2538,6 +2538,72 @@ function fillTemplate(template, sheets) {
         await page.waitForFunction(() => document.getElementById('feed').textContent.includes('Excel 가져오기'));
     });
 
+    await step('상황판 — 메뉴에서 새 창으로 열리고, 등록하지 않은 TV PC 에서 1920×1080 한 화면에 맞으며 과제가 바뀌면 다시 받음', async () => {
+        await page.goto(BASE + '/');
+        const [popup] = await Promise.all([desktop.waitForEvent('page'), page.click('#board-link')]);
+        await popup.waitForSelector('#board');
+        assert(new URL(popup.url()).pathname === '/Board', '상황판 링크가 새 창으로 열리지 않음: ' + popup.url());
+        await popup.close();
+
+        // 이름을 등록하지 않은 다른 PC(TV)
+        const tv = await browser.newContext({ viewport: { width: 1920, height: 1080 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul', extraHTTPHeaders: { 'X-Forwarded-For': '10.77.0.90' } });
+        const b = await tv.newPage();
+        watch(b, 'board');
+        await b.goto(BASE + '/Board');
+        assert(new URL(b.url()).pathname === '/Board', '등록하지 않은 PC 에서 상황판이 이름 등록으로 넘어감: ' + b.url());
+        await b.waitForSelector('.board-kpi');
+        assert((await b.locator('.board-kpi').count()) === 5, 'KPI 가 5개가 아님');
+        const over = await b.evaluate(() => [document.documentElement.scrollHeight - innerHeight, document.documentElement.scrollWidth - innerWidth]);
+        assert(over[0] <= 0 && over[1] <= 0, '상황판이 한 화면을 넘침: ' + over);
+        assert((await b.locator('[data-board-alert]').count()) > 0, '지연·위험 과제 줄이 없음');
+        await shot(b, 'd65-board', false);
+
+        // 데이터 버전: 다른 PC 가 과제에 댓글을 남기면 1분 확인에서 화면을 다시 받는다(여기서는 확인을 바로 부른다)
+        const before = await b.getAttribute('#board', 'data-stamp');
+        await b.evaluate(() => window.BoardPoll());
+        await b.waitForTimeout(300);
+        assert((await b.getAttribute('#board', 'data-stamp')) === before, '바뀐 것이 없는데 확인값이 달라짐');
+        await openProject(page, '한국 에어컨 1라인 리프터 교체');
+        const id = +new URL(page.url()).searchParams.get('id');
+        await page.evaluate(async (pid) => {
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const r = await fetch('/Projects/Detail?handler=Comment', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+                body: JSON.stringify({ projectId: pid, text: '상황판 갱신 확인' }),
+            });
+            if (!(await r.json()).ok) throw new Error('댓글 실패 ' + r.status);
+        }, id);
+        await b.evaluate(() => window.BoardPoll());
+        await b.waitForFunction((s) => document.getElementById('board').getAttribute('data-stamp') !== s, before);
+        assert((await b.locator('.board-kpi').count()) === 5, '다시 받은 화면이 비어 있음');
+        await tv.close();
+    });
+
+    await step('도움말 — 머리의 ? 로 열고, 대시보드 카드의 ? 는 그 절로 감', async () => {
+        await page.goto(BASE + '/');
+        await page.click('#help-link');
+        await page.waitForSelector('.help-toc');
+        assert((await page.locator('.help-sec').count()) >= 14, '도움말 절이 모자람');
+        await page.goto(BASE + '/');
+        await page.click('#risk-card [data-help=risk]');
+        await page.waitForSelector('#risk:target');
+        assert(new URL(page.url()).hash === '#risk', '위험 절로 가지 않음');
+        await shot(page, 'd66-help', false);
+    });
+
+    await step('완료 목록 — 종료 연도 고르기(기본 올해), 전체 연도로 바꾸면 주소에 남음', async () => {
+        await page.goto(BASE + '/Projects?state=done');
+        const year = String(new Date(Date.now() + 9 * 3600e3).getUTCFullYear());
+        assert((await page.locator('#list-year').inputValue()) === year, '기본 연도가 올해가 아님');
+        await page.selectOption('#list-year', '0');
+        await page.waitForURL(/year=0/);
+        assert((await page.locator('#list-year').inputValue()) === '0', '전체 연도가 유지되지 않음');
+        await page.click('#filters label:has(input[value=dropped])');
+        await page.waitForURL(/state=dropped/);
+        assert(!/year=0/.test(page.url()), '탭을 바꿨는데 연도가 남음');
+        await shot(page, 'd67-list-year');
+    });
+
     await desktop.close();
 
     // ── 모바일 ──────────────────────────────────────────────────────
@@ -2940,6 +3006,19 @@ function fillTemplate(template, sheets) {
         assert(sel && sel.height >= 44, '위치 고르기 칸이 터치 크기가 아님: ' + JSON.stringify(sel));
         await shot(m, 'm22-clone-location', false);
         await closeSheet(m);
+    });
+
+    await step('모바일 도움말·상황판 — 머리의 ? 로 열고 넘치지 않음', async () => {
+        await m.goto(BASE + '/');
+        assert(await m.locator('#help-link').isVisible(), '모바일 머리에 도움말이 없음');
+        await m.click('#help-link');
+        await m.waitForSelector('.help-toc');
+        await noOverflow('도움말');
+        await shot(m, 'm23-help', false);
+        await m.goto(BASE + '/Board');
+        await m.waitForSelector('.board-kpi');
+        await noOverflow('상황판');
+        await shot(m, 'm24-board', false);
     });
 
     await step('모바일 사용자 바꾸기·관리 사용자 IP', async () => {
