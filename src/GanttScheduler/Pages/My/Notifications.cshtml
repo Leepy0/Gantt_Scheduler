@@ -9,6 +9,7 @@
 <div class="page-head">
     <a class="btn icon" asp-page="/My/Index" aria-label="내 할 일"><svg class="ic"><use href="#i-left" /></svg></a>
     <h1>알림</h1>
+    <partial name="_HelpQ" model='"notify"' />
     <span class="count" id="unread-count">@(d.Unread > 0 ? d.Unread.ToString() : "")</span>
     <div class="seg" role="group" aria-label="보기">
         <a asp-page="/My/Notifications" class="@(Model.Unread ? "" : "on")" aria-current="@(Model.Unread ? null : "page")">전체</a>

@@ -8,6 +8,7 @@
 <div class="page-head">
     <a class="btn icon ghost" asp-page="/Admin/Index" aria-label="관리로 돌아가기"><svg class="ic"><use href="#i-left" /></svg></a>
     <h1>휴지통</h1>
+    <partial name="_HelpQ" model='"trash"' />
     <span class="count">@Model.Rows.Count</span>
 </div>
 

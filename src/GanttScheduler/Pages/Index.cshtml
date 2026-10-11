@@ -54,6 +54,25 @@
     }
 </form>
 
+@if (Model.NoProjects)
+{
+    @if (Model.NeedsSetup)
+    {
+        <partial name="_SetupNeeded" model="Model.IsAdmin" />
+    }
+    else
+    {
+        <section class="card setup-guide" id="first-project" role="note">
+            <h2><svg class="ic"><use href="#i-flag" /></svg>아직 등록된 과제가 없습니다</h2>
+            <p>과제를 등록하면 유형에 맞는 단계가 만들어지고, 단계 목표일과 작업을 정하면 이 화면에 진행·지연이 모입니다. 여러 과제를 한 번에 올리려면 과제 목록의 '가져오기'(Excel)를 씁니다.</p>
+            <div class="btns">
+                <a class="btn primary" asp-page="/Projects/Edit"><svg class="ic"><use href="#i-plus" /></svg>과제 등록</a>
+                <a class="btn" asp-page="/Help" asp-fragment="concepts"><svg class="ic"><use href="#i-help" /></svg>과제 · 단계 · 작업이란</a>
+            </div>
+        </section>
+    }
+}
+
 <section class="kpis wide">
     <a class="kpi" asp-page="/Projects/Index" asp-route-state="active" asp-route-mine="@mine" asp-route-org="@Model.Org" asp-route-category="@Model.Category" asp-route-corp="@Model.Corp">
         <span class="kpi-label">진행 과제</span>
@@ -90,7 +109,7 @@
 
 <div class="grid-2">
     <section class="card">
-        <header class="card-head"><h2>지연 과제</h2><span class="count">@d.Delayed.Count</span></header>
+        <header class="card-head"><h2>지연 과제</h2><span class="count">@d.Delayed.Count</span><partial name="_HelpQ" model='"state"' /></header>
         @if (d.Delayed.Count == 0)
         {
             <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 중인 과제가 없습니다.</p>
@@ -116,7 +135,7 @@
     </section>
 
     <section class="card" id="risk-card">
-        <header class="card-head"><h2>지연 위험</h2><span class="count">@risk.Count</span><span class="muted">목표일 전이지만 늦어질 신호가 있는 과제</span></header>
+        <header class="card-head"><h2>지연 위험</h2><span class="count">@risk.Count</span><span class="muted">목표일 전이지만 늦어질 신호가 있는 과제</span><partial name="_HelpQ" model='"risk"' /></header>
         @if (risk.Count == 0)
         {
             <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 위험 신호가 있는 과제가 없습니다.</p>
@@ -215,7 +234,8 @@
     </header>
     @if (d.TimelineTotal == 0)
     {
-        <p class="empty">진행 중인 과제가 없습니다. <a asp-page="/Projects/Edit">과제 등록</a></p>
+        @* 기준 정보가 없으면 등록 화면이 막다른 길이라 등록 링크 대신 위의 첫 설정 안내를 따르게 한다 *@
+        <p class="empty">진행 중인 과제가 없습니다.@if (!Model.NeedsSetup) {<text> <a asp-page="/Projects/Edit">과제 등록</a></text>}</p>
     }
     else if (d.Timeline.Count == 0)
     {

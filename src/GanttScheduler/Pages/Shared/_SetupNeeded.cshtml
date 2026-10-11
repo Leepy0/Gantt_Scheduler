@@ -1,0 +1,18 @@
+@model bool
+@* 첫 화면 안내 — 법인(위치)이 하나도 없으면 과제 등록 화면이 막다른 길이다(위치 선택이 비어 저장할 수 없다).
+   관리자는 무엇을 먼저 할지(관리 > 계층, 서버 상태의 첫 설정 점검표)로, 일반 사용자는 관리자에게 요청하라고 안내한다. 모델: 관리자인가 *@
+<section class="card setup-guide" id="setup-needed" role="note">
+    <h2><svg class="ic"><use href="#i-flag" /></svg>과제를 등록하려면 기준 정보가 먼저 있어야 합니다</h2>
+    @if (Model)
+    {
+        <p>법인·위치가 아직 없습니다. 먼저 <b>관리 &gt; 계층</b>에서 법인(해상 운송 소요일 포함)과 제품군·라인·층을 만드세요. 조직·유형·공휴일까지 할 일은 첫 설정 점검표에 모여 있습니다.</p>
+        <div class="btns">
+            <a class="btn primary" href="@Url.Content("~/Admin#location")" data-setup="location"><svg class="ic"><use href="#i-gear" /></svg>관리 &gt; 계층 열기</a>
+            <a class="btn" href="@Url.Content("~/Admin/Status")" data-setup="checklist"><svg class="ic"><use href="#i-check" /></svg>첫 설정 점검표</a>
+        </div>
+    }
+    else
+    {
+        <p>법인·위치 같은 기준 정보가 아직 등록되지 않아 과제를 등록할 수 없습니다. <b>관리자에게 기준 정보 등록을 요청하세요.</b></p>
+    }
+</section>

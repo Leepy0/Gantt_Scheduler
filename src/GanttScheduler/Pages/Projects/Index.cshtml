@@ -99,7 +99,7 @@
     <section class="card">
         <p class="empty">
             @(Model.ClosedYear is int emptyYear ? $"{emptyYear}년에 끝난 과제 중 조건에 맞는 것이 없습니다." : "조건에 맞는 과제가 없습니다.")
-            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a>
+            <a asp-page="/Projects/Index" asp-route-state="all">전체 보기</a> · <a asp-page="/Projects/Edit">과제 등록</a> · <a href="@Url.Content("~/Help#state")" data-help="state">상태는 어떻게 정해지나요?</a>
         </p>
     </section>
 }

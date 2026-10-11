@@ -16,8 +16,11 @@ public class IndexModel : PageModel
     private readonly AppDb _db;
     private readonly AnalyticsService? _analytics;
 
-    public IndexModel(DashboardService dash, ProjectService projects, IClock clock, AppDb db, AnalyticsService? analytics = null)
+    private readonly CurrentUser? _me;
+
+    public IndexModel(DashboardService dash, ProjectService projects, IClock clock, AppDb db, AnalyticsService? analytics = null, CurrentUser? me = null)
     {
+        _me = me;
         _analytics = analytics;
         _dash = dash;
         _projects = projects;
@@ -58,6 +61,11 @@ public class IndexModel : PageModel
     public string DataJson { get; private set; } = "{}";
     public string AsOf { get; private set; } = "";
 
+    // 첫 화면 안내: 과제가 하나도 없을 때(휴지통 제외) — 법인이 없으면 등록이 막다른 길이므로 먼저 할 일을 알린다
+    public bool NoProjects { get; private set; }
+    public bool NeedsSetup { get; private set; }
+    public bool IsAdmin => _me?.IsAdmin == true;
+
     public async Task OnGetAsync()
     {
         Data = await _dash.BuildAsync(Query);
@@ -66,6 +74,12 @@ public class IndexModel : PageModel
         NewCounts = await _projects.NewCountsAsync();
         if (_analytics != null) Orgs = await _analytics.OrgOptionsAsync();
         AsOf = KoreaClock.ToKst(_clock.UtcNow).ToString("MM-dd HH:mm");
+        // 진행 과제가 없을 때만 더 묻는다(평소에는 쿼리를 늘리지 않는다)
+        if (Data.TimelineTotal == 0)
+        {
+            NoProjects = !await _db.LiveProjects.AnyAsync();
+            NeedsSetup = !Corporations.Any(c => c.IsActive);
+        }
         DataJson = AppJson.Serialize(new
         {
             today = Data.Today,

@@ -32,6 +32,8 @@
                 <a asp-page="/Projects/Index" class="@(nav == "projects" ? "on" : "")" aria-current="@(nav == "projects" ? "page" : null)">과제</a>
                 <a asp-page="/Insights/LeadTime" class="@(nav == "insights" ? "on" : "")" aria-current="@(nav == "insights" ? "page" : null)">분석</a>
                 <a asp-page="/Admin/Index" class="@(nav == "admin" ? "on" : "")" aria-current="@(nav == "admin" ? "page" : null)">관리</a>
+                @* 상황판은 TV·회의실 화면에 띄워 두는 것이라 새 창으로 연다 *@
+                <a asp-page="/Board" target="_blank" rel="noopener" class="top-board" id="board-link" title="TV 상황판 — 새 창에서 열립니다"><svg class="ic"><use href="#i-tv" /></svg>상황판</a>
             </nav>
             @if (alerts is { Count: > 0 })
             {
@@ -42,6 +44,10 @@
                     <svg class="ic"><use href="#i-@(top.Level == "warn" ? "alert" : "download")" /></svg><span>@top.Text@more</span>
                 </a>
             }
+            @* 도움말: 데스크톱·모바일 모두 머리에 둔다(모바일의 하단 탭은 다섯 칸이 차 있다) *@
+            <a class="bell help-link @(nav == "help" ? "on" : "")" id="help-link" asp-page="/Help" aria-label="도움말" title="도움말">
+                <svg class="ic"><use href="#i-help" /></svg>
+            </a>
             @* 알림 종: 읽지 않은 수는 화면이 따로 묻는다(/api/unread — collab.js). 모든 화면 요청에 알림 조회를 붙이지 않기 위해서다 *@
             <a class="bell" id="bell" asp-page="/My/Notifications" aria-label="알림" title="알림">
                 <svg class="ic"><use href="#i-bell" /></svg><span class="bell-count" id="bell-count" hidden></span>
