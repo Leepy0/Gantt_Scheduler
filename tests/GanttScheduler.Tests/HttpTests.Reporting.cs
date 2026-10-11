@@ -104,7 +104,7 @@ public partial class HttpTests
         var html = await client.GetStringAsync("/Admin");
         var token = TokenOf(html);
         var limits = JsonDocument.Parse(System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Match(html, "data-limits=\"([^\"]+)\"").Groups[1].Value)).RootElement;
-        Assert.Equal(new[] { 50, 50, 200 }, limits.GetProperty("category").EnumerateArray().Select(x => x.GetInt32()).ToArray());
+        Assert.Equal(new[] { 50, 50, 200, 200 }, limits.GetProperty("category").EnumerateArray().Select(x => x.GetInt32()).ToArray());
         Assert.Equal(100, limits.GetProperty("vendor")[0].GetInt32());
         Assert.Equal(4, limits.GetProperty("location").GetArrayLength());
 

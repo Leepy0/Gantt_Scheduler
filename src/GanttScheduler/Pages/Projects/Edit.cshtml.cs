@@ -52,6 +52,7 @@ public class EditModel : PageModel
         public string? Base { get; set; }
         public List<ItemRow> Items { get; set; } = new();
         public List<StageTargetRow> StageTargets { get; set; } = new();   // 등록할 때만 (수정은 상세의 단계 일정 표)
+        public bool TemplateWorks { get; set; } = true;                   // 등록할 때 유형 템플릿 작업도 만든다(기본 켬)
     }
 
     [BindProperty(SupportsGet = true)] public int? Id { get; set; }
@@ -113,7 +114,8 @@ public class EditModel : PageModel
         var items = Form.Items.Select(i => new ItemInput(i.TypeId, i.Quantity, i.Note)).ToList();
         var input = new ProjectInput(Form.Title, Form.CategoryId, Form.LocationId, Form.Owner, Form.StartDate,
             Form.Vendor, Form.Description, items, items, Form.Version,
-            IsNew ? Form.StageTargets.Select(t => new StageTargetInput(t.TemplateId, t.TargetDate)).ToList() : null);
+            IsNew ? Form.StageTargets.Select(t => new StageTargetInput(t.TemplateId, t.TargetDate)).ToList() : null,
+            IsNew ? Form.TemplateWorks : null);
         try
         {
             var id = Id;
@@ -308,11 +310,20 @@ public class EditModel : PageModel
             currentOwner = await _db.Users.AsNoTracking().Where(u => u.Id == ownerId).Select(u => u.Name).FirstOrDefaultAsync();
         }
 
+        // 유형별 작업 템플릿 수 — 등록 화면의 '템플릿 작업 n개 함께 만들기' 안내 (그룹 집계는 하지 않고 메모리에서 센다 — DESIGN 6장)
+        var templateWorks = new Dictionary<int, int>();
+        if (IsNew)
+        {
+            var stageOf = (await _db.StageTemplates.AsNoTracking().ToListAsync()).ToDictionary(t => t.Id, t => t.CategoryId);
+            foreach (var stageId in await _db.TemplateWorks.AsNoTracking().Select(w => w.StageTemplateId).ToListAsync())
+                if (stageOf.TryGetValue(stageId, out var categoryId)) templateWorks[categoryId] = templateWorks.GetValueOrDefault(categoryId) + 1;
+        }
+
         MetaJson = AppJson.Serialize(new
         {
             isNew = IsNew,
             currentOwner,
-            categories = Categories.Select(c => new { id = c.Id, name = c.Name, kind = Views.Key(c.Kind) }),
+            categories = Categories.Select(c => new { id = c.Id, name = c.Name, kind = Views.Key(c.Kind), templateWorks = templateWorks.GetValueOrDefault(c.Id) }),
             locations,
             equipment,
             containers,

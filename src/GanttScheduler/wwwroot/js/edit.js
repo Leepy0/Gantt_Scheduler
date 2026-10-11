@@ -174,4 +174,20 @@
             if (input) input.focus();
         }
     }
+
+    // ── 유형 템플릿 작업 (등록 화면) ─────────────────────────────────
+    // 고른 유형에 작업 템플릿이 있으면 '템플릿 작업 n개 함께 만들기'를 보인다 (기본 켬)
+    var twField = document.getElementById('template-works-field');
+    if (twField) {
+        var twCount = {};
+        meta.categories.forEach(function (c) { twCount[c.id] = c.templateWorks || 0; });
+        var syncTemplateWorks = function () {
+            var checked = document.querySelector('input[name="Form.CategoryId"]:checked');
+            var n = checked ? (twCount[+checked.value] || 0) : 0;
+            twField.hidden = n === 0;
+            document.getElementById('template-works-label').textContent = '템플릿 작업 ' + n + '개 함께 만들기';
+        };
+        document.querySelectorAll('input[name="Form.CategoryId"]').forEach(function (r) { r.addEventListener('change', syncTemplateWorks); });
+        syncTemplateWorks();
+    }
 })();

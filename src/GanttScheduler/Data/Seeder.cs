@@ -115,6 +115,9 @@ public static class Seeder
             Durations(general, 10, 5, 15);
             Durations(container, 5, 10, 5, 20, 10, 10);
             Durations(simulation, 10, 15, 10, 5);
+            // 유형 템플릿 작업 — 등록할 때 단계마다 함께 만든다(시작·기간은 근무일, 선행은 같은 단계 안)
+            Works(container, "검토", ("현장 실사", 0, 3, null), ("용기 사양 검토", 3, 5, "현장 실사"));
+            Works(container, "제작", ("시제품 제작", 0, 10, null), ("시제품 검증", 10, 5, "시제품 제작"));
 
             db.Categories.AddRange(automation, general, container, simulation);
         }
@@ -157,6 +160,18 @@ public static class Seeder
         var i = 0;
         foreach (var text in items)
             template.CheckItems.Add(new TemplateCheckItem { Text = text, SortOrder = ++i });
+    }
+
+    private static void Works(Category category, string stage, params (string Title, int Offset, int Days, string? After)[] items)
+    {
+        var template = category.StageTemplates.First(t => t.Name == stage);
+        var i = 0;
+        foreach (var (title, offset, days, after) in items)
+            template.Works.Add(new TemplateWork
+            {
+                Title = title, OffsetWorkDays = offset, DurationWorkDays = days, SortOrder = ++i,
+                PredecessorTemplateWork = after == null ? null : template.Works.First(w => w.Title == after),
+            });
     }
 
     private static void Durations(Category category, params int?[] days)

@@ -153,7 +153,96 @@
             parentId = selected[level];
         }
         html += '</div>';
+        if (kind === 'category') html += templateWorksHtml();
         body.innerHTML = html;
+    }
+
+    // ── 유형 > 단계 아래의 작업 템플릿 (서버 노드 level 4) ──
+    // 체크 항목 열과 따로 그린다: 체크 항목의 하위가 아니라 단계의 또 다른 목록이기 때문이다
+    function templateWorksOf(stageId) {
+        return nodes.filter(function (n) { return n.level === 4 && n.parentId === stageId; });
+    }
+
+    function templateWorkExtra(n) {
+        var pred = n.predecessorId ? find(4, n.predecessorId) : null;
+        return ['시작 +' + (n.offsetWorkDays || 0) + '근무일', '기간 ' + (n.durationWorkDays || 1) + '근무일', pred ? '선행: ' + pred.name : '']
+            .filter(Boolean).join(' · ');
+    }
+
+    function templateWorksHtml() {
+        var stage = selected[2] ? find(2, selected[2]) : null;
+        if (!stage) return '';
+        var list = templateWorksOf(stage.id);
+        var html = '<section class="column tw-panel" data-template-works><div class="column-head"><span>작업 템플릿 · ' + esc(stage.name) +
+            '</span><span class="count">' + list.length + '</span></div>' +
+            '<p class="hint">과제를 등록할 때 이 단계에 함께 만드는 작업입니다. 시작은 단계 시작일(첫 단계는 착수일, 이후는 앞 단계 목표일 다음 근무일)부터 센 근무일입니다. 담당은 과제 담당이 됩니다.</p>' +
+            '<div class="column-list">';
+        if (!list.length) html += '<p class="column-empty">등록된 작업 템플릿이 없습니다.</p>';
+        list.forEach(function (n, i) {
+            html += '<div class="node">' +
+                '<button type="button" class="node-main" data-tw-edit="' + n.id + '"><span class="node-name">' + esc(n.name) + '</span>' +
+                '<span class="node-extra">' + esc(templateWorkExtra(n)) + '</span></button>';
+            if (isAdmin) {
+                html += '<span class="node-actions">' +
+                    '<button type="button" class="btn icon small" data-move="4:' + n.id + ':-1" aria-label="위로"' + (i === 0 ? ' disabled' : '') + '>' + icon('up') + '</button>' +
+                    '<button type="button" class="btn icon small" data-move="4:' + n.id + ':1" aria-label="아래로"' + (i === list.length - 1 ? ' disabled' : '') + '>' + icon('down') + '</button>' +
+                    '<button type="button" class="btn icon small" data-tw-edit="' + n.id + '" aria-label="편집">' + icon('edit') + '</button></span>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+        if (isAdmin) html += '<div class="tw-foot"><button type="button" class="btn" data-tw-add="' + stage.id + '">' + icon('plus') + '작업 템플릿 추가</button></div>';
+        return html + '</section>';
+    }
+
+    function openTemplateWork(stageId, id) {
+        var n = id ? find(4, id) : null;
+        var parentId = n ? n.parentId : stageId;
+        var stage = find(2, parentId);
+        var others = templateWorksOf(parentId).filter(function (x) { return !n || x.id !== n.id; });
+        var dis = isAdmin ? '' : ' disabled';
+        var html = field('name', '작업명', '<input name="name" maxlength="' + maxLen(4) + '" required value="' + esc(n ? n.name : '') + '"' + dis + ' />') +
+            '<div class="field-row">' +
+            field('offsetWorkDays', '시작 (단계 시작부터, 근무일)', '<input name="offsetWorkDays" type="number" min="0" max="999" step="1" inputmode="numeric" required value="' + (n ? n.offsetWorkDays : 0) + '"' + dis + ' />') +
+            field('durationWorkDays', '기간 (근무일)', '<input name="durationWorkDays" type="number" min="1" max="999" step="1" inputmode="numeric" required value="' + (n ? n.durationWorkDays : 5) + '"' + dis + ' />') +
+            '</div>' +
+            field('predecessorId', '선행 작업 <span class="opt">선택</span>', '<select name="predecessorId"' + dis + '><option value="">없음</option>' +
+                others.map(function (x) { return '<option value="' + x.id + '"' + (n && n.predecessorId === x.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') +
+                '</select>') +
+            '<span class="hint">선행을 고르면 과제에서 \'끝나면 시작\' 연결이 됩니다. 선행이 끝나기 전에 시작하도록 적혀 있으면 등록할 때 선행 뒤로 밀어 만듭니다.</span>';
+        App.sheet({
+            title: (n ? '작업 템플릿 · ' + n.name : '작업 템플릿 추가') + (stage ? ' (' + stage.name + ')' : ''),
+            html: html,
+            primary: isAdmin ? (n ? '저장' : '추가') : null,
+            danger: !isAdmin || !n ? null : {
+                label: '삭제',
+                onClick: async function (sheet) {
+                    var ok = await App.confirm({ title: '삭제', message: '"' + n.name + '" 작업 템플릿을 삭제합니다. 이미 등록한 과제의 작업은 그대로 남습니다.', verb: '삭제' });
+                    if (!ok) return;
+                    try {
+                        await change('Toggle', { kind: kind, level: 4, id: n.id, dir: 0, active: null });
+                        sheet.close();
+                        App.toast('삭제했습니다.');
+                    } catch (err) { sheet.setError(err.message, err.field); }
+                }
+            },
+            onSubmit: async function (form) {
+                var f = form.elements;
+                ['offsetWorkDays', 'durationWorkDays'].forEach(function (k) {
+                    if (!/^\d+$/.test(f[k].value.trim())) {
+                        var bad = new Error('근무일은 0 이상의 정수로 입력해 주세요.');
+                        bad.field = k;
+                        throw bad;
+                    }
+                });
+                await change('Save', {
+                    kind: kind, level: 4, id: n ? n.id : null, parentId: parentId, name: f.name.value,
+                    offsetWorkDays: +f.offsetWorkDays.value, durationWorkDays: +f.durationWorkDays.value,
+                    predecessorId: f.predecessorId.value ? +f.predecessorId.value : null
+                });
+                App.toast(n ? '저장했습니다.' : '작업 템플릿을 추가했습니다.');
+            }
+        });
     }
 
     async function load() {
@@ -379,6 +468,8 @@
             return;
         }
         if (e.target.closest('[data-paste]')) { openPaste(); return; }
+        if ((t = e.target.closest('[data-tw-add]'))) { openTemplateWork(+t.dataset.twAdd, null); return; }
+        if ((t = e.target.closest('[data-tw-edit]'))) { openTemplateWork(null, +t.dataset.twEdit); return; }
         if ((t = e.target.closest('[data-move]'))) {
             var m = t.dataset.move.split(':');
             try { await change('Move', { kind: kind, level: +m[0], id: +m[1], dir: +m[2] }); }

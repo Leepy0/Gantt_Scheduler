@@ -1135,3 +1135,9 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
     .my-row .quick .btn { min-height: 48px; }
 }
 @media (prefers-reduced-motion: reduce) { .my-row.saved { animation: none; } }
+
+/* ── 입력 부담 줄이기·Excel 가져오기 ────────────────────────────── */
+/* 관리 > 유형: 단계 아래 작업 템플릿 (체크 항목 열과 따로 단계 밑에 둔다) */
+.tw-panel { margin-top: 16px; min-height: 0; border-right: 0; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow-1); overflow: hidden; }
+.tw-panel > .hint { padding: 8px 16px 0; }
+.tw-foot { padding: 8px 16px 16px; }
