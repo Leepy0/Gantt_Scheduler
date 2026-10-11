@@ -901,6 +901,18 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert((await draftRows.nth(6).locator('input').inputValue()) === before, '사람이 정한 입고 뒤의 설치가 움직임');
         const firstTarget = await draftRows.nth(0).locator('input').inputValue();
         await shot(page, 'd13b-edit-draft');
+        // 고친 날짜가 범위 밖이면 표는 그대로 두고 위에 이유만 보이며 그 칸을 가리킨다 (표를 지우면 고친 날짜가 등록할 때 빠진다)
+        const orderInput = draftRows.nth(2).locator('input');
+        const orderDate = await orderInput.inputValue();
+        await orderInput.fill('2099-12-31');
+        await page.waitForSelector('#draft [data-draft-error]');
+        assert((await draftRows.count()) === 8, '초안을 받지 못하자 표가 사라짐');
+        assert((await page.locator('#draft [data-draft-error]').innerText()).includes('사이로'), '범위 밖 이유가 보이지 않음');
+        assert((await draftRows.nth(2).locator('.field.invalid').count()) === 1, '범위 밖 칸을 가리키지 않음');
+        await shot(page, 'd13c-edit-draft-error', false);
+        await orderInput.fill(orderDate);
+        await page.waitForSelector('#draft [data-draft-error]', { state: 'detached' });
+        assert((await draftRows.nth(2).locator('.field.invalid').count()) === 0, '고친 뒤에도 오류 표시가 남음');
 
         await page.click('#edit-form button[type=submit]');
         await page.waitForSelector('#summary .summary-meta');

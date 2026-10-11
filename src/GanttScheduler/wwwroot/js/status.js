@@ -64,7 +64,8 @@
             '<dt>데이터</dt><dd class="path">' + esc(s.dataDir) + '</dd>' +
             '<dt>첨부</dt><dd class="path">' + esc(s.storageDir) + '</dd>' +
             '<dt>백업</dt><dd class="path">' + esc(s.backupDir) + '</dd>' +
-            '<dt>로그</dt><dd class="path">' + esc(s.logDir) + ' <a href="' + esc(url + '?handler=Log') + '" id="log-download">오늘 로그 내려받기</a></dd>' +
+            // 경로만 아무 데서나 줄을 바꾸고, 링크 글자는 단어 중간에서 끊기지 않게 따로 둔다
+            '<dt>로그</dt><dd><span class="path">' + esc(s.logDir) + '</span> <a class="ops-link" href="' + esc(url + '?handler=Log') + '" id="log-download">오늘 로그 내려받기</a></dd>' +
             '</dl></section>';
     }
 

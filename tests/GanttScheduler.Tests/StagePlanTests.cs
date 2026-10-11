@@ -93,6 +93,12 @@ public class StagePlanRulesTests
         var p = new Project();
         stages.ForEach(p.Stages.Add);
         Assert.Equal(Rules.InboundRecommendation(stages, 12), Rules.InboundRecommendation(p, 12));
+
+        // 아직 검증하지 않은 날짜(초안·미리보기의 9999-12-31 같은 오타)로 불려도 넘치지 않는다 — 추천하지 않을 뿐
+        stages[0].CompletedDate = null;
+        stages[0].TargetDate = DateOnly.MaxValue.AddDays(-5);
+        Assert.Null(Rules.InboundRecommendation(stages, 12));
+        Assert.Equal(DateOnly.MaxValue, Rules.InboundRecommendation(stages, 5));
     }
 
     private static Project Done(int categoryId, ProjectState state, params (string Name, DateOnly Done)[] stages)

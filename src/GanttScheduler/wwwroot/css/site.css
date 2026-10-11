@@ -819,6 +819,7 @@ dialog.sheet:focus { outline: none; }
 .status-body .card { display: flex; flex-direction: column; gap: 12px; }
 .status-body .card-head { margin-bottom: 0; }
 .ops-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.ops-link { white-space: nowrap; }
 .path { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .ops-table td { vertical-align: top; }
 .ops-table .ops-name { font-weight: 600; white-space: nowrap; }

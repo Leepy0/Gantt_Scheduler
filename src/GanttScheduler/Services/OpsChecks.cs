@@ -182,20 +182,39 @@ public class OpsChecks
     public CheckResult Disk()
     {
         const string name = "디스크 여유";
-        var seen = new HashSet<string>();
-        var parts = new List<string>();
-        var level = CheckLevel.Ok;
-        foreach (var (label, path) in new[] { ("데이터", DataDir), ("첨부", StorageDir), ("백업", _backups.Options.FilesPath) })
-        {
-            var d = DriveOf(path);
-            if (d == null || !seen.Add(d.Value.Root)) continue;
-            var l = DiskLevel(d.Value.Free, d.Value.Total);
-            if (l == CheckLevel.Fail || (l == CheckLevel.Warn && level == CheckLevel.Ok)) level = l;
-            parts.Add($"{label} {d.Value.Root} {Gb(d.Value.Free)} 남음 ({(d.Value.Total > 0 ? d.Value.Free * 100 / d.Value.Total : 0)}%)");
-        }
+        var drives = Drives(_cfg, Root, _backups.Options.FilesPath);
+        var level = WorstDiskLevel(drives);
+        var parts = drives.Select(d => $"{d.Label} {d.Root} {Gb(d.Free)} 남음 ({(d.Total > 0 ? d.Free * 100 / d.Total : 0)}%)").ToList();
         if (parts.Count == 0) return new CheckResult("disk", name, CheckLevel.Ok, "드라이브 정보를 읽을 수 없는 경로입니다(네트워크 공유 등).");
         return new CheckResult("disk", name, level, string.Join(" · ", parts),
             level == CheckLevel.Ok ? null : "오래된 백업(Backup:Keep)·로그(Logs:KeepDays)를 줄이거나, 첨부·백업 폴더를 여유 있는 드라이브로 옮기세요.");
+    }
+
+    // 여유 공간을 볼 드라이브: 데이터(App_Data)·첨부 저장소·백업 묶음 폴더가 있는 곳, 같은 드라이브는 한 번만.
+    // 서버 상태(Disk)·/health/ready·관리자 칩(OpsAlerts)이 이 목록과 아래 판정을 함께 쓴다 — 백업만 다른 드라이브에 두어도 칩이 놓치지 않게
+    public static List<(string Label, string Root, long Free, long Total)> Drives(IConfiguration cfg, string contentRoot, string backupFiles)
+    {
+        var seen = new HashSet<string>();
+        var list = new List<(string Label, string Root, long Free, long Total)>();
+        foreach (var (label, path) in new[] { ("데이터", Path.Combine(contentRoot, "App_Data")), ("첨부", AppPaths.Uploads(cfg, contentRoot)), ("백업", backupFiles) })
+        {
+            var d = DriveOf(path);
+            if (d == null || !seen.Add(d.Value.Root)) continue;
+            list.Add((label, d.Value.Root, d.Value.Free, d.Value.Total));
+        }
+        return list;
+    }
+
+    // 여러 드라이브 중 가장 나쁜 수준 (읽을 수 있는 드라이브가 없으면 정상 — 네트워크 공유 등)
+    public static string WorstDiskLevel(IEnumerable<(string Label, string Root, long Free, long Total)> drives)
+    {
+        var level = CheckLevel.Ok;
+        foreach (var d in drives)
+        {
+            var l = DiskLevel(d.Free, d.Total);
+            if (l == CheckLevel.Fail || (l == CheckLevel.Warn && level == CheckLevel.Ok)) level = l;
+        }
+        return level;
     }
 
     // 작은 디스크는 비율로, 큰 디스크는 남은 양으로 본다 — 2TB 의 5%(100GB)는 부족한 것이 아니다
@@ -495,19 +514,21 @@ public class OpsAlerts
     private readonly BackupService _backups;
     private readonly IClock _clock;
     private readonly IHostEnvironment _env;
+    private readonly IConfiguration _cfg;
     private readonly object _gate = new();
     private DateTime _cachedAt = DateTime.MinValue;
-    private (string Root, long Free, long Total)? _disk;
+    private string _diskLevel = CheckLevel.Ok;
     private bool _nextYearMissing;
     private bool _setupMissing;
     private static readonly DateTime Started = DateTime.UtcNow;
 
-    public OpsAlerts(UpdateService updates, BackupService backups, IClock clock, IHostEnvironment env)
+    public OpsAlerts(UpdateService updates, BackupService backups, IClock clock, IHostEnvironment env, IConfiguration cfg)
     {
         _updates = updates;
         _backups = backups;
         _clock = clock;
         _env = env;
+        _cfg = cfg;
     }
 
     // 관리자에게 보일 알림, 중요한 것부터. 마지막은 새 버전 알림(있으면)
@@ -528,11 +549,11 @@ public class OpsAlerts
         else if (last is { Ok: false } && now - last.At < TimeSpan.FromDays(7))
             list.Add(new("update-failed", "warn", "업데이트 실패", "/Admin/Update"));
 
-        if (_updates.CheckFailedSince is { } since && now - since > TimeSpan.FromDays(3))
+        if (_updates.CheckFailing(now, TimeSpan.FromDays(3)))
             list.Add(new("check-failing", "warn", "업데이트 확인 실패", "/Admin/Update"));
 
         bool diskLow;
-        lock (_gate) diskLow = _disk != null && OpsChecks.DiskLevel(_disk.Value.Free, _disk.Value.Total) != CheckLevel.Ok;
+        lock (_gate) diskLow = _diskLevel != CheckLevel.Ok;
         if (diskLow) list.Add(new("disk", "warn", "디스크 부족", "/Admin/Status"));
 
         var backups = _backups.List();
@@ -557,7 +578,7 @@ public class OpsAlerts
     private async Task RefreshAsync(AppDb db)
     {
         lock (_gate) if (DateTime.UtcNow - _cachedAt < CacheFor) return;
-        var disk = OpsChecks.DriveOf(Path.Combine(_env.ContentRootPath, "App_Data"));
+        var disk = OpsChecks.WorstDiskLevel(OpsChecks.Drives(_cfg, _env.ContentRootPath, _backups.Options.FilesPath));
         var missing = false;
         var setupMissing = false;
         try { setupMissing = !await db.Locations.AsNoTracking().AnyAsync(l => l.IsActive && l.Level == 1); }
@@ -575,7 +596,7 @@ public class OpsAlerts
         }
         lock (_gate)
         {
-            _disk = disk;
+            _diskLevel = disk;
             _nextYearMissing = missing;
             _setupMissing = setupMissing;
             _cachedAt = DateTime.UtcNow;

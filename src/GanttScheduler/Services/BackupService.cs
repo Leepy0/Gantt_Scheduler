@@ -197,11 +197,11 @@ public class BackupService
         }
     }
 
-    // 백업을 만든다. 실패해도 예외를 던지지 않고 실패 기록(Ok=false, Error)을 돌려준다 — 호출한 쪽(업데이트 적용 등)이 결과로 판단한다.
+    // 백업을 만든다. 실패하거나 취소돼도 예외를 던지지 않고 실패 기록(Ok=false, Error)을 돌려준다 — 호출한 쪽(업데이트 적용 등)이 결과로 판단한다.
     // 이미 다른 백업이 돌고 있으면 RuleException
     public async Task<BackupEntry> RunAsync(string kind, string by, CancellationToken ct, string? note = null)
     {
-        if (!await _gate.WaitAsync(0, ct)) throw new RuleException("이미 백업하고 있습니다. 끝난 뒤 다시 시도해 주세요.");
+        if (!await _gate.WaitAsync(0, CancellationToken.None)) throw new RuleException("이미 백업하고 있습니다. 끝난 뒤 다시 시도해 주세요.");
         var started = DateTime.UtcNow;
         var at = _clock.UtcNow;
         var name = NewName(at);
@@ -223,7 +223,13 @@ public class BackupService
             if (skipped > 0) notes.Add($"읽지 못한 파일 {skipped}개는 묶음에서 뺐습니다(로그 참고).");
             if (!DbReachable) notes.Add("DB 백업 파일은 이 서버에서 열 수 없어 크기를 확인하지 않았습니다.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 서버가 내려가는 등으로 멈춘 백업도 목록·로그에 남긴다 — 조용히 사라지면 백업이 된 줄 알고 위험한 작업을 이어 간다
+            error = "백업이 끝나기 전에 멈췄습니다(서버 종료 등). 다시 백업해 주세요.";
+            _log.LogWarning("백업 중단 ({Kind}, {By}): 끝나기 전에 취소되었습니다", kind, by);
+        }
+        catch (Exception ex)
         {
             error = Explain(ex);
             _log.LogError(ex, "백업 실패 ({Kind}, {By}): {Error}", kind, by, error);
@@ -247,13 +253,38 @@ public class BackupService
         return entry;
     }
 
-    // 같은 초에 두 번 눌러도 이름이 겹치지 않게 한다 (VACUUM INTO 는 이미 있는 파일에 쓰지 않는다)
-    private string NewName(DateTime at)
+    // 같은 초에 두 번 눌러도 이름이 겹치지 않게 한다 (VACUUM INTO 는 이미 있는 파일에 쓰지 않는다).
+    // SQL Server 는 DB 이름을 넣는다 — 한 SQL Server 를 여러 앱(운영·시험 서버)이 각자 DB 로 쓰면 기본 백업 폴더가 같아서,
+    // 같은 초에 백업하면 INIT 가 다른 DB 의 .bak 을 덮어쓰고 양쪽 목록에는 '성공'으로 남는다
+    internal string NewName(DateTime at)
     {
-        var baseName = "gantt-" + KoreaClock.ToKst(at).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var db = Target.SqlServer && !string.IsNullOrWhiteSpace(Target.Database) ? SafeName(Target.Database) + "-" : "";
+        var baseName = "gantt-" + db + KoreaClock.ToKst(at).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var name = baseName;
-        for (var i = 2; File.Exists(Path.Combine(Options.FilesPath, name + ".files.zip")) || List().Any(e => e.Name == name); i++) name = baseName + "-" + i;
+        for (var i = 2; Taken(name); i++) name = baseName + "-" + i;
         return name;
+    }
+
+    private bool Taken(string name) =>
+        File.Exists(Path.Combine(Options.FilesPath, name + ".files.zip")) || List().Any(e => e.Name == name)
+        // 이 서버에서 열 수 있는 SQL Server 백업 폴더면 거기 있는 파일도 피한다 (INIT 는 있는 파일을 덮어쓴다)
+        || (Target.SqlServer && DbReachable && File.Exists(BakFile(name)));
+
+    // 파일 이름에 쓸 수 있는 글자만 (DB 이름은 공백·마침표·한글도 될 수 있다. SQL Server 쪽 운영체제가 무엇이든 안전하게)
+    internal static string SafeName(string text)
+    {
+        var chars = text.Trim().Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray();
+        var s = new string(chars);
+        return s.Length > 60 ? s[..60] : s;
+    }
+
+    // SQL Server 백업 파일 경로. 경로가 없으면 파일 이름만 넘긴다 → SQL Server 의 기본 백업 폴더.
+    // 구분자는 SQL Server 쪽 운영체제에 맞춘다(Linux 용 SQL Server 는 '/')
+    private string BakFile(string name)
+    {
+        var dir = Options.DbPath;
+        var sep = dir.Contains('/') && !dir.Contains('\\') ? "/" : "\\";
+        return dir.Length == 0 ? name + ".bak" : dir.TrimEnd('\\', '/') + sep + name + ".bak";
     }
 
     private async Task<(string File, long? Size)> BackupDbAsync(AppDb db, string name, CancellationToken ct)
@@ -264,9 +295,7 @@ public class BackupService
             var dir = Options.DbPath;
             if (dir.Length > 0 && !Path.IsPathRooted(dir) && !IsUnc(dir))
                 throw new RuleException("Backup:Path 는 SQL Server 컴퓨터 기준의 절대 경로(예: D:\\Backup)나 UNC 경로(\\\\서버\\공유)로 적어 주세요.");
-            // 경로가 없으면 파일 이름만 넘긴다 → SQL Server 의 기본 백업 폴더. 구분자는 SQL Server 쪽 운영체제에 맞춘다(Linux 용 SQL Server 는 '/')
-            var sep = dir.Contains('/') && !dir.Contains('\\') ? "/" : "\\";
-            var file = dir.Length == 0 ? name + ".bak" : dir.TrimEnd('\\', '/') + sep + name + ".bak";
+            var file = BakFile(name);
             // SQL Server 는 폴더를 만들어 주지 않는다. 이 서버에서 닿는 경로면 만들어 둔다 (권한이 없으면 SQL Server 의 오류로 안내된다)
             if (DbReachable)
             {

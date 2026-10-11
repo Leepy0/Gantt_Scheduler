@@ -74,6 +74,45 @@ public partial class HttpTests
     }
 
     [Fact]
+    public async Task 초안과_미리보기는_범위_밖_날짜를_그_줄을_가리켜_400_으로_알린다()
+    {
+        var client = await RegisteredClientAsync();
+        int categoryId, locationId, inspection, before;
+        using (var s = _factory.Db.NewScope())
+        {
+            var cat = await s.Db.Categories.Include(c => c.StageTemplates).FirstAsync(c => c.Name == "물류 자동화");
+            categoryId = cat.Id;
+            var ordered = cat.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).ToList();
+            var i = ordered.FindIndex(t => t.Kind == GanttScheduler.Domain.StageKind.Inspection);
+            inspection = ordered[i].Id;
+            before = ordered[i - 1].Id;
+            locationId = (await s.Db.Locations.FirstAsync(l => l.Level == 1 && l.Name == "베트남")).Id;   // 해상 운송 12일 — 추천 입고일을 계산한다
+        }
+
+        // 사람이 고친 목표일이 연도 9999 — 검수일 + 해상 운송이 날짜 범위를 넘어 500 이 나던 경로. 등록할 때와 같은 범위 검사로 막는다
+        foreach (var (template, date) in new[] { (inspection, "9999-12-31"), (before, "9999-12-20") })
+        {
+            var res = await client.GetAsync($"/Projects/Edit?handler=Draft&categoryId={categoryId}&start=2026-10-12&locationId={locationId}&keep={template}:{date}");
+            var text = await res.Content.ReadAsStringAsync();
+            Assert.True(res.StatusCode == HttpStatusCode.BadRequest, text);
+            Assert.Equal($"stageTargets.{template}", JsonDocument.Parse(text).RootElement.GetProperty("field").GetString());
+        }
+
+        // 상세의 단계 일정 표 미리보기도 저장과 같은 범위 검사 (화면은 실패를 조용히 넘기고 저장할 때 이유를 보인다)
+        var id = await PlanProjectAsync("HTTP 미리보기 범위 밖", "물류 자동화", "베트남");
+        var (detail, token) = await DetailAsync(client, id);
+        var stages = (await detail.GetFromJsonAsync<JsonElement>($"/Projects/Detail?handler=Data&id={id}")).GetProperty("project").GetProperty("stages");
+        var sid = stages.EnumerateArray().First(x => x.GetProperty("kind").GetString() == "inspection").GetProperty("id").GetInt32();
+        var preview = await detail.SendAsync(Json(token, "SchedulePreview", new
+        {
+            projectId = id, rows = new[] { new { stageId = sid, targetDate = "9999-12-31", completedDate = (string?)null } },
+        }));
+        var body = await preview.Content.ReadAsStringAsync();
+        Assert.True(preview.StatusCode == HttpStatusCode.BadRequest, body);
+        Assert.Equal($"targetDate.{sid}", JsonDocument.Parse(body).RootElement.GetProperty("field").GetString());
+    }
+
+    [Fact]
     public async Task 등록_화면은_목표일_초안을_주고_고친_값으로_등록하면_목표일로_정해진다()
     {
         var client = await RegisteredClientAsync();

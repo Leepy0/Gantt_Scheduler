@@ -58,7 +58,12 @@ public partial class ProjectService
         var templates = category.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).ToList();
         var fixedAt = new Dictionary<int, DateOnly?>();
         for (var i = 0; i < templates.Count; i++)
-            if (keep != null && keep.TryGetValue(templates[i].Id, out var kept)) fixedAt[i] = kept;
+            if (keep != null && keep.TryGetValue(templates[i].Id, out var kept))
+            {
+                // 등록할 때와 같은 범위·문구로 미리 알린다 (field 가 초안 표의 그 칸을 가리킨다)
+                Rules.ValidateDate(kept, start, $"'{templates[i].Name}' 목표일", $"stageTargets.{templates[i].Id}");
+                fixedAt[i] = kept;
+            }
 
         var targets = Rules.DraftTargets(start, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt);
         var gaps = Rules.TargetGaps(start, targets, cal);
@@ -78,6 +83,13 @@ public partial class ProjectService
         var p = await _db.Projects.AsNoTracking().Include(x => x.Stages).FirstOrDefaultAsync(x => x.Id == projectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         var edits = (rows ?? new()).GroupBy(r => r.StageId).ToDictionary(g => g.Key, g => g.Last());
+        // 저장할 때와 같은 범위 검사 — 바뀐 날짜만 본다(범위 밖으로 남은 옛 데이터가 미리보기를 막지 않게)
+        foreach (var s in p.Stages)
+            if (edits.TryGetValue(s.Id, out var e))
+            {
+                if (s.TargetDate != e.TargetDate) Rules.ValidateDate(e.TargetDate, p.StartDate, $"'{s.Name}' 목표일", $"targetDate.{s.Id}");
+                if (s.CompletedDate != e.CompletedDate) Rules.ValidateDate(e.CompletedDate, p.StartDate, $"'{s.Name}' 완료일", $"completedDate.{s.Id}");
+            }
         var stages = Rules.Ordered(p).Select(s => edits.TryGetValue(s.Id, out var e)
             ? new Stage { Id = s.Id, Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = e.TargetDate, CompletedDate = e.CompletedDate }
             : s).ToList();

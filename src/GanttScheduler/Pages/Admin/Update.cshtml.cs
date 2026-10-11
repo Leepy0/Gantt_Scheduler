@@ -18,14 +18,16 @@ public class UpdateModel : PageModel
     private readonly CurrentUser _me;
     private readonly BackupService? _backup;
     private readonly FileLog? _log;
+    private readonly IHostApplicationLifetime? _lifetime;
 
     // 백업·로그는 선택 인자다 (업데이트 시험이 페이지를 직접 만들 때 없어도 되게)
-    public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null)
+    public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null, IHostApplicationLifetime? lifetime = null)
     {
         _updates = updates;
         _me = me;
         _backup = backup;
         _log = log;
+        _lifetime = lifetime;
     }
 
     public bool IsAdmin => _me.IsAdmin;
@@ -52,11 +54,13 @@ public class UpdateModel : PageModel
 
     public Task<IActionResult> OnPostDismissFailureAsync() => Run(() => _updates.DismissFailure());
 
-    // 지금 백업 — 끝날 때까지 기다린다(보통 몇 초~몇 분). 실패하면 이유를 돌려주고 목록에도 실패 기록이 남는다
+    // 지금 백업 — 끝날 때까지 기다린다(보통 몇 초~몇 분). 실패하면 이유를 돌려주고 목록에도 실패 기록이 남는다.
+    // 요청 취소 토큰(RequestAborted)에 묶지 않는다: 기다리다 다른 화면으로 가거나 탭을 닫아도 백업은 서버에서 끝까지 돈다
+    // (다시 열면 화면이 '백업 중'을 보고 끝날 때까지 상태를 묻는다). 서버가 내려갈 때만 멈추고, 멈춘 것도 목록에 남는다
     public Task<IActionResult> OnPostBackupAsync() => Run(async () =>
     {
         if (_backup == null) throw new UpdateException("백업을 쓸 수 없는 서버입니다.", "서버를 다시 시작해 주세요.");
-        var entry = await _backup.RunAsync(BackupKinds.Manual, _me.Name, HttpContext.RequestAborted);
+        var entry = await _backup.RunAsync(BackupKinds.Manual, _me.Name, _lifetime?.ApplicationStopping ?? CancellationToken.None);
         if (!entry.Ok)
             throw new UpdateException("백업하지 못했습니다: " + entry.Error,
                 "백업 경로(Backup:Path, Backup:FilesPath)와 쓰기 권한·디스크 여유를 확인하세요. 아래 목록에 실패 기록이 남습니다.");

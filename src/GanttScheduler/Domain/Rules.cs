@@ -131,7 +131,10 @@ public static class Rules
     {
         var inspection = ordered.LastOrDefault(s => s.Kind == StageKind.Inspection);
         var baseDate = inspection?.CompletedDate ?? inspection?.TargetDate;
-        return baseDate?.AddDays(oceanLeadDays);
+        if (baseDate == null) return null;
+        // 아직 검증하지 않은 날짜(초안·미리보기의 9999-12-31 같은 오타)로도 부르므로 DateOnly 범위를 넘으면 추천하지 않는다
+        var day = (long)baseDate.Value.DayNumber + oceanLeadDays;
+        return day < DateOnly.MinValue.DayNumber || day > DateOnly.MaxValue.DayNumber ? null : DateOnly.FromDayNumber((int)day);
     }
 
     // ── 기준선 ───────────────────────────────────────────────────────────

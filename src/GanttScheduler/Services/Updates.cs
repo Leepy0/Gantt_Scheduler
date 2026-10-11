@@ -100,6 +100,7 @@ public class UpdateState
     public StartFailure? StartFailure { get; set; }   // 적용했지만 시작되지 않은 버전 (교체 도우미가 기록)
     public DateTime? LastCheckOkAt { get; set; }      // 마지막으로 확인에 성공한 시각 — 확인이 계속 실패하는지 알리기 위해
     public DateTime? CheckFailedSince { get; set; }   // 확인이 실패하기 시작한 시각 (성공하면 비운다)
+    public DateTime? FailureDismissedAt { get; set; } // 시작 실패 안내를 닫은 시각 — 그 전의 실패 이력은 관리자 칩으로 다시 알리지 않는다
 }
 
 // ── 새 버전을 어디서 찾을지 (Update:Source) ──────────────────────────────

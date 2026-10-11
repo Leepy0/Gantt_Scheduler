@@ -15,6 +15,7 @@
     var locationInput = document.getElementById('location-id');
 
     var rows = [];          // 서버가 준 초안 줄 (StageDraftRow)
+    var rowsCategory = 0;   // rows 가 어느 유형의 단계인지 (유형을 바꾼 뒤 실패하면 지난 유형의 표를 남기지 않는다)
     var lead = null;        // 고른 법인의 해상 운송 소요일 (법인 전이면 null)
     var kept = {};          // 템플릿 id → 사람이 정한 날짜('' = 비움)
     var seq = 0;
@@ -72,11 +73,13 @@
                   rows.map(rowHtml).join('') + '</div>'
                 : '<p class="hint">이 유형에는 기본 단계가 없습니다.</p>';
         } else {
+            clearError();
             rows.forEach(function (r) {
                 var row = host.querySelector('.sched-row[data-template="' + r.templateId + '"]');
                 var input = row.querySelector('input[data-target]');
                 if (input !== document.activeElement && input.value !== (r.targetDate || '')) input.value = r.targetDate || '';
                 row.classList.toggle('changed', r.kept);
+                row.querySelector('[data-field]').classList.remove('invalid');   // 초안을 받았으면 고친 날짜가 범위 안이다
                 row.querySelector('[data-gap]').innerHTML = gapHtml(r.gapWorkDays);
                 row.querySelector('[data-notes]').innerHTML = notesHtml(r);
             });
@@ -88,9 +91,19 @@
         }
     }
 
-    function showError(message) {
-        host.innerHTML = '<p class="form-warn">' + icon('alert') + '<span>' + esc(message) + '</span></p>';
-        rows = [];
+    // 초안을 받지 못하면(착수일·고친 목표일이 범위 밖 등) 지난 표는 그대로 두고 위에 이유만 보인다.
+    // 표를 지우면 잘못 넣은 날짜를 고칠 칸도, 등록할 때 보낼 고친 날짜도 함께 사라진다
+    function showError(message, field, cat) {
+        if (cat !== rowsCategory) { rows = []; host.innerHTML = ''; }
+        clearError();
+        host.insertAdjacentHTML('afterbegin', '<p class="form-warn" data-draft-error>' + icon('alert') + '<span>' + esc(message) + '</span></p>');
+        var f = field ? host.querySelector('[data-field="' + field + '"]') : null;
+        if (f) f.classList.add('invalid');
+    }
+
+    function clearError() {
+        var el = host.querySelector('[data-draft-error]');
+        if (el) el.remove();
     }
 
     // 초안을 다시 받는다 (빠르게 여러 번 바뀌면 마지막 응답만 쓴다)
@@ -98,7 +111,7 @@
         clearTimeout(timer);
         timer = setTimeout(function () {
             var cat = categoryId();
-            if (!cat) { rows = []; host.innerHTML = '<p class="hint">유형을 고르면 단계 목표일 초안을 보여 줍니다.</p>'; return; }
+            if (!cat) { rows = []; rowsCategory = 0; host.innerHTML = '<p class="hint">유형을 고르면 단계 목표일 초안을 보여 줍니다.</p>'; return; }
             var q = '&categoryId=' + cat + '&start=' + encodeURIComponent(startInput.value || '') +
                 (+locationInput.value ? '&locationId=' + locationInput.value : '');
             Object.keys(kept).forEach(function (id) { q += '&keep=' + encodeURIComponent(id + ':' + kept[id]); });
@@ -106,10 +119,11 @@
             App.get(App.url('/Projects/Edit?handler=Draft' + q)).then(function (r) {
                 if (my !== seq) return;
                 rows = r.draft.rows;
+                rowsCategory = cat;
                 lead = r.draft.oceanLeadDays;
                 render();
             }, function (err) {
-                if (my === seq) showError(err.message);
+                if (my === seq) showError(err.message, err.field, cat);
             });
         }, delay || 0);
     }
@@ -147,15 +161,21 @@
     // 제출: 표의 값을 서버가 받는 이름(Form.StageTargets[i].*)으로 붙인다. 빈 칸은 목표일 미정
     form.addEventListener('submit', function () {
         fields.innerHTML = '';
-        var i = 0;
+        var i = 0, sent = {};
+        function add(id, value, isKept) {
+            fields.insertAdjacentHTML('beforeend',
+                '<input type="hidden" name="Form.StageTargets[' + i + '].TemplateId" value="' + esc(id) + '" />' +
+                '<input type="hidden" name="Form.StageTargets[' + i + '].TargetDate" value="' + esc(value) + '" />' +
+                '<input type="hidden" name="Form.StageTargets[' + i + '].Kept" value="' + (isKept ? 'true' : 'false') + '" />');
+            sent[id] = true;
+            i++;
+        }
         host.querySelectorAll('input[data-target]').forEach(function (input) {
             var id = input.dataset.target;
-            var html = '<input type="hidden" name="Form.StageTargets[' + i + '].TemplateId" value="' + esc(id) + '" />' +
-                '<input type="hidden" name="Form.StageTargets[' + i + '].TargetDate" value="' + esc(input.value) + '" />' +
-                '<input type="hidden" name="Form.StageTargets[' + i + '].Kept" value="' + (Object.prototype.hasOwnProperty.call(kept, id) ? 'true' : 'false') + '" />';
-            fields.insertAdjacentHTML('beforeend', html);
-            i++;
+            add(id, input.value, Object.prototype.hasOwnProperty.call(kept, id));
         });
+        // 초안 표가 없을 때(오류로 다시 그린 화면에서 초안을 받지 못함)도 사람이 고친 날짜는 보낸다 — 다음 화면이 되살린다
+        Object.keys(kept).forEach(function (id) { if (!sent[id]) add(id, kept[id], true); });
     });
 
     load();

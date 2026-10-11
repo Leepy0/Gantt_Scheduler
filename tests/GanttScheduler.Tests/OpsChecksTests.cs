@@ -36,13 +36,13 @@ public sealed class OpsChecksTests : IDisposable
 
     private sealed record Kit(OpsChecks Ops, BackupService Backups, UpdateService Updates, FileLog Log, OpsAlerts Alerts, AppDb Db);
 
-    private Kit Make(Dictionary<string, string?>? extra = null, string environment = "Production", AppBuild? build = null)
+    private Kit Make(Dictionary<string, string?>? extra = null, string environment = "Production", AppBuild? build = null, string source = "")
     {
         var cfg = BackupHelper.Config(_db, _root, extra);
         var env = new TestHostEnv { ContentRootPath = _root, EnvironmentName = environment };
         build ??= BackupHelper.Build;
         var paths = new UpdatePaths { AppDir = Path.Combine(_root, "app"), DataDir = Path.Combine(_root, "App_Data", "updates") };
-        var updates = new UpdateService(build, paths, new UpdateSource("", build, null, null), new ActivityTracker(), new Lifetime(),
+        var updates = new UpdateService(build, paths, new UpdateSource(source, build, null, null), new ActivityTracker(), new Lifetime(),
             NullLogger<UpdateService>.Instance, cfg);
         var backups = BackupHelper.Create(_db, _root, extra);
         var log = new FileLog(Path.Combine(_root, "App_Data", "logs"), 30);
@@ -50,7 +50,7 @@ public sealed class OpsChecksTests : IDisposable
         var db = _db.Open();
         _owned.Add(db);
         var ops = new OpsChecks(db, cfg, env, _db.Clock, updates, backups, log, paths, NullLogger<OpsChecks>.Instance);
-        return new Kit(ops, backups, updates, log, new OpsAlerts(updates, backups, _db.Clock, env), db);
+        return new Kit(ops, backups, updates, log, new OpsAlerts(updates, backups, _db.Clock, env, cfg), db);
     }
 
     [Fact]
@@ -74,8 +74,14 @@ public sealed class OpsChecksTests : IDisposable
     {
         if (TestDb.UseSqlServer)
         {
-            // SQL Server: 시험 DB 는 마이그레이션으로 만들었으므로 적용 안 된 것이 없다
-            Assert.Equal(CheckLevel.Ok, (await Make().Ops.SchemaAsync(CancellationToken.None)).Level);
+            // SQL Server: 시험 DB 는 마이그레이션으로 만들었으므로 적용 안 된 것이 없다. 빌드 정보의 구조값이
+            // 마지막 마이그레이션과 같으면 정상, 다르면(시험 기본값 'S1') 배포 패키지가 어긋났다는 경고
+            var stale = Make();
+            var last = stale.Db.Database.GetMigrations().Last();
+            Assert.Equal(CheckLevel.Ok, (await Make(build: BackupHelper.Build with { Schema = last }).Ops.SchemaAsync(CancellationToken.None)).Level);
+            var warn = await stale.Ops.SchemaAsync(CancellationToken.None);
+            Assert.Equal(CheckLevel.Warn, warn.Level);
+            Assert.Contains(last, warn.Message);
             return;
         }
         var k = Make();
@@ -109,6 +115,29 @@ public sealed class OpsChecksTests : IDisposable
     [InlineData(300L * 1024 * 1024, 1000L * 1024 * 1024 * 1024, "fail")]         // 500MB 미만
     public void 디스크는_작으면_비율로_크면_남은_양으로_본다(long free, long total, string level) =>
         Assert.Equal(level, OpsChecks.DiskLevel(free, total));
+
+    [Fact]
+    public void 드라이브_여유는_데이터_첨부_백업_경로를_보고_같은_드라이브는_한_번만_센다()
+    {
+        // 가장 나쁜 드라이브가 판정을 정한다 (데이터 드라이브는 넉넉해도 백업 드라이브가 가득 차면 실패)
+        const long gb = 1024L * 1024 * 1024;
+        Assert.Equal(CheckLevel.Fail, OpsChecks.WorstDiskLevel(new[] { ("데이터", "C:\\", 500 * gb, 1000 * gb), ("백업", "D:\\", gb / 10, 1000 * gb) }));
+        Assert.Equal(CheckLevel.Ok, OpsChecks.WorstDiskLevel(Array.Empty<(string, string, long, long)>()));
+
+        var cfg = BackupHelper.Config(_db, _root);
+        var same = OpsChecks.Drives(cfg, _root, Path.Combine(_root, "App_Data", "backups"));
+        Assert.Equal("데이터", Assert.Single(same).Label);
+
+        // 백업 묶음을 다른 드라이브(마운트)에 두면 그 드라이브도 본다 — 서버 상태와 관리자 칩이 같은 목록을 쓴다
+        var other = DriveInfo.GetDrives().Select(d =>
+        {
+            try { return d.IsReady && d.TotalSize > 0 ? d.RootDirectory.FullName : null; }
+            catch (Exception) { return null; }
+        }).FirstOrDefault(r => r != null && r != same[0].Root && OpsChecks.DriveOf(r)?.Root == r);
+        if (other == null) return;   // 드라이브가 하나뿐인 시험 환경
+        var two = OpsChecks.Drives(cfg, _root, other);
+        Assert.Equal(new[] { "데이터", "백업" }, two.Select(d => d.Label));
+    }
 
     [Fact]
     public void 쓸_수_없는_폴더가_있으면_실패와_권한_부여_방법을_알린다()
@@ -300,6 +329,8 @@ public sealed class OpsChecksTests : IDisposable
         {
             History = { new UpdateLog(now.AddDays(-1), "apply", "0.3.0", "0.3.1", "평영", false, "파일이 잠겨 있습니다.") },
             CheckFailedSince = now.AddDays(-4),
+            CheckedAt = now.AddHours(-2),
+            CheckError = "연결 시간 초과",
         }));
         var backups = Path.Combine(_root, "App_Data", "backups");
         Directory.CreateDirectory(backups);
@@ -307,7 +338,7 @@ public sealed class OpsChecksTests : IDisposable
         BackupEntry Entry(bool ok, DateTime at) => new("gantt-x", at, BackupKinds.Nightly, "자동", ok, ok ? null : "쓰기 권한 없음", "Sqlite", null, true, null, null, null, 1, null);
 
         Backups(Entry(false, now.AddHours(-1)), Entry(true, now.AddDays(-1)));
-        var k = Make();
+        var k = Make(source: Path.Combine(_root, "releases"));
         var keys = (await k.Alerts.ForAdminAsync(k.Db)).Select(a => a.Key).ToList();
         Assert.Equal("update-failed", keys[0]);
         Assert.Contains("check-failing", keys);
@@ -319,6 +350,77 @@ public sealed class OpsChecksTests : IDisposable
         Assert.Contains("backup-old", (await Make(new() { ["Backup:Nightly"] = "true" }).Alerts.ForAdminAsync(k.Db)).Select(a => a.Key));
         Backups(Entry(true, now.AddHours(-3)));
         Assert.DoesNotContain("backup-old", (await Make(new() { ["Backup:Nightly"] = "true" }).Alerts.ForAdminAsync(k.Db)).Select(a => a.Key));
+    }
+
+    [Fact]
+    public async Task 업데이트_확인_실패_칩은_자동_확인이_돌며_계속_실패할_때만_뜬다()
+    {
+        var now = _db.Clock.UtcNow;
+        var data = Path.Combine(_root, "App_Data", "updates");
+        Directory.CreateDirectory(data);
+        var source = Path.Combine(_root, "releases");
+        async Task<bool> Chip(UpdateState state, string src)
+        {
+            File.WriteAllText(Path.Combine(data, "state.json"), System.Text.Json.JsonSerializer.Serialize(state));
+            var k = Make(source: src);
+            return (await k.Alerts.ForAdminAsync(k.Db)).Any(a => a.Key == "check-failing");
+        }
+        UpdateState Failing() => new() { CheckFailedSince = now.AddDays(-4), CheckedAt = now.AddHours(-1), CheckError = "연결 시간 초과" };
+
+        Assert.True(await Chip(Failing(), source));
+        // 사흘이 안 됐으면 아직 알리지 않는다
+        var fresh = Failing();
+        fresh.CheckFailedSince = now.AddDays(-1);
+        Assert.False(await Chip(fresh, source));
+        // 자동 확인을 끈 서버(인터넷이 없는 사내 서버): 예전에 한 번 '지금 확인'이 실패한 기록이 영영 칩으로 남지 않는다
+        var off = Failing();
+        off.AutoCheck = false;
+        Assert.False(await Chip(off, source));
+        // 받아 오는 곳이 비어 확인 자체를 하지 않는 서버
+        Assert.False(await Chip(Failing(), ""));
+        // 마지막 확인이 오래전(주기 6시간의 두 배를 넘음) — 확인이 멈춘 뒤의 옛 실패
+        var stale = Failing();
+        stale.CheckedAt = now.AddDays(-2);
+        Assert.False(await Chip(stale, source));
+        // 마지막 확인은 성공 — 실패 기록이 남아 있어도 지금은 문제가 아니다
+        var ok = Failing();
+        ok.CheckError = null;
+        Assert.False(await Chip(ok, source));
+
+        // 자동 확인을 끄면 '계속 실패'를 새로 센다
+        File.WriteAllText(Path.Combine(data, "state.json"), System.Text.Json.JsonSerializer.Serialize(Failing()));
+        var svc = Make(source: source).Updates;
+        svc.SaveSettings(new UpdateSettings(true, false, 2, 5, 30));    // 다른 설정만 바꾸면 그대로
+        Assert.NotNull(svc.CheckFailedSince);
+        svc.SaveSettings(new UpdateSettings(false, false, 2, 5, 30));
+        Assert.Null(svc.CheckFailedSince);
+    }
+
+    [Fact]
+    public async Task 시작_실패_안내를_닫으면_같은_실패를_다른_칩으로_다시_알리지_않는다()
+    {
+        var data = Path.Combine(_root, "App_Data", "updates");
+        Directory.CreateDirectory(data);
+        // 이전 버전이 다시 떠서 남긴 실패 이력 + 교체 도우미가 남긴 시작 실패 (시각은 실제 시계 — 닫은 시각과 비교한다)
+        var at = DateTime.UtcNow.AddHours(-1);
+        File.WriteAllText(Path.Combine(data, "state.json"), System.Text.Json.JsonSerializer.Serialize(new UpdateState
+        {
+            History = { new UpdateLog(at, "apply", "0.3.0", "0.3.1", "자동", false, "새 버전이 시작되지 않아 되돌렸습니다.") },
+            StartFailure = new StartFailure("0.3.1", "0.3.0", "새 버전이 시작되지 않아 되돌렸습니다.", null, true, at),
+        }));
+        var k = Make();
+        Assert.Equal("v0.3.1 시작 실패", Assert.Single(await k.Alerts.ForAdminAsync(k.Db), a => a.Key == "update-failed").Text);
+
+        k.Updates.DismissFailure();
+        Assert.DoesNotContain(await k.Alerts.ForAdminAsync(k.Db), a => a.Key == "update-failed");
+        // 다시 띄워도(상태 파일에서 읽어도) 그대로
+        Assert.DoesNotContain(await Make().Alerts.ForAdminAsync(k.Db), a => a.Key == "update-failed");
+
+        // 닫은 뒤에 생긴 새 실패는 알린다
+        var state = System.Text.Json.JsonSerializer.Deserialize<UpdateState>(File.ReadAllText(Path.Combine(data, "state.json")))!;
+        state.History.Add(new UpdateLog(DateTime.UtcNow.AddMinutes(1), "apply", "0.3.0", "0.3.2", "평영", false, "파일이 잠겨 있습니다."));
+        File.WriteAllText(Path.Combine(data, "state.json"), System.Text.Json.JsonSerializer.Serialize(state));
+        Assert.Equal("업데이트 실패", Assert.Single(await Make().Alerts.ForAdminAsync(k.Db), a => a.Key == "update-failed").Text);
     }
 
     [Fact]

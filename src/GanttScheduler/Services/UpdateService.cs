@@ -97,6 +97,7 @@ public class UpdateService
         _sqlite = !string.Equals(cfg["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
         // 교체 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 도우미가 이전 버전으로 되돌린다 (0 이면 확인하지 않는다)
         _verifySeconds = Math.Clamp(cfg.GetValue("Update:VerifySeconds", 120), 0, 1800);
+        CheckEvery = TimeSpan.FromHours(Math.Clamp(cfg.GetValue("Update:CheckHours", 6.0), 0.01, 168));
         _state = Load();
         // 요청을 받기 시작했다는 표시를 남긴다. 교체 도우미가 이것으로 새 버전이 제대로 떴는지 안다
         lifetime.ApplicationStarted.Register(MarkStarted);
@@ -107,11 +108,34 @@ public class UpdateService
     public bool SourceConfigured => _source.Configured;
     // 새 버전 확인이 실패하기 시작한 시각 (계속 실패하면 관리자 칩으로 알린다 — OpsAlerts)
     public DateTime? CheckFailedSince { get { lock (_gate) return _state.CheckFailedSince; } }
+    // 자동 확인 주기 (Update:CheckHours) — 주기 작업(UpdateWorker)과 '계속 실패' 판단이 같은 값을 쓴다
+    public TimeSpan CheckEvery { get; }
 
-    // 관리자 칩(OpsAlerts)용: 시작되지 않은 버전과 마지막 적용 결과. Status() 는 폴더 쓰기 시험을 하므로 화면마다 부르지 않는다
+    // 관리자 칩(OpsAlerts)용: 자동 확인이 실제로 돌고 있는데 그 확인이 after 넘게 계속 실패하는가.
+    // 자동 확인을 껐거나(인터넷에 못 나가는 사내 서버) 스스로 확인하지 않는 빌드면 지난 실패 한 번이 칩으로 영영 남지 않게 하고,
+    // 마지막 확인도 최근(주기의 두 배 + 1시간 안)이어야 한다 — 확인이 멈춘 뒤의 옛 실패를 '계속 실패'로 보지 않는다
+    public bool CheckFailing(DateTime utcNow, TimeSpan after)
+    {
+        if (!_source.Configured || !_build.SelfUpdating) return false;
+        lock (_gate)
+        {
+            var s = _state;
+            return s.AutoCheck && s.CheckError != null
+                && s.CheckedAt is { } at && utcNow - at <= CheckEvery * 2 + TimeSpan.FromHours(1)
+                && s.CheckFailedSince is { } since && utcNow - since > after;
+        }
+    }
+
+    // 관리자 칩(OpsAlerts)용: 시작되지 않은 버전과 마지막 적용 결과. Status() 는 폴더 쓰기 시험을 하므로 화면마다 부르지 않는다.
+    // 시작 실패 안내를 닫았으면 그때까지의 실패 이력(되돌린 뒤 남는 실패 기록)은 빼고 준다 — 닫은 문제를 다른 칩으로 다시 알리지 않게
     public (StartFailure? StartFailure, UpdateLog? Last) Problems()
     {
-        lock (_gate) return (_state.StartFailure, _state.History.OrderByDescending(h => h.At).FirstOrDefault());
+        lock (_gate)
+        {
+            var last = _state.History.OrderByDescending(h => h.At).FirstOrDefault();
+            if (last is { Ok: false } && _state.FailureDismissedAt is { } dismissed && last.At <= dismissed) last = null;
+            return (_state.StartFailure, last);
+        }
     }
 
     // IIS 아래에서 돌고 있는지 (ASP.NET Core 모듈이 넣어 주는 환경 변수로 판단)
@@ -415,6 +439,8 @@ public class UpdateService
             throw new RuleException("대기 시간은 5~720분 사이로 입력해 주세요.", "idleMinutes");
         Change(s =>
         {
+            // 자동 확인을 켜고 끌 때 '계속 실패'를 새로 센다 — 끈 동안의 수동 확인 실패가 다시 켠 직후 칩으로 뜨지 않게
+            if (s.AutoCheck != input.AutoCheck) s.CheckFailedSince = null;
             s.AutoCheck = input.AutoCheck;
             s.AutoApply = input.AutoApply;
             s.WindowFrom = input.WindowFrom;
@@ -816,7 +842,11 @@ public class UpdateService
     }
 
     // 시작되지 않은 버전 안내를 닫는다. 그 버전을 자동으로 다시 적용하지 않는 것(SkipAuto)은 그대로 둔다
-    public void DismissFailure() => Change(s => s.StartFailure = null);
+    public void DismissFailure() => Change(s =>
+    {
+        s.StartFailure = null;
+        s.FailureDismissedAt = DateTime.UtcNow;
+    });
 
     // 요청을 받기 시작했을 때(ApplicationStarted) 남기는 표시. 쓰다가 끊겨도 깨진 파일을 읽지 않게 임시 파일에 쓰고 바꿔치기한다
     internal void MarkStarted()
@@ -943,11 +973,11 @@ public class UpdateWorker : BackgroundService
     private readonly ILogger<UpdateWorker> _log;
     private readonly TimeSpan _every;
 
-    public UpdateWorker(UpdateService updates, IConfiguration cfg, ILogger<UpdateWorker> log)
+    public UpdateWorker(UpdateService updates, ILogger<UpdateWorker> log)
     {
         _updates = updates;
         _log = log;
-        _every = TimeSpan.FromHours(Math.Clamp(cfg.GetValue("Update:CheckHours", 6.0), 0.01, 168));
+        _every = updates.CheckEvery;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)

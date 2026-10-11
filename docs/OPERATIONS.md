@@ -19,11 +19,12 @@
 
 | 파일 | 내용 | 어디에 |
 |---|---|---|
-| `gantt-<한국 시각>.bak` (SQL Server) | `BACKUP DATABASE … WITH COPY_ONLY, CHECKSUM, INIT` | `Backup:Path` — **SQL Server 컴퓨터 기준** 경로. 비우면 SQL Server 의 기본 백업 폴더 |
+| `gantt-<DB 이름>-<한국 시각>.bak` (SQL Server) | `BACKUP DATABASE … WITH COPY_ONLY, CHECKSUM, INIT` | `Backup:Path` — **SQL Server 컴퓨터 기준** 경로. 비우면 SQL Server 의 기본 백업 폴더 |
 | `gantt-<한국 시각>.db` (SQLite) | `VACUUM INTO` 로 만든 일관된 사본 | `Backup:Path`, 비우면 `Backup:FilesPath` |
-| `gantt-<한국 시각>.files.zip` | `uploads/`(첨부), `keys/`(암호화 키), `appsettings.Production.json`, `backup.json`(이름·시각·버전·DB 구조·DB 백업 파일) | `Backup:FilesPath` (기본 `App_Data/backups`, 앱 서버) |
+| `gantt-<한국 시각>.files.zip` (SQL Server 는 `gantt-<DB 이름>-<한국 시각>.files.zip`) | `uploads/`(첨부), `keys/`(암호화 키), `appsettings.Production.json`, `backup.json`(이름·시각·버전·DB 구조·DB 백업 파일) | `Backup:FilesPath` (기본 `App_Data/backups`, 앱 서버) |
 
 - **언제**: '지금 백업' 단추, DB 구조가 바뀌는 업데이트를 적용하기 직전(`Backup:BeforeSchemaUpdate`, 기본 켬 — 백업에 실패하면 적용하지 않는다), 야간 자동 백업(`Backup:Nightly`, 기본 꺼짐, `Backup:NightlyAt` 한국 시간 — 그 시각에 서버가 꺼져 있었으면 4시간 안에 켜졌을 때만 따라잡고, 실패한 회차는 다시 하지 않는다).
+- SQL Server 백업 이름에 **DB 이름**을 넣는다. 한 SQL Server 를 운영·시험 서버가 각자 DB 로 함께 쓰면 기본 백업 폴더가 같아, 이름에 DB 가 없으면 같은 초의 백업이 서로의 `.bak` 을 덮어쓴다(`INIT`).
 - **COPY_ONLY** 라 DBA 의 정기 백업(전체·차등·로그 체인)을 깨지 않는다. 압축 옵션은 쓰지 않는다(Express 판은 지원하지 않는다).
 - **권한**: DB 계정에 백업 권한(db_owner 또는 db_backupoperator)이 있어야 하고, 백업 파일은 SQL Server 서비스 계정이 쓴다 — 그 계정에 `Backup:Path` 폴더의 쓰기 권한을 준다. 파일 묶음은 서버 계정(`NT SERVICE\GanttScheduler`)이 쓴다.
 - **원격 SQL Server**: `Backup:Path` 는 그 컴퓨터의 경로다. 이 서버에서 파일 크기를 확인하고 오래된 백업을 지우려면 두 컴퓨터가 함께 쓰는 **UNC 경로**(`\\서버\공유\gantt`)로 지정한다. UNC 가 아니면 백업은 되지만 크기 확인·정리는 하지 않는다(그쪽에서 정리한다).
@@ -46,7 +47,7 @@ sc stop GanttScheduler
 SSMS: 데이터베이스 › 우클릭 › 작업 › 복원 › 데이터베이스 › 장치에서 `.bak` 선택 › 옵션 "기존 데이터베이스 덮어쓰기(WITH REPLACE)". 또는 sqlcmd:
 
 ```
-sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; RESTORE DATABASE [GanttScheduler] FROM DISK = N'D:\Backup\gantt-20261011-023000.bak' WITH REPLACE, CHECKSUM; ALTER DATABASE [GanttScheduler] SET MULTI_USER;"
+sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; RESTORE DATABASE [GanttScheduler] FROM DISK = N'D:\Backup\gantt-GanttScheduler-20261011-023000.bak' WITH REPLACE, CHECKSUM; ALTER DATABASE [GanttScheduler] SET MULTI_USER;"
 ```
 
 - 다른 서버로 옮기면서 파일 위치가 다르면 `RESTORE FILELISTONLY FROM DISK = N'…'` 로 논리 이름을 보고 `WITH MOVE N'<논리 이름>' TO N'<새 경로>.mdf', MOVE N'<논리 이름>_log' TO N'<새 경로>.ldf'` 를 붙인다.
@@ -54,7 +55,10 @@ sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH R
 
 ### 3.3 DB 복원 — SQLite
 
-서비스를 멈춘 상태에서 `App_Data/gantt.db` 와 옆의 `gantt.db-wal`·`gantt.db-shm` 을 다른 곳으로 옮기고, 백업 파일을 `App_Data/gantt.db` 로 복사한다. `gantt.db.schema` 는 그대로 둔다(구조가 같은 버전으로 복원하는 경우).
+서비스를 멈춘 상태에서 `App_Data/gantt.db` 와 옆의 `gantt.db-wal`·`gantt.db-shm` 을 다른 곳으로 옮기고, 백업 파일을 `App_Data/gantt.db` 로 복사한다.
+
+- **지금 프로그램과 구조가 같은 백업**을 복원할 때: `gantt.db.schema`(구조 표시 파일)는 그대로 둔다.
+- **구조가 다른(이전) 버전으로 되돌릴 때**(3.5): `gantt.db.schema` 를 **지운다**. 표시 파일에는 새 버전의 구조가 적혀 있어, 그대로 두면 옛 버전이 시작하면서 구조가 다르다고 보고 복원한 `gantt.db` 를 `gantt.db.<시각>.bak` 으로 옮긴 뒤 빈 DB 를 새로 만든다(복원이 무효가 된다 — 데이터는 그 `.bak` 에 남아 있다). 표시 파일이 없으면 시작할 때 그 버전의 구조로 다시 써진다.
 
 ### 3.4 파일 묶음 복원
 
@@ -68,7 +72,7 @@ sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH R
 ### 3.5 구조가 바뀐 업데이트를 되돌리는 경우
 
 1. 업데이트 화면의 적용 이력이나 진단 정보에서 **적용 전 백업** 이름을 확인한다(되돌리기 단추가 막혀 있으면 안내에 "복원할 백업" 이 보인다).
-2. 서비스 중지 → 3.2/3.3 으로 그 백업의 DB 를 복원 → 3.4 로 첨부를 복원.
+2. 서비스 중지 → 3.2/3.3 으로 그 백업의 DB 를 복원 → 3.4 로 첨부를 복원. SQLite 면 `App_Data/gantt.db.schema` 를 지운다(3.3 — 남겨 두면 옛 버전이 복원한 DB 를 옆으로 치우고 빈 DB 로 시작한다).
 3. [배포 레포의 Releases](https://github.com/Leepy0/Gantt_Scheduler_Release/releases) 에서 **이전 버전 zip** 을 받아 프로그램 폴더에 덮어쓴다(`App_Data`, `appsettings.Production.json` 은 그대로 둔다).
 4. 서비스 시작. 새 버전은 다시 자동으로 적용되지 않게 업데이트 화면에서 자동 적용을 끄거나, 고친 다음 버전을 기다린다.
 

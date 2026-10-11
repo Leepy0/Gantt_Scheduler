@@ -173,6 +173,46 @@ public sealed class BackupTests : IDisposable
     }
 
     [Fact]
+    public async Task 취소된_백업도_목록과_로그에_실패로_남는다()
+    {
+        // 서버가 내려가는 등으로 멈춘 백업이 조용히 사라지면, 백업이 된 줄 알고 위험한 작업(과제 영구 삭제 등)을 이어 간다
+        var svc = BackupHelper.Create(_db, _root);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var e = await svc.RunAsync(BackupKinds.Manual, "테스터", cts.Token);
+
+        Assert.False(e.Ok);
+        Assert.Contains("멈췄습니다", e.Error);
+        Assert.Null(e.FilesFile);
+        Assert.False(Assert.Single(svc.List()).Ok);
+        Assert.False(svc.Running);   // 다음 백업을 막지 않는다
+        Assert.True((await svc.RunAsync(BackupKinds.Manual, "테스터", CancellationToken.None)).Ok);
+    }
+
+    [Fact]
+    public async Task SQL_Server_백업_이름에는_DB_이름이_들어가_같은_서버의_다른_DB_와_겹치지_않는다()
+    {
+        // 한 SQL Server 를 운영·시험 앱이 각자 DB 로 쓰면 기본 백업 폴더가 같다 — 같은 초에 백업해도 서로의 .bak 을 덮어쓰지 않게
+        Task<BackupEntry> Run(string database)
+        {
+            var svc = BackupHelper.Create(null, _root, new()
+            {
+                ["Database:Provider"] = "SqlServer",
+                ["ConnectionStrings:SqlServer"] = $"Server=db1;Database={database};Integrated Security=True",
+                ["Backup:FilesPath"] = Path.Combine(_root, "files-" + Guid.NewGuid().ToString("N")),
+            });
+            return svc.RunAsync(BackupKinds.Manual, "테스터", CancellationToken.None);   // DB 가 없어 실패 기록만 남는다
+        }
+        var ops = await Run("Gantt");
+        var test = await Run("Gantt Test/2");
+        Assert.Equal("gantt-Gantt-20261009-100000", ops.Name);
+        Assert.Equal("gantt-Gantt_Test_2-20261009-100000", test.Name);   // 파일 이름에 쓸 수 없는 글자는 _ 로
+        Assert.Equal("Gantt____", BackupService.SafeName("Gantt.:\\/ "));
+        Assert.Equal(60, BackupService.SafeName(new string('a', 100)).Length);
+    }
+
+    [Fact]
     public async Task SQL_Server_는_COPY_ONLY_로_백업하고_경로가_없으면_서버의_기본_폴더에_둔다()
     {
         if (!TestDb.UseSqlServer) return;   // CI 의 SQL Server 단계에서만 돈다
@@ -185,6 +225,7 @@ public sealed class BackupTests : IDisposable
         Assert.True(e.Ok, e.Error);
         Assert.Equal("SqlServer", e.Provider);
         Assert.Equal(e.Name + ".bak", e.DbFile);   // 파일 이름만 넘겨 SQL Server 의 기본 백업 폴더에 쓴다
+        Assert.StartsWith("gantt-gs_test_", e.Name);   // 시험 DB 마다 이름이 달라 병렬 시험이 같은 .bak 에 쓰지 않는다
         Assert.False(e.DbReachable);
         Assert.Null(e.DbSize);                     // 이 서버에서 볼 수 없는 파일은 크기를 모른다
         Assert.True(File.Exists(e.FilesFile));
