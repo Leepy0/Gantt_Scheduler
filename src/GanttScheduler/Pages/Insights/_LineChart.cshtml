@@ -20,7 +20,7 @@
         }
         @foreach (var (x, label) in Model.XTicks())
         {
-            @Html.Raw($"<text class=\"tick\" x=\"{LineChart.Num(x)}\" y=\"{LineChart.Num(LineChart.H - 8)}\" text-anchor=\"middle\">{label}</text>")
+            @Html.Raw($"<text class=\"tick\" x=\"{LineChart.Num(x)}\" y=\"{LineChart.Num(LineChart.H - 8)}\" text-anchor=\"{(x < LineChart.Left + 24 ? "start" : x > LineChart.W - LineChart.Right - 24 ? "end" : "middle")}\">{label}</text>")
         }
         @foreach (var s in Model.Series)
         {

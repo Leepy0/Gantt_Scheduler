@@ -35,8 +35,8 @@
 </div>
 <partial name="_AnalyticsFilter" model="form" />
 
-<p class="form-note" data-trend-note><svg class="ic"><use href="#i-clock" /></svg>
-    <div>스냅샷은 하루 한 번 서버가 남긴 그날의 모습이고, 수집을 시작한 @(d.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "날") 이후만 있습니다. 서버가 꺼져 있던 날은 기록이 없어 선을 잇지 않습니다. 지금 상태는 대시보드에서 봅니다.</div></p>
+<div class="form-note" data-trend-note><svg class="ic"><use href="#i-clock" /></svg>
+    <div>스냅샷은 하루 한 번 서버가 남긴 그날의 모습이고, 수집을 시작한 @(d.FirstSnapshot?.ToString("yyyy-MM-dd") ?? "날") 이후만 있습니다. 서버가 꺼져 있던 날은 기록이 없어 선을 잇지 않습니다. 지금 상태는 대시보드에서 봅니다.</div></div>
 
 @if (d.Points.Count == 0)
 {

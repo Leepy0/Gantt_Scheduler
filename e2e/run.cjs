@@ -291,13 +291,13 @@ const worksOf = (P) => P.stages.flatMap((s) => s.works);
         const bar = page.locator('[data-bar-category]').first();
         const total = +(await bar.locator('.bar-num').innerText());
         await bar.click();
-        await page.waitForURL(/state=all&category=\d+/);
+        await page.waitForURL(/state=all&current=true&category=\d+/);
         assert((await page.locator('.ptable-row').count()) === total, '유형 막대 건수와 목록 건수가 다름');
         await page.goto(BASE + '/');
         const corp = page.locator('[data-bar-corp]').first();
         const corpTotal = +(await corp.locator('.bar-num').innerText());
         await corp.click();
-        await page.waitForURL(/state=all&corp=\d+/);
+        await page.waitForURL(/state=all&current=true&corp=\d+/);
         assert((await page.locator('.ptable-row').count()) === corpTotal, '법인 막대 건수와 목록 건수가 다름');
     });
 
