@@ -23,23 +23,41 @@ public class ProjectImporter
         }
         using (wb)
         {
-            return new ImportBook(Sheet(wb, ProjectService.ImportColumns.ProjectSheet), Sheet(wb, ProjectService.ImportColumns.WorkSheet));
+            return new ImportBook(Sheet(wb, ProjectService.ImportColumns.ProjectSheet, ProjectService.MaxImportProjects),
+                Sheet(wb, ProjectService.ImportColumns.WorkSheet, ProjectService.MaxImportWorks));
         }
     }
 
-    private static ImportSheet? Sheet(XLWorkbook wb, string name)
+    // 읽는 열 수 상한 — 양식의 열은 10개 안쪽이라 여유를 두고 자른다.
+    // 먼 칸(XFD1048576 등) 하나만 채운 작은 파일로 수백억 칸을 돌게 만들 수 없게, 줄·열을 읽기 전에 막는다
+    public const int MaxColumns = 40;
+
+    private static ImportSheet? Sheet(XLWorkbook wb, string name, int maxRows)
     {
         var ws = wb.Worksheets.FirstOrDefault(w => w.Name.Trim() == name);
         if (ws == null) return null;
         var used = ws.RangeUsed();
         if (used == null) return new ImportSheet(name, new(), new());
-        var lastCol = used.LastColumn().ColumnNumber();
-        var lastRow = used.LastRow().RowNumber();
+        var lastCol = Math.Min(used.LastColumn().ColumnNumber(), MaxColumns);
         var headers = Enumerable.Range(1, lastCol).Select(c => Text(ws.Cell(1, c))).ToList();
         var rows = new List<ImportRow>();
-        for (var r = 2; r <= lastRow; r++)
-            rows.Add(new ImportRow(r, Enumerable.Range(1, lastCol).Select(c => Text(ws.Cell(r, c))).ToList()));
-        return new ImportSheet(name, headers, rows);
+        var total = 0;
+        // 내용이 있는 줄만 차례로 돈다(빈 줄은 건너뛴다). 상한을 넘으면 칸은 더 읽지 않고 줄 수만 센다 — "나눠서 올려 주세요" 안내에 쓴다
+        foreach (var row in ws.RowsUsed())
+        {
+            var r = row.RowNumber();
+            if (r == 1) continue;
+            if (total >= maxRows)
+            {
+                total++;
+                continue;
+            }
+            var cells = Enumerable.Range(1, lastCol).Select(c => Text(row.Cell(c))).ToList();
+            if (cells.All(string.IsNullOrWhiteSpace)) continue;
+            rows.Add(new ImportRow(r, cells));
+            total++;
+        }
+        return new ImportSheet(name, headers, rows, total);
     }
 
     // 셀 글자: 날짜 셀은 yyyy-MM-dd(셀 서식과 관계없이), 숫자는 그대로, 나머지는 글자

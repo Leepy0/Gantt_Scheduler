@@ -167,7 +167,7 @@
             }
             @if (p.GainText != null)
             {
-                <span class="progress-gain" data-progress-gain>@p.GainText</span>
+                <span class="progress-gain@(p.ProgressGain < 0 ? " down" : "")" data-progress-gain>@p.GainText</span>
             }
             @if (p.RiskChip != null)
             {

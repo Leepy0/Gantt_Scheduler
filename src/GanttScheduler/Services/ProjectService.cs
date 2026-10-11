@@ -779,14 +779,17 @@ public partial class ProjectService
         var reopened = false;
         if (s.CompletedDate == null)
         {
+            // 완료 직전 단계 진행률(OldValue) — 기간 보고의 '진척 +n%p'가 단계 완료로 오른 몫(→ 100)을 센다. 닫는 작업의 진행률 변경은 이 몫에 들어 있다
             p.Activities.Add(NewActivity(ActivityType.StageCompleted, $"[{s.Name}] 완료 ({Fmt(completed)})", stageId: s.Id,
-                newValue: Fmt(completed), batch: batch));
+                oldValue: ProgressText(Rules.StageProgress(s)), newValue: Fmt(completed), batch: batch));
             if (closeWorks) CloseOpenWorks(p, s, completed!.Value, batch);
         }
         else if (completed == null)
         {
             reopened = true;
-            p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate), batch: batch));
+            // 완료를 취소한 뒤의 단계 진행률(NewValue, 100 에서 떨어진 값) — 기간 보고의 진척 증감이 내려간 몫을 센다
+            p.Activities.Add(NewActivity(ActivityType.StageReopened, $"[{s.Name}] 완료 취소", stageId: s.Id, oldValue: Fmt(s.CompletedDate),
+                newValue: ProgressText(Rules.WorksProgress(s)), batch: batch));
         }
         else
             p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 완료일 {Fmt(s.CompletedDate)} → {Fmt(completed)}", stageId: s.Id, batch: batch));
@@ -817,15 +820,13 @@ public partial class ProjectService
             var end = start > done ? start : done;    // 완료일보다 늦게 시작한 작업은 시작일에 닫는다(종료가 시작보다 앞설 수 없다)
             changes.Add($"실적 종료 {Fmt(end)}");
             if (w.Progress != 100) changes.Add($"진행률 {w.Progress}% → 100%");
-            var oldProgress = w.Progress;
             w.ActualStart = start;
             w.ActualEnd = end;
             w.Progress = 100;
             w.Version++;
-            var closed = NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
-                stageId: s.Id, workId: w.Id, batch: batch);
-            SetProgressValues(closed, oldProgress, 100);
-            p.Activities.Add(closed);
+            // 진행률 이전·새 값은 남기지 않는다 — 단계 완료 활동이 단계 진행률이 100 이 된 몫으로 함께 센다(두 번 세지 않게)
+            p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
+                stageId: s.Id, workId: w.Id, batch: batch));
         }
     }
 
@@ -1067,7 +1068,7 @@ public partial class ProjectService
             if (changed.Count > 0)
             {
                 var edited = NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
-                SetProgressValues(edited, oldProgress, progress);
+                SetProgressValues(edited, oldProgress, progress, stage);
                 p.Activities.Add(edited);
                 // 이번에 맡게 된 사람 — 저장 전 담당(이전 담당자)은 작업으로 찾아 알린다
                 InvolveOwners(edited, w.OwnerId, w.CoOwnerId);

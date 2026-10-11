@@ -6,7 +6,8 @@ namespace GanttScheduler.Services;
 // ── Excel 가져오기의 자료 모양 (파일 형식과 무관 — ClosedXML 로 읽는 ProjectImporter 가 만든다) ──
 // 열은 머리글 이름으로 찾는다(순서가 바뀌거나 열을 더 넣어도 된다). Row 는 시트의 행 번호(1부터, 머리글이 1행)
 public record ImportRow(int Row, List<string> Cells);
-public record ImportSheet(string Name, List<string> Headers, List<ImportRow> Rows);
+// TotalRows: 읽은 쪽이 상한을 넘는 줄을 다 읽지 않고 센 값(없으면 Rows 의 빈 줄 아닌 줄 수)
+public record ImportSheet(string Name, List<string> Headers, List<ImportRow> Rows, int? TotalRows = null);
 public record ImportBook(ImportSheet? Projects, ImportSheet? Works);
 
 // 양식의 '목록' 시트(참고용): 유형과 그 단계, 법인과 그 아래 위치 경로, 사용자
@@ -103,7 +104,7 @@ public partial class ProjectService
         var projectRows = new List<ImportProjectRow>();
         var workRows = new List<ImportWorkRow>();
         var built = new List<(Project P, List<WorkRowPlan> Plans)>();
-        var newUsers = new SortedSet<string>(StringComparer.Ordinal);
+        var newUsers = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
         var empty = (new ImportPreview(projectRows, workRows, issues, new()), built);
 
         var ps = book.Projects;
@@ -119,15 +120,19 @@ public partial class ProjectService
 
         var pRows = ps.Rows.Where(r => r.Cells.Any(c => !string.IsNullOrWhiteSpace(c))).ToList();
         var wRows = ws == null ? new List<ImportRow>() : ws.Rows.Where(r => r.Cells.Any(c => !string.IsNullOrWhiteSpace(c))).ToList();
-        if (pRows.Count > MaxImportProjects)
-            issues.Add(new(ImportColumns.ProjectSheet, 0, null, $"과제는 한 번에 {MaxImportProjects}줄까지 가져올 수 있습니다(지금 {pRows.Count}줄). 나눠서 올려 주세요."));
-        if (wRows.Count > MaxImportWorks)
-            issues.Add(new(ImportColumns.WorkSheet, 0, null, $"작업은 한 번에 {MaxImportWorks}줄까지 가져올 수 있습니다(지금 {wRows.Count}줄). 나눠서 올려 주세요."));
+        var pCount = Math.Max(pRows.Count, ps.TotalRows ?? 0);
+        var wCount = Math.Max(wRows.Count, ws?.TotalRows ?? 0);
+        if (pCount > MaxImportProjects)
+            issues.Add(new(ImportColumns.ProjectSheet, 0, null, $"과제는 한 번에 {MaxImportProjects}줄까지 가져올 수 있습니다(지금 {pCount}줄). 나눠서 올려 주세요."));
+        if (wCount > MaxImportWorks)
+            issues.Add(new(ImportColumns.WorkSheet, 0, null, $"작업은 한 번에 {MaxImportWorks}줄까지 가져올 수 있습니다(지금 {wCount}줄). 나눠서 올려 주세요."));
         if (issues.Count > 0) return empty;
 
         var today = _clock.Today;
         var categories = (await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ToListAsync()).Where(c => c.IsActive).ToList();
         var index = await LocationsAsync();
+        // 담당이 기존 사용자면 BuildProjectAsync 는 OwnerId 만 넣는다(내비게이션은 비어 있다) — 미리보기에 저장될 이름을 보여 주려고 이름을 미리 읽는다
+        var userNames = (await _db.Users.AsNoTracking().Select(u => new { u.Id, u.Name }).ToListAsync()).ToDictionary(u => u.Id, u => u.Name);
         // 과제 시트의 과제명 → 만든 과제 (작업 시트가 과제명으로 찾는다)
         var byTitle = new Dictionary<string, (int Row, Project? P)>(StringComparer.Ordinal);
         var workTitles = wcol == null ? new HashSet<string>() : wRows.Select(r => Cell(r, wcol, ImportColumns.Title)).Where(t => t != null).Select(t => t!).ToHashSet();
@@ -182,7 +187,7 @@ public partial class ProjectService
             if (newOwner) newUsers.Add(p!.Owner!.Name);
             projectRows.Add(new ImportProjectRow(r.Row, title, category?.Name ?? catName,
                 location == null ? Cell(r, pcol, ImportColumns.Corporation) : string.Join(" > ", index.Chain(location.Id).Select(l => l.Name)),
-                p == null ? owner : (p.Owner?.Name ?? _me.Name), newOwner, start,
+                p == null ? owner : (p.Owner?.Name ?? userNames.GetValueOrDefault(p.OwnerId) ?? _me.Name), newOwner, start,
                 p?.Stages.Count ?? 0, p?.Stages.Count(s => s.TargetDate != null) ?? 0, p?.Stages.Sum(s => s.Works.Count) ?? 0, p != null && issues.Count == before));
             if (p != null) built.Add((p, new List<WorkRowPlan>()));
         }

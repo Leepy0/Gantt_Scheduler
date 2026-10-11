@@ -17,7 +17,12 @@ public record ChartSeries(string Name, string Cls, double?[] Values);
 public record LineChart(string Title, List<DateOnly> X, List<ChartSeries> Series, string Unit, int GapDays, double? FixedMax = null,
     DateOnly? XFrom = null, DateOnly? XTo = null)
 {
-    public const double W = 640, H = 200, Left = 40, Right = 12, Top = 12, Bottom = 28;
+    // 눈금 글자는 SVG 밖 HTML 로 그린다(_LineChart) — SVG 안 글자는 그림과 함께 줄어 좁은 화면에서 읽을 수 없게 된다.
+    // 그래서 그림 안 여백은 선·점이 잘리지 않을 만큼만 둔다
+    public const double W = 640, H = 200, Left = 6, Right = 6, Top = 8, Bottom = 6;
+
+    // 눈금 글자를 놓을 자리(그림 폭·높이에 대한 %) — 그림이 줄어도 같은 자리에 온다
+    public static string Pct(double v, double of) => (v / of * 100).ToString("0.##", CultureInfo.InvariantCulture) + "%";
 
     public double MaxY
     {

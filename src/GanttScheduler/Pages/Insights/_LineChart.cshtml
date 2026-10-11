@@ -1,6 +1,7 @@
 @model GanttScheduler.Pages.Insights.LineChart
 @using GanttScheduler.Pages.Insights
-@* 서버가 그린 꺾은선. 색은 site.css 토큰(.series-*)만 쓰고, 범례 글자와 점의 title 로 값을 함께 보인다 *@
+@* 서버가 그린 꺾은선. 색은 site.css 토큰(.series-*)만 쓰고, 범례 글자와 점의 title 로 값을 함께 보인다.
+   눈금 글자는 SVG 밖 HTML 이다 — 그림이 화면 폭에 맞춰 줄어도 글자 크기(토큰)는 그대로 읽힌다 *@
 <figure class="line-chart" data-chart="@Model.Title">
     <figcaption>
         <b>@Model.Title</b>
@@ -11,24 +12,35 @@
             }
         </span>
     </figcaption>
-    <svg viewBox="0 0 @LineChart.Num(LineChart.W) @LineChart.Num(LineChart.H)" role="img" aria-label="@Model.Title 추이">
-        @foreach (var (y, label) in Model.YTicks())
-        {
-            <line class="grid" x1="@LineChart.Num(LineChart.Left)" x2="@LineChart.Num(LineChart.W - LineChart.Right)" y1="@LineChart.Num(y)" y2="@LineChart.Num(y)" />
-            @* Razor 는 <text> 를 특별히 다루므로 SVG 글자는 그대로 내보낸다(숫자·날짜만 들어간다) *@
-            @Html.Raw($"<text class=\"tick\" x=\"{LineChart.Num(LineChart.Left - 6)}\" y=\"{LineChart.Num(y + 4)}\" text-anchor=\"end\">{label}</text>")
-        }
+    <div class="chart-plot">
+        <div class="chart-y" aria-hidden="true">
+            @foreach (var (y, label) in Model.YTicks())
+            {
+                <span class="tick" style="top:@LineChart.Pct(y, LineChart.H)">@label</span>
+            }
+        </div>
+        <div class="chart-area">
+            <svg viewBox="0 0 @LineChart.Num(LineChart.W) @LineChart.Num(LineChart.H)" role="img" aria-label="@Model.Title 추이">
+                @foreach (var (y, _) in Model.YTicks())
+                {
+                    <line class="grid" x1="@LineChart.Num(LineChart.Left)" x2="@LineChart.Num(LineChart.W - LineChart.Right)" y1="@LineChart.Num(y)" y2="@LineChart.Num(y)" />
+                }
+                @foreach (var s in Model.Series)
+                {
+                    <path class="series @s.Cls" d="@Model.Path(s)" />
+                    @foreach (var pt in Model.Points(s))
+                    {
+                        <circle class="series-dot @s.Cls" cx="@LineChart.Num(pt.X)" cy="@LineChart.Num(pt.Y)" r="2.5"><title>@s.Name @pt.Date.ToString("yyyy-MM-dd"): @LineChart.Num(pt.Value)@Model.Unit</title></circle>
+                    }
+                }
+            </svg>
+        </div>
+    </div>
+    <div class="chart-x" aria-hidden="true">
         @foreach (var (x, label) in Model.XTicks())
         {
-            @Html.Raw($"<text class=\"tick\" x=\"{LineChart.Num(x)}\" y=\"{LineChart.Num(LineChart.H - 8)}\" text-anchor=\"{(x < LineChart.Left + 24 ? "start" : x > LineChart.W - LineChart.Right - 24 ? "end" : "middle")}\">{label}</text>")
+            var align = x < LineChart.W * 0.1 ? "start" : x > LineChart.W * 0.9 ? "end" : "middle";
+            <span class="tick @align" style="left:@LineChart.Pct(x, LineChart.W)">@label</span>
         }
-        @foreach (var s in Model.Series)
-        {
-            <path class="series @s.Cls" d="@Model.Path(s)" />
-            @foreach (var pt in Model.Points(s))
-            {
-                <circle class="series-dot @s.Cls" cx="@LineChart.Num(pt.X)" cy="@LineChart.Num(pt.Y)" r="2.5"><title>@s.Name @pt.Date.ToString("yyyy-MM-dd"): @LineChart.Num(pt.Value)@Model.Unit</title></circle>
-            }
-        }
-    </svg>
+    </div>
 </figure>

@@ -36,11 +36,15 @@ public partial class ProjectService
         public void Dispose() => undo();
     }
 
-    // 진행률이 바뀐 작업 변경 활동에 이전·새 진행률을 숫자로 남긴다(문구는 그대로) — 주간 보고의 과제별 '진척 +n%p'(Reporting.ProgressGain)가 읽는다
-    private static void SetProgressValues(Activity a, int oldProgress, int newProgress)
+    // 진행률이 바뀐 작업 변경 활동에 이전·새 진행률을 숫자로 남긴다(문구는 그대로) — 주간 보고의 과제별 '진척 +n%p'(Reporting.ProgressGain)가 읽는다.
+    // 완료된 단계의 작업은 남기지 않는다 — 단계 진행률은 완료로 100 이라 작업 진행률을 바꿔도 과제 진척은 움직이지 않는다
+    private static void SetProgressValues(Activity a, int oldProgress, int newProgress, Stage stage)
     {
-        if (oldProgress == newProgress) return;
+        if (oldProgress == newProgress || stage.CompletedDate != null) return;
         a.OldValue = oldProgress.ToString(System.Globalization.CultureInfo.InvariantCulture);
         a.NewValue = newProgress.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
+
+    // 단계 완료·완료 취소 활동에 남기는 단계 진행률(Reporting.StageProgressChanges 가 읽는다)
+    private static string ProgressText(int progress) => progress.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

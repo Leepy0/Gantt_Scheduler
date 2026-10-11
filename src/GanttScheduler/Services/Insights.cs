@@ -44,7 +44,7 @@ public record WeeklyProject(
     List<WeeklyItem> Done, List<WeeklyItem> Changes, List<WeeklyItem> Comments, List<string> Next, ChipView? Chip = null,
     List<WeeklyItem>? States = null, List<WeeklyLate>? Overdue = null, int RiskDays = 0, int ProgressGain = 0, string? DelayedStage = null)
 {
-    // ProgressGain: 기간 안 작업 진행률 변경을 과제 진행률로 환산한 증감(%p — Rules.ProgressGain). 진행률 변경 이전·새 값이 기록된 활동만 센다
+    // ProgressGain: 기간 안 작업 진행률 변경과 단계 완료·완료 취소를 과제 진행률로 환산한 증감(%p — Rules.ProgressGain). 진행률 이전·새 값이 기록된 활동만 센다
     // RiskDays: 예상 지연 일수(Rules.RiskDays — 아직 지연이 아닌 진행 과제의 단계 예상 종료가 목표일을 넘는 일수). 이번 주 보고에서만 센다(지금 계산이라)
     // 이번 주 기록된 변동(실적·일정 변경·상태·진행 내용)이 없다
     public bool Quiet => Done.Count + Changes.Count + (States?.Count ?? 0) + Comments.Count == 0;
@@ -59,7 +59,7 @@ public record WeeklyProject(
 // ChangeCount: 일정 변경 결정 수(BatchId 묶음은 1건), ChangeTargets: 그 결정이 바꾼 대상(행) 수.
 // StateCount: 사람이 바꾼 상태·기준선 확정 수, Completed: 모든 단계를 끝내 자동으로 완료된 과제 수.
 // AsOf: 지연·밀린 항목을 센 기준일 = min(그 주 마지막 날, 오늘). 진행률·현재 단계는 지금 값이다
-// 아래는 보고 확장(S10): NextTo — '다음 기간 계획'의 끝(기간 길이만큼), Missed — 기간 안에 끝났어야 하는데 실적이 없는 단계·작업,
+// 아래는 보고 확장(S10): NextTo — '다음 기간 계획'의 끝(기간 길이만큼, 한 달 전체면 다음 달 말일), Missed — 기간 안에 끝났어야 하는데 실적이 없는 단계·작업,
 // DelaySummary — 지연·위험 과제 요약(서비스가 최근 사유를 채운다), NewDelayed·Resolved·ActiveDelta·DelayedDelta — 직전 기간 끝의 스냅샷과
 // 견준 것(스냅샷이 없으면 null), Kind — 'week'·'month'·'custom', Scope — 범위 설명(전체·내 과제·유형·법인·조직), ChangedOnly — 변동 있는 과제만
 public record WeeklyReport(
@@ -498,8 +498,12 @@ public static partial class Reporting
         var asOf = to < today ? to : today;
         var byProject = activities.GroupBy(a => a.ProjectId).ToDictionary(g => g.Key, g => g.OrderBy(a => a.At).ThenBy(a => a.Id).ToList());
         var nextFrom = to.AddDays(1);
-        // 다음 기간 계획은 보고 기간과 같은 길이(주 7일·월·직접 지정)
-        var nextTo = to.AddDays(to.DayNumber - from.DayNumber + 1);
+        // 다음 기간 계획은 보고 기간과 같은 길이(주 7일·직접 지정). 한 달 전체(1일~말일)면 다음 달 1일~말일 —
+        // 같은 일수를 더하면 31일인 달은 그다음 달 1일이 끼고, 28·30일인 달은 다음 달 끝 며칠이 빠진다
+        var wholeMonth = from.Day == 1 && to == new DateOnly(from.Year, from.Month, 1).AddMonths(1).AddDays(-1);
+        var nextTo = wholeMonth
+            ? new DateOnly(from.Year, from.Month, 1).AddMonths(2).AddDays(-1)
+            : to.AddDays(to.DayNumber - from.DayNumber + 1);
         var missed = new List<WeeklyMissed>();
         var projects = new List<WeeklyProject>();
         // 그 주가 끝나기 전에 등록한 과제만 (지난 주 보고에 그 뒤 등록한 과제가 끼지 않게)
@@ -575,7 +579,7 @@ public static partial class Reporting
                 Rules.ProjectProgress(p), delay, current?.Name, current?.TargetDate,
                 done, changes, comments, next, Views.ProjectChip(state, delay), states, overdue,
                 cal != null && asOf >= today && delay == 0 ? Rules.RiskDays(Rules.RiskReasons(p, today, Rules.ForwardPass(p, cal, today))) : 0,
-                Rules.ProgressGain(p, ProgressChanges(acts)),
+                Rules.ProgressGain(p, ProgressChanges(acts), StageProgressChanges(acts)),
                 p.Stages.Where(s => Rules.StageLateDaysAsOf(s, asOf, today) > 0).OrderByDescending(s => Rules.StageLateDaysAsOf(s, asOf, today)).FirstOrDefault()?.Name));
         }
 

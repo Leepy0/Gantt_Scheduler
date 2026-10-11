@@ -450,6 +450,7 @@ public class InputServiceTests : IClassFixture<TestDb>
         Assert.True(okRow.Ok);
         Assert.Equal("베트남 > 세탁기 > 2라인", okRow.Location);
         Assert.Equal((3, 2), (okRow.Stages, okRow.Targets));
+        Assert.Equal(("김물류", false), (okRow.Owner, okRow.NewOwner));       // 기존 사용자 담당은 그 이름으로(올린 사람이 아니라)
         Assert.Equal(new[] { "가져오기신규" }, pv.NewUsers);
 
         // 문제가 있으면 가져오기도 거절 — 정상 행도 저장하지 않는다
@@ -505,6 +506,64 @@ public class InputServiceTests : IClassFixture<TestDb>
         var created = await s4.Db.Activities.AsNoTracking().Where(x => x.ProjectId == a.Id && x.Type == ActivityType.Created).SingleAsync();
         Assert.Equal("과제 등록 (Excel 가져오기: 계획.xlsx)", created.Text);
         Assert.Equal(2, await s4.Db.Activities.CountAsync(x => x.ProjectId == a.Id && x.Text.Contains("목표일 설정")));
+    }
+
+    [Fact]
+    public async Task 담당_이름은_대소문자만_다르면_기존_사용자로_보고_미리보기와_저장이_같다()
+    {
+        using (var s = _db.NewScope())
+        {
+            s.Db.Users.Add(new AppUser { Name = "CaseOwner", CreatedAt = _db.Clock.UtcNow });
+            await s.Db.SaveChangesAsync();
+        }
+        var book = await BookAsync(new[] { new[] { "대소문자 담당 과제", "물류", "한국", "", "caseowner", "2026-10-12" } },
+            new[] { new[] { "대소문자 담당 과제", "검토", "조사", "CASEOWNER", "2026-10-12", "2026-10-13" } });
+        int id;
+        using (var s = _db.NewScope())
+        {
+            var pv = await s.Projects.PreviewImportAsync(book);
+            Assert.True(pv.Ok, string.Join("\n", pv.Issues.Select(i => i.Message)));
+            Assert.Empty(pv.NewUsers);
+            Assert.Equal(("CaseOwner", false), (pv.Projects[0].Owner, pv.Projects[0].NewOwner));
+            Assert.False(pv.Works[0].NewOwner);
+            // 새 담당자가 없으니 확인 없이 가져온다 — 사용자도 새로 생기지 않는다
+            id = (await s.Projects.ImportAsync(book, confirmNewUsers: false)).Ids[0];
+        }
+        using (var s = _db.NewScope())
+            Assert.Equal(1, await s.Db.Users.CountAsync(u => u.Name.ToLower() == "caseowner"));
+        var v = await ViewAsync(id);
+        Assert.Equal("CaseOwner", v.Owner);
+        Assert.Equal("CaseOwner", v.Stages[0].Works[0].Owner);
+    }
+
+    [Fact]
+    public void 가져오기_파일은_먼_칸이_채워져_있어도_열과_줄을_상한까지만_읽는다()
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.AddWorksheet("과제");
+        for (var c = 0; c < ProjectService.ImportColumns.Project.Length; c++) ws.Cell(1, c + 1).Value = ProjectService.ImportColumns.Project[c];
+        for (var r = 2; r <= ProjectService.MaxImportProjects + 6; r++) ws.Cell(r, 1).Value = $"과제 {r}";
+        ws.Cell(1048576, 16384).Value = "x";        // 이 칸 하나로 범위가 시트 끝까지 넓어진다
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        ms.Position = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var book = new ProjectImporter().Read(ms);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20), $"읽기가 너무 오래 걸림: {watch.Elapsed}");
+        var sheet = book.Projects!;
+        Assert.Equal(ProjectImporter.MaxColumns, sheet.Headers.Count);
+        Assert.Equal(ProjectService.MaxImportProjects, sheet.Rows.Count);           // 상한까지만 칸을 읽는다
+        Assert.Equal(ProjectService.MaxImportProjects + 6, sheet.TotalRows);        // 나머지는 센다(먼 칸 줄 포함)
+    }
+
+    [Fact]
+    public async Task 가져오기는_줄_상한을_넘으면_읽은_줄_수와_함께_나눠_올리라고_알린다()
+    {
+        var rows = Enumerable.Range(2, 3).Select(r => new ImportRow(r, new() { $"과제 {r}", "물류", "한국", "", "", "2026-10-12" })).ToList();
+        var sheet = new ImportSheet("과제", ProjectService.ImportColumns.Project.ToList(), rows, ProjectService.MaxImportProjects + 50);
+        using var s = _db.NewScope();
+        var pv = await s.Projects.PreviewImportAsync(new ImportBook(sheet, null));
+        Assert.Contains(pv.Issues, i => i.Message.Contains($"지금 {ProjectService.MaxImportProjects + 50}줄"));
     }
 
     [Fact]

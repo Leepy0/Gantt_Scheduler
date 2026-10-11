@@ -66,7 +66,7 @@ public partial class ProjectService
         var plans = await CheckWorkRowsAsync(p, rows.Select(r => (r, stage)).ToList());
         var views = plans.Select(x => x.View()).ToList();
         return new WorksPreview(stage.Id, stage.Name, stage.Version, views, views.Count(v => !v.Ok),
-            views.Where(v => v.NewOwner).Select(v => v.Owner!).Distinct().OrderBy(n => n).ToList());
+            views.Where(v => v.NewOwner).Select(v => v.Owner!).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n).ToList());
     }
 
     // 미리보기에서 확인한 줄을 저장한다. 다시 검증해 하나라도 틀리면 아무것도 저장하지 않고(SaveChanges 한 번),
@@ -117,9 +117,10 @@ public partial class ProjectService
     {
         var cal = await CalendarAsync();
         var today = _clock.Today;
-        // 사용자 표는 작다 — 이름 목록 조건(IN)을 쓰지 않고 이름·사용 여부만 읽는다(DESIGN 6장)
+        // 사용자 표는 작다 — 이름 목록 조건(IN)을 쓰지 않고 이름·사용 여부만 읽는다(DESIGN 6장).
+        // 대소문자는 구분하지 않는다 — 저장할 때 담당을 찾는 UserService.ResolveAsync 와 같은 규칙이어야 미리보기와 저장 결과가 같다
         var users = (await _db.Users.AsNoTracking().Select(u => new { u.Name, u.IsActive }).ToListAsync())
-            .GroupBy(u => u.Name).ToDictionary(g => g.Key, g => g.First().IsActive);
+            .GroupBy(u => u.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().IsActive, StringComparer.OrdinalIgnoreCase);
         var plans = rows.Select(r => new WorkRowPlan { Input = r.Row, Stage = r.Stage }).ToList();
 
         foreach (var x in plans)

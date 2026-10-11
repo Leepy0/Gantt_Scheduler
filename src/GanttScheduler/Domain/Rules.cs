@@ -45,9 +45,11 @@ public static class Rules
     public static bool IsDoneLate(WorkItem w) => w.ActualEnd != null && w.ActualEnd.Value > w.PlanEnd;
 
     // 단계 진행률: 완료 100, 작업이 있으면 작업 진행률 평균, 없으면 0
-    public static int StageProgress(Stage s)
+    public static int StageProgress(Stage s) => s.CompletedDate != null ? 100 : WorksProgress(s);
+
+    // 완료 여부를 보지 않은 작업 진행률 평균(작업이 없으면 0) — 완료를 취소하면 단계 진행률이 이 값으로 돌아간다
+    public static int WorksProgress(Stage s)
     {
-        if (s.CompletedDate != null) return 100;
         if (s.Works.Count == 0) return 0;
         return (int)Math.Round(s.Works.Average(w => (double)w.Progress), MidpointRounding.AwayFromZero);
     }
@@ -944,10 +946,12 @@ public static class Rules
 
     public static bool InOrg(OrgUnit? unit, int orgId) => unit != null && InOrg(unit.Id, unit.ParentId, orgId);
 
-    // 과제 진척 증감(%p): 작업 진행률 변경(이전·새 값)을 과제 진행률 계산(단계 평균의 평균 — ProjectProgress)의 비중으로 환산해 더한다.
+    // 과제 진척 증감(%p): 진행률 변경(이전·새 값)을 과제 진행률 계산(단계 평균의 평균 — ProjectProgress)의 비중으로 환산해 더한다.
     // 작업 하나의 d%p 는 단계 진행률을 d/작업 수, 과제 진행률을 그 값/단계 수만큼 움직인다. 지금 구조(단계·작업 수)로 환산하고,
-    // 지금은 없는 작업의 변경은 뺀다. 단계 완료로 진행률 100 이 되는 몫은 작업 변경(단계 완료로 닫음)으로 들어온다
-    public static int ProgressGain(Project p, IEnumerable<(int WorkId, int Old, int New)> changes)
+    // 지금은 없는 작업·단계의 변경은 뺀다. 단계 완료(→ 100)와 완료 취소(100 →)는 단계 진행률 변경(stageChanges)으로 따로 들어온다 —
+    // 작업이 없거나 작업을 닫지 않고 완료한 단계도 센다. 단계 완료로 닫은 작업과 완료된 단계 안의 작업 변경은 진행률 값을 남기지 않아 두 번 세지 않는다
+    public static int ProgressGain(Project p, IEnumerable<(int WorkId, int Old, int New)> changes,
+        IEnumerable<(int StageId, int Old, int New)>? stageChanges = null)
     {
         if (p.Stages.Count == 0) return 0;
         var stageOf = new Dictionary<int, Stage>();
@@ -957,6 +961,10 @@ public static class Rules
         foreach (var (workId, old, @new) in changes)
             if (stageOf.TryGetValue(workId, out var s) && s.Works.Count > 0)
                 sum += (@new - old) / (double)s.Works.Count / p.Stages.Count;
+        var stageIds = p.Stages.Select(s => s.Id).ToHashSet();
+        foreach (var (stageId, old, @new) in stageChanges ?? Enumerable.Empty<(int, int, int)>())
+            if (stageIds.Contains(stageId))
+                sum += (@new - old) / (double)p.Stages.Count;
         return (int)Math.Round(sum, MidpointRounding.AwayFromZero);
     }
 

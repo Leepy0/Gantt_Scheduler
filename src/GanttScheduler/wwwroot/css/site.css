@@ -1186,7 +1186,17 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .line-chart figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
 .line-chart svg { width: 100%; height: auto; display: block; }
 .line-chart .grid { stroke: var(--line); stroke-width: 1; }
-.line-chart .tick { fill: var(--text-3); font-size: 11px; }
+/* 눈금은 SVG 밖 HTML(그림이 줄어도 글자 크기 토큰 그대로). 세로축 글자는 왼쪽 칸, 가로축 글자는 그림 아래 줄 */
+.line-chart .chart-plot { display: flex; gap: 4px; min-width: 0; }
+.line-chart .chart-area { flex: 1; min-width: 0; }
+.line-chart .chart-y, .line-chart .chart-x { font-size: var(--fs-xs); }
+.line-chart .chart-y { position: relative; flex: none; width: 5ch; }
+.line-chart .chart-x { position: relative; height: 1.5em; margin-left: calc(5ch + 4px); }
+.line-chart .tick { position: absolute; color: var(--text-3); font-size: var(--fs-xs); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.line-chart .chart-y .tick { right: 0; transform: translateY(-50%); }
+.line-chart .chart-x .tick { top: 0; transform: translateX(-50%); }
+.line-chart .chart-x .tick.start { transform: none; }
+.line-chart .chart-x .tick.end { transform: translateX(-100%); }
 .line-chart .series { fill: none; stroke-width: 2; }
 .legend.inline { padding-top: 0; }
 .legend-line { display: inline-block; width: 16px; height: 0; border-top: 3px solid currentColor; }
@@ -1230,6 +1240,8 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .kpi-delta { font-size: var(--fs-xs); color: var(--text-3); }
 .kpi-delta.up { color: var(--alarm); }
 .progress-gain { font-size: var(--fs-xs); color: var(--ok); font-weight: 600; }
+/* 진척이 내려간 과제는 좋아진 것처럼 보이지 않게 흐린 글자(빨강은 지연 전용이라 쓰지 않는다) */
+.progress-gain.down { color: var(--text-2); }
 .readonly-banner { display: flex; gap: 8px; align-items: center; }
 @media (max-width: 767px) {
     .trend-charts { grid-template-columns: minmax(0, 1fr); }

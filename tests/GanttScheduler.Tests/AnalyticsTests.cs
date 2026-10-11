@@ -312,6 +312,65 @@ public class AnalyticsServiceTests : IDisposable
     }
 
     [Fact]
+    public void 진척_증감은_단계_완료와_완료_취소도_단계_비중으로_센다()
+    {
+        var p = new Project();
+        var s1 = new Stage { Id = 1 };                 // 작업 없는 단계
+        var s2 = new Stage { Id = 2 };
+        s2.Works.Add(new WorkItem { Id = 21 });
+        p.Stages.AddRange(new[] { s1, s2, new Stage { Id = 3 }, new Stage { Id = 4 } });
+        var acts = new[]
+        {
+            new Activity { Type = ActivityType.StageCompleted, StageId = 1, OldValue = "0", NewValue = "2026-10-08" },   // 0 → 100: 과제 +25
+            new Activity { Type = ActivityType.StageReopened, StageId = 2, OldValue = "2026-10-01", NewValue = "60" },   // 100 → 60: 과제 -10
+            new Activity { Type = ActivityType.StageCompleted, StageId = 9, OldValue = "0" },                            // 지운 단계는 뺀다
+            new Activity { Type = ActivityType.StageCompleted, StageId = 3, NewValue = "2026-10-08" },                   // 값 없는 옛 기록은 셀 수 없다
+        };
+        Assert.Equal(15, Rules.ProgressGain(p, Array.Empty<(int, int, int)>(), Reporting.StageProgressChanges(acts)));
+    }
+
+    [Fact]
+    public async Task 작업_없이_단계를_완료하면_보고의_진척이_오르고_완료를_취소하면_돌아간다()
+    {
+        int projectId, stageId, before, stages;
+        int Gain(WeeklyReport r) => r.Projects.Single(x => x.Id == projectId).ProgressGain;
+        using (var s = _db.NewScope())
+        {
+            var p = await s.Db.Projects.Include(x => x.Stages).ThenInclude(st => st.Works).Include(x => x.Stages).ThenInclude(st => st.Checks)
+                .Where(x => x.State == ProjectState.Active).ToListAsync();
+            var (proj, st) = p.SelectMany(x => x.Stages.Where(y => y.CompletedDate == null && Rules.WorksProgress(y) <= 50).Select(y => (x, y))).First();
+            projectId = proj.Id;
+            stageId = st.Id;
+            before = Rules.WorksProgress(st);
+            stages = proj.Stages.Count;
+            foreach (var c in st.Checks) c.IsDone = true;
+            await s.Db.SaveChangesAsync();
+        }
+        int g0;
+        using (var s = _db.NewScope()) g0 = Gain(await s.Insights.WeeklyAsync(null, false));
+        using (var s = _db.NewScope())
+        {
+            var st = await s.Db.Stages.FirstAsync(x => x.Id == stageId);
+            // 작업을 닫지 않고 완료 — 작업 진행률 변경 기록은 없지만 단계 진행률은 100 이 된다
+            await s.Projects.SaveStageAsync(new StageInput(projectId, st.Id, st.Name, st.TargetDate, _db.Clock.Today, null, false, st.Version));
+            var act = await s.Db.Activities.Where(a => a.StageId == stageId && a.Type == ActivityType.StageCompleted).OrderByDescending(a => a.Id).FirstAsync();
+            Assert.Equal(before.ToString(), act.OldValue);
+        }
+        int g1;
+        using (var s = _db.NewScope()) g1 = Gain(await s.Insights.WeeklyAsync(null, false));
+        var expected = (100 - before) / (double)stages;
+        Assert.InRange(g1 - g0, (int)Math.Floor(expected) - 1, (int)Math.Ceiling(expected) + 1);
+        Assert.True(g1 > g0);
+        using (var s = _db.NewScope())
+        {
+            var st = await s.Db.Stages.FirstAsync(x => x.Id == stageId);
+            await s.Projects.SaveStageAsync(new StageInput(projectId, st.Id, st.Name, st.TargetDate, null, null, false, st.Version));
+        }
+        using (var s = _db.NewScope())
+            Assert.InRange(Gain(await s.Insights.WeeklyAsync(null, false)) - g0, -1, 1);   // 올랐다가 같은 만큼 내려간다
+    }
+
+    [Fact]
     public async Task 진행률_변경은_이전_새_값을_남기고_보고에_과제별_진척으로_오른다()
     {
         int projectId;
@@ -344,7 +403,7 @@ public class AnalyticsServiceTests : IDisposable
         var month = Reporting.Period("month", today, null, null, today);
         var all = await s.Insights.ReportAsync(month.From, month.To, new ProjectFilter(null, null, null, null, false), "month");
         Assert.Equal("월간 보고", all.Title);
-        Assert.Equal(month.To.AddDays(month.To.DayNumber - month.From.DayNumber + 1), all.NextTo);
+        Assert.Equal(month.From.AddMonths(2).AddDays(-1), all.NextTo);   // 다음 달 말일(같은 일수를 더하지 않는다)
         Assert.Null(all.ActiveDelta);           // 스냅샷이 없으면 비운다
         var org = await s.Insights.ReportAsync(month.From, month.To, new ProjectFilter(null, null, null, null, false, OrgUnitId: group.Id), "month");
         Assert.True(org.Projects.Count <= all.Projects.Count && org.Projects.Count > 0);

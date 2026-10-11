@@ -45,7 +45,7 @@ public partial class ProjectService
         if (changed.Count > 0)
         {
             var edited = NewActivity(ActivityType.WorkEdited, $"[{w.Title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
-            SetProgressValues(edited, oldProgress, progress);
+            SetProgressValues(edited, oldProgress, progress, stage);
             p.Activities.Add(edited);
             InvolveOwners(edited, w.OwnerId, w.CoOwnerId);
             w.Version++;

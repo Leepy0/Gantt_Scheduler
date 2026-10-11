@@ -114,6 +114,18 @@ public static partial class Reporting
             .Where(x => x.Ok)
             .Select(x => (x.Item1, x.Old, x.New));
 
+    // 단계 완료·완료 취소의 단계 진행률 변경: 완료는 남긴 이전 값(OldValue) → 100, 취소는 100 → 남긴 새 값(NewValue).
+    // 값이 없는 옛 기록은 셀 수 없어 뺀다(날짜를 담은 다른 쪽 값은 읽지 않는다)
+    public static IEnumerable<(int StageId, int Old, int New)> StageProgressChanges(IEnumerable<Activity> acts)
+    {
+        foreach (var a in acts)
+        {
+            if (a.StageId is not int id) continue;
+            if (a.Type == ActivityType.StageCompleted && int.TryParse(a.OldValue, out var before)) yield return (id, before, 100);
+            else if (a.Type == ActivityType.StageReopened && int.TryParse(a.NewValue, out var after)) yield return (id, 100, after);
+        }
+    }
+
     // 직전 기간 끝의 스냅샷(prev)과 이번 보고의 지연(기준일 판정)을 견준 새로 지연·지연 해소 과제
     public static (List<WeeklyFlip> NewDelayed, List<WeeklyFlip> Resolved) Flips(WeeklyReport report, IEnumerable<ProjectSnapshot> prev)
     {
