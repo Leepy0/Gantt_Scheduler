@@ -8,8 +8,9 @@
     var bare = ViewData["Bare"] as bool? ?? false;
 }
 <!DOCTYPE html>
-@* data-today: 한국 날짜(지연 판정의 '오늘'). 화면이 오래 열려 있으면 /version 응답의 today 로 갱신한다 *@
-<html lang="ko" data-build="@Updates.Build.Id" data-today="@Clock.Today.ToString("yyyy-MM-dd")">
+@* data-today: 한국 날짜(지연 판정의 '오늘'). 화면이 오래 열려 있으면 /version 응답의 today 로 갱신한다
+   data-day-window: 접속자 PC 의 날짜를 '오늘'로 받아 주는 범위(한국 날짜 ± 일수, Rules.ClientDayWindow) — App.userToday 가 쓴다 *@
+<html lang="ko" data-build="@Updates.Build.Id" data-today="@Clock.Today.ToString("yyyy-MM-dd")" data-day-window="@Rules.ClientDayWindow">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />

@@ -58,8 +58,14 @@
     // 다른 사람이 먼저 고쳤으면(409) 최신 내용을 다시 읽어 보여 주고, 오류는 그대로 올려 시트에 표시한다
     // (시트는 onConflict 에서 최신 버전으로 바꿔 같은 시트에서 다시 저장할 수 있게 한다)
     function api(handler, body) {
+        return change(App.post(detailUrl(handler), body));
+    }
+
+    // 변경 요청 하나(저장·올리기 등)의 공통 처리: 응답이 올 때까지 변경 확인을 쉬고(pending), 응답의 최신 과제·오늘로 다시 그리고,
+    // '다른 사용자가 바꿨습니다' 띠를 지운다 (응답이 최신 과제이므로). 이 길을 거치지 않으면 내 변경을 남의 변경으로 알린다
+    function change(request) {
         pending++;
-        return App.post(detailUrl(handler), body).then(function (r) {
+        return request.then(function (r) {
             pending--;
             takeToday(r);
             if (r.project) { P = r.project; renderAll(true); clearBanner(); }
@@ -817,19 +823,26 @@
         var planStart = isNew ? today : w.planStart;
         var planEnd = isNew ? (stage.targetDate && stage.targetDate >= today ? stage.targetDate : D.add(today, 7)) : w.planEnd;
 
-        var stageOptions = P.stages.map(function (s) {
-            return '<option value="' + s.id + '"' + (s.id === stage.id ? ' selected' : '') + '>' + esc(s.name) + '</option>';
-        }).join('');
-
+        // 단계 목록과 선행 작업 후보는 지금 화면의 과제(P)로 그린다. 동시 수정 뒤에는 최신 과제로 다시 그린다 —
+        // 그 사이 다른 사람이 만든 단계·작업이 목록에 없으면 그 값을 고를 수도, 다시 저장할 때 지킬 수도 없다
+        function stageOptionsHtml(selectedId) {
+            return P.stages.map(function (s) {
+                return '<option value="' + s.id + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + '</option>';
+            }).join('');
+        }
         // 선행 작업 후보: 같은 과제의 다른 작업
-        var others = allWorks().filter(function (x) { return isNew || x.work.id !== w.id; });
-        var preHtml = others.length
-            ? '<div class="pick-list">' + others.map(function (x) {
-                var on = !isNew && w.predecessors.indexOf(x.work.id) >= 0;
-                return '<label class="check"><input type="checkbox" name="pre" value="' + x.work.id + '"' + (on ? ' checked' : '') + ' />' +
-                    '<span>' + esc(x.work.title) + ' <span class="muted">' + esc(x.stage.name) + ' · ~' + D.md(x.work.planEnd) + '</span></span></label>';
-            }).join('') + '</div>'
-            : '<span class="hint">다른 작업이 없습니다.</span>';
+        function preListHtml(checkedIds) {
+            var others = allWorks().filter(function (x) { return isNew || x.work.id !== w.id; });
+            return others.length
+                ? '<div class="pick-list">' + others.map(function (x) {
+                    var on = checkedIds.indexOf(x.work.id) >= 0;
+                    return '<label class="check"><input type="checkbox" name="pre" value="' + x.work.id + '"' + (on ? ' checked' : '') + ' />' +
+                        '<span>' + esc(x.work.title) + ' <span class="muted">' + esc(x.stage.name) + ' · ~' + D.md(x.work.planEnd) + '</span></span></label>';
+                }).join('') + '</div>'
+                : '<span class="hint">다른 작업이 없습니다.</span>';
+        }
+        var stageOptions = stageOptionsHtml(stage.id);
+        var preHtml = '<div data-pre-list>' + preListHtml(isNew ? [] : w.predecessors) + '</div>';
 
         var status = '';
         if (!isNew) {
@@ -887,8 +900,13 @@
                 if (!cur) return '다른 사용자가 이 작업을 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
                 sheet.clearConflictNotes();
                 var f = form.elements;
+                // 고른 값은 그대로 두고 목록만 최신 과제로 다시 그린다. 고른 단계가 없어졌으면 최신 단계로 둔다(아래 비교에서 안내)
+                var myStage = +f.stageId.value;
+                var stageGone = !stageById(myStage);
+                f.stageId.innerHTML = stageOptionsHtml(stageGone ? cur.stageId : myStage);
                 mergeField(sheet, f.title, 'title', w.title, cur.title);
                 mergeField(sheet, f.stageId, 'stageId', w.stageId, cur.stageId, (stageById(cur.stageId) || {}).name || '');
+                if (stageGone) sheet.conflictNote('stageId', ((stageById(cur.stageId) || {}).name || '') + ' (고른 단계는 삭제됨)', true);
                 mergeField(sheet, f.owner, 'owner', w.owner, cur.owner, cur.owner || '없음');
                 mergeField(sheet, f.coOwner, 'coOwner', w.coOwner, cur.coOwner, cur.coOwner || '없음');
                 mergeField(sheet, f.planStart, 'planStart', w.planStart, cur.planStart);
@@ -897,15 +915,14 @@
                 mergeField(sheet, f.actualEnd, 'actualEnd', w.actualEnd, cur.actualEnd, cur.actualEnd || '없음');
                 mergeField(sheet, f.progress, 'progress', w.progress, cur.progress, cur.progress + '%');
                 mergeField(sheet, f.note, 'note', w.note, cur.note);
-                // 선행 작업(체크 상자 묶음)도 같은 방법: 내가 고르지 않았으면 최신 선행으로 맞춘다
-                var picks = Array.prototype.slice.call(form.querySelectorAll('input[name=pre]'));
+                // 선행 작업(체크 상자 묶음)도 같은 방법: 내가 고르지 않았으면 최신 선행으로 맞춘다.
+                // 후보 목록은 최신 과제로 다시 그린다 — 시트를 연 뒤 생긴 작업이 선행으로 걸렸으면 그 상자가 있어야 다시 저장해도 연결이 남는다
                 var key = function (ids) { return (ids || []).slice().sort(function (a, b) { return a - b; }).join(','); };
-                var chosen = key(picks.filter(function (x) { return x.checked; }).map(function (x) { return +x.value; }));
-                if (key(w.predecessors) !== key(cur.predecessors)) {
-                    var untouched = chosen === key(w.predecessors);
-                    if (untouched) picks.forEach(function (x) { x.checked = cur.predecessors.indexOf(+x.value) >= 0; });
-                    sheet.conflictNote('predecessors', titlesOf(cur.predecessors), untouched);
-                }
+                var mine = Array.prototype.slice.call(form.querySelectorAll('input[name=pre]:checked')).map(function (x) { return +x.value; });
+                var untouched = key(mine) === key(w.predecessors);
+                var keep = (untouched ? cur.predecessors : mine).filter(function (id) { return !!workById(id); });   // 삭제된 작업은 뺀다
+                form.querySelector('[data-pre-list]').innerHTML = preListHtml(keep);
+                if (key(w.predecessors) !== key(cur.predecessors)) sheet.conflictNote('predecessors', titlesOf(cur.predecessors), untouched);
                 w = cur;
                 refreshUi();
                 return CONFLICT;
@@ -1214,10 +1231,8 @@
             form.append('projectId', P.id);
             if ($('file-stage').value) form.append('stageId', $('file-stage').value);
             form.append('file', file);
-            var r = await App.upload(App.url('/Projects/Files?handler=Upload'), form);
-            P = r.project;
+            await change(App.upload(App.url('/Projects/Files?handler=Upload'), form));
             input.value = '';
-            renderAll(true);
             App.toast('올렸습니다.');
         } catch (err) {
             App.toast(err.message, 'error');
@@ -1284,7 +1299,7 @@
 
     App.onPoll(function () {
         if (pending > 0 || bannerKind === 'deleted') return;
-        App.get(detailUrl('Stamp') + '&id=' + P.id).then(function (r) {
+        App.poll(detailUrl('Stamp') + '&id=' + P.id).then(function (r) {
             // 묻는 사이에 내가 저장했으면 응답이 화면보다 옛것일 수 있다 — 화면보다 새로울 때만 알린다
             if (pending > 0 || !r.updatedAt || !P.updatedAt) return;
             if (Date.parse(r.updatedAt) > Date.parse(P.updatedAt)) showBanner('changed');

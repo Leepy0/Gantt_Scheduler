@@ -1,5 +1,7 @@
 # 패키지 버전은 Directory.Packages.props 에 고정돼 있다. 올리는 일은 주 1회 Dependabot PR 로 하고,
-# CI 를 통과한 PR 만 합친다 (packages.lock.json 도 같은 PR 에서 갱신된다)
+# CI 를 통과한 PR 만 합친다 (packages.lock.json 도 같은 PR 에서 갱신된다).
+# ci.yml 은 main 으로 가는 PR 에서도 돌아 PR 화면에 결과가 남는다. 업데이트·서비스 실행에 관계된 패키지가 바뀌면
+# update-selftest.yml(Windows 서비스 포함)도 PR 에서 돈다
 version: 2
 updates:
   - package-ecosystem: nuget

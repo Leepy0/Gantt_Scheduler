@@ -117,7 +117,9 @@
         if (admin) {
             h += '<div class="form-actions">' +
                 '<button type="button" class="btn ghost small" data-act="dismiss-failure">안내 닫기</button>' +
-                (f.retry ? '<button type="button" class="btn small" data-act="retry"' + (st.phase !== 'idle' ? ' disabled' : '') + '>' + icon('refresh') + '다시 시도</button>' : '') +
+                // 받아 둔 파일로 다시 적용하는 것은 '지금 적용'과 같은 조건(쓰기 권한·로컬 빌드 등)에 막힌다. 다시 받기는 그대로 된다
+                (f.retry ? '<button type="button" class="btn small" data-act="retry"' +
+                    (st.phase !== 'idle' || (f.retry === 'apply' && !st.canApply) ? ' disabled' : '') + '>' + icon('refresh') + '다시 시도</button>' : '') +
                 '</div>';
         }
         return h + '</div></div>';
@@ -196,7 +198,7 @@
         clearTimeout(pollTimer);
         if (waiting || uploading != null || st.phase === 'idle') return;
         pollTimer = setTimeout(function () {
-            App.get(url + '?handler=Status').then(function (r) { st = r.status; render(); }).catch(function () { schedulePoll(); });
+            App.poll(url + '?handler=Status').then(function (r) { st = r.status; render(); }).catch(function () { schedulePoll(); });
         }, 1000);
     }
 

@@ -117,11 +117,12 @@ app.Use(async (ctx, next) =>
 app.UseStaticFiles();
 app.UseRouting();
 
-// 사람이 쓰고 있는지 기록한다 (브라우저가 주기적으로 부르는 /version 은 사용으로 치지 않는다)
+// 사람이 쓰고 있는지 기록한다. 브라우저가 저절로 보내는 확인 요청(/version, 상세 화면의 변경 확인 등)은 사용으로 치지 않는다 —
+// 세면 화면을 켜 둔 PC 하나 때문에 자동 업데이트가 밤새 '사용 중'으로 미뤄진다 (ActivityTracker.IsUserRequest)
 var activity = app.Services.GetRequiredService<ActivityTracker>();
 app.Use(async (ctx, next) =>
 {
-    if (!ctx.Request.Path.StartsWithSegments("/version") && !ctx.Request.Path.StartsWithSegments("/health")) activity.Touch();
+    if (ActivityTracker.IsUserRequest(ctx.Request)) activity.Touch();
     await next();
 });
 

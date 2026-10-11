@@ -85,15 +85,19 @@
     // ── 오늘 ────────────────────────────────────────────────────────
     // App.today: 한국 날짜(지연 판정 기준, 규칙 8). 오래 열어 둔 화면은 /version·변경 응답의 today 로 갱신된다.
     // App.userToday(): '오늘 시작·오늘 완료' 같은 실적 기본값에 쓰는 접속자 PC 의 날짜 — 해외 법인에서 저녁에 눌러도 그 나라 날짜가 들어간다.
-    // PC 시계가 틀린 경우를 막으려고 한국 날짜 ±1일 안일 때만 쓴다(Rules.UserToday 와 같은 판정, 서버도 다시 확인한다)
+    // PC 시계가 틀린 경우를 막으려고 한국 날짜 ± 허용 일수 안일 때만 쓴다. 허용 일수는 서버 규칙(Rules.ClientDayWindow)을
+    // 화면이 받아(data-day-window) 쓴다 — 단추가 넣은 날짜는 사용자가 고칠 수 있는 입력값이라 서버가 바꾸지 않으므로 여기서 지킨다.
+    // 서버는 진행률만 올린 작업의 자동 실적 시작에만 같은 판정(Rules.UserToday)을 한다
     App.localToday = function () {
         var t = new Date();
         return t.getFullYear() + '-' + z(t.getMonth() + 1) + '-' + z(t.getDate());
     };
     App.today = document.documentElement.getAttribute('data-today') || App.localToday();
+    var dayWindow = parseInt(document.documentElement.getAttribute('data-day-window'), 10);
+    if (isNaN(dayWindow)) dayWindow = 0;     // 값이 없으면 한국 날짜만 (서버와 어긋나는 쪽보다 안전한 쪽)
     App.userToday = function () {
         var local = App.localToday();
-        return Math.abs(App.d.diff(local, App.today)) <= 1 ? local : App.today;
+        return Math.abs(App.d.diff(local, App.today)) <= dayWindow ? local : App.today;
     };
     var todayListeners = [];
     App.onToday = function (fn) { todayListeners.push(fn); };
@@ -141,6 +145,12 @@
 
     App.get = function (url) {
         return send(url, { headers: { 'Accept': 'application/json' } });
+    };
+
+    // 사람이 누르지 않아도 주기적으로 보내는 확인(상세 화면의 변경 확인 등). 서버는 이 요청을 '사용 중'으로 치지 않는다
+    // (ActivityTracker.IsUserRequest) — 켜 둔 화면 때문에 자동 업데이트가 미뤄지지 않게
+    App.poll = function (url) {
+        return send(url, { headers: { 'Accept': 'application/json', 'X-Background': '1' } });
     };
 
     App.post = function (url, data) {

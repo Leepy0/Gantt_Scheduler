@@ -246,7 +246,8 @@ public static class Seeder
 
         await db.SaveChangesAsync();
 
-        var cats = await db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).ToListAsync();
+        // 컬렉션 두 겹(템플릿 → 체크 항목)은 나눠 읽는 방식을 정해 둔다 (정하지 않으면 EF 가 시작할 때마다 경고한다)
+        var cats = await db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery().ToListAsync();
         var cal = new WorkCalendar((await db.Holidays.ToListAsync()).Select(h => h.Date));
         var equip = await db.EquipmentTypes.Include(e => e.Parent).ToListAsync();
         var cont = await db.ContainerTypes.ToListAsync();

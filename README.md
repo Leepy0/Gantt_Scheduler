@@ -162,7 +162,7 @@ main 에 push 해도 진행 중인 정식 배포는 취소되지 않는다(테�
 
 main 에 push 해 CI 가 통과할 때마다 만들어지는 `dev` 릴리스는 이 레포에만 올라가는 시험용이며 자동 업데이트 대상이 아니다.
 
-패키지 버전은 `Directory.Packages.props` 에 고정돼 있고 CI·배포는 잠금 파일(`packages.lock.json`)대로만 복원한다. 패키지를 올리는 일은 Dependabot PR(주 1회)로 하고, 직접 올릴 때는 `Directory.Packages.props` 를 고친 뒤 `dotnet restore --force-evaluate` 로 잠금 파일을 다시 만들어 함께 커밋한다.
+패키지 버전은 `Directory.Packages.props` 에 고정돼 있고 CI·배포는 잠금 파일(`packages.lock.json`)대로만 복원한다. 패키지를 올리는 일은 Dependabot PR(주 1회)로 하고 PR 화면에서 CI(빌드·테스트·화면 점검, 업데이트 관련 패키지면 업데이트 자체 시험도)가 통과한 것만 합친다. 직접 올릴 때는 `Directory.Packages.props` 를 고친 뒤 `dotnet restore --force-evaluate` 로 잠금 파일을 다시 만들어 함께 커밋한다.
 
 ## 설정 (`appsettings.json`)
 

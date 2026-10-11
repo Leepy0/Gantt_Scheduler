@@ -755,7 +755,7 @@ dialog.sheet:focus { outline: none; }
 @media print {
     @page { size: A4 landscape; margin: 10mm; }
     :root { --top-h: 0px; --bottom-h: 0px; }
-    html, body { background: #fff; }
+    html, body { background: var(--surface); }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .top, .bottom-nav, .toasts, .notice, .change-banner, .toolbar, .tabs, .summary-actions, .no-print, [data-print],
     .page-head .btn, .page-head .seg, .card-head .btn, .card-head .seg, .stage-foot, .danger-zone, .comment-form,

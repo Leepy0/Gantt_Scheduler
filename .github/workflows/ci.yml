@@ -1,9 +1,13 @@
 # push 마다: 빌드 → 테스트(SQLite) → SQL Server 마이그레이션·테스트 → 화면 점검(데스크톱·모바일 캡처)
 # 결과(로그·캡처)는 preview 브랜치에 올린다. 휴대폰에서도 GitHub 로 바로 볼 수 있다.
+# main 으로 가는 PR(Dependabot 패키지 올리기 등)에도 같은 검사를 돌려 PR 화면에 결과를 남긴다. PR 결과는 preview 에 올리지 않는다
+# (preview 는 main 의 최신 상태를 보여 주는 곳이고, Dependabot PR 의 토큰은 쓰기 권한이 없다)
 name: CI
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -93,7 +97,7 @@ jobs:
           PW_CHANNEL=chrome OUT_DIR=$PWD/out APP_LOG=$PWD/out/logs/app.log node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
 
       - name: 결과를 preview 브랜치에 올리기
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         env:
           BUILD: ${{ steps.build.outcome }}
           TEST: ${{ steps.test.outcome }}

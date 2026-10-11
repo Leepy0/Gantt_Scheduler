@@ -24,6 +24,26 @@ on:
       - '**/packages.lock.json'
       - 'tools/release/**'
       - '.github/workflows/update-selftest.yml'
+  # main 으로 가는 PR(Dependabot 의 호스팅·런타임 패키지 올리기 등)에서도 같은 파일이 바뀌면 돈다
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/GanttScheduler/Services/Update*.cs'
+      - 'src/GanttScheduler/Services/ServiceInstaller.cs'
+      - 'src/GanttScheduler/Services/WindowsServiceSupport.cs'
+      - 'src/GanttScheduler/Services/Identity.cs'
+      - 'src/GanttScheduler/Program.cs'
+      - 'src/GanttScheduler/Data/Seeder.cs'
+      - 'src/GanttScheduler/Data/DbSetup.cs'
+      - 'src/GanttScheduler/*.csproj'
+      - 'src/GanttScheduler/update-key.pub'
+      - 'src/GanttScheduler/appsettings*.json'
+      - 'src/GanttScheduler/Pages/Admin/Update*'
+      - 'src/GanttScheduler/wwwroot/js/update.js'
+      - 'Directory.*.props'
+      - '**/packages.lock.json'
+      - 'tools/release/**'
+      - '.github/workflows/update-selftest.yml'
   workflow_dispatch:
 
 concurrency:

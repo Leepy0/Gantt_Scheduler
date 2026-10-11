@@ -45,8 +45,8 @@ env:
 
 jobs:
   package:
-    # 테스트 빌드는 CI 가 성공했을 때만
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    # 테스트 빌드는 main 에 들어간 커밋의 CI 가 성공했을 때만 (PR 에서 돈 CI 로는 만들지 않는다)
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

@@ -53,7 +53,7 @@ public class MasterService
 
             case "category":
             {
-                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).ToListAsync();
+                var cats = await _db.Categories.AsNoTracking().Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery().ToListAsync();
                 var nodes = new List<MasterNode>();
                 foreach (var c in cats.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
                 {

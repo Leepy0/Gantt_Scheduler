@@ -409,6 +409,21 @@ public static class UpdateApplier
         return list;
     }
 
+    // 받아 둔 버전 폴더에서 빠진 파일 (없으면 null). 실행 파일과, 패키지 목록이 있으면 그 목록의 파일을 모두 본다.
+    // 폴더가 일부만 지워진 경우(Windows 에서 잠긴 파일만 남음)를 적용 전에 알아채 다시 받게 하려는 것이다
+    public static string? MissingFile(string dir)
+    {
+        try
+        {
+            if (!File.Exists(Path.Combine(dir, EntryDll))) return EntryDll;
+            return ReadList(dir)?.Where(r => !Protected(r)).FirstOrDefault(r => !File.Exists(Path.Combine(dir, r)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return FileList;   // 목록을 읽지 못하면 온전한지 알 수 없다
+        }
+    }
+
     // 데이터 폴더와 점검 안내 파일은 교체 대상에서 뺀다
     private static bool Protected(string rel) =>
         rel.Equals(OfflineFile, StringComparison.OrdinalIgnoreCase)

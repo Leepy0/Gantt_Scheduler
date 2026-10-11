@@ -131,7 +131,7 @@ public class ProjectService
     public async Task<int> CreateAsync(ProjectInput input)
     {
         var title = Text(input.Title, 200, "과제명", "title", required: true)!;
-        var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems)
+        var category = await _db.Categories.Include(c => c.StageTemplates).ThenInclude(t => t.CheckItems).AsSplitQuery()
                            .FirstOrDefaultAsync(c => c.Id == input.CategoryId)
             ?? throw new RuleException("과제 유형을 선택해 주세요.", "categoryId");
         var (corp, loc) = await ResolveLocationAsync(input.LocationId);

@@ -551,6 +551,66 @@ public partial class UpdateTests
         Assert.True(svc.Status().History.First().Ok);
     }
 
+    [Fact]
+    public void 새_버전이_요청을_받기_전에_죽어도_받아_둔_폴더가_남아_다시_시도할_수_있다()
+    {
+        // 0.3.0 서버가 0.3.1 적용을 시작하며 남긴 상태 (도우미는 이것을 교체 전 스냅숏으로 쥐고 있다)
+        var staged = Path.Combine(DataDir, "staged", "0.3.1");
+        MakeVersion(staged, "0.3.1");
+        WriteState(new UpdateState
+        {
+            Staged = new StagedUpdate("0.3.1", staged, new string('a', 64), "S1", null, DateTime.UtcNow, "download", "자동"),
+            Pending = new PendingSwap("apply", "0.3.0", "0.3.1", "S1", "자동", DateTime.UtcNow),
+        });
+        var snapshot = File.ReadAllText(Path.Combine(DataDir, "state.json"));
+
+        // 0.3.1 이 시작 단계(StartupWork)를 마쳤지만 요청을 받기 전에 죽었다 (ApplicationStarted 없음)
+        var fresh = Service(new AppBuild(new Version(0, 3, 1), "def5678", "release", "S1"));
+        fresh.Startup();
+        fresh.Cleanup();
+        Assert.Null(UpdateApplier.MissingFile(staged));   // 아직 지우지 않았다
+
+        // 도우미가 되돌리며 상태를 스냅숏으로 돌려놓고 시작 실패를 기록한 뒤, 0.3.0 이 다시 뜬다
+        var state = JsonNode.Parse(snapshot)!;
+        state["SkipAuto"] = "0.3.1";
+        state["StartFailure"] = JsonSerializer.SerializeToNode(new StartFailure("0.3.1", "0.3.0", "시작하다 멈춤", null, true, DateTime.UtcNow));
+        File.WriteAllText(Path.Combine(DataDir, "state.json"), state.ToJsonString());
+        var old = Service();
+        old.Startup();
+
+        var st = old.Status();
+        Assert.Equal("0.3.1", st.Staged!.Version);
+        Assert.Equal("apply", st.StartFailure!.Retry);
+        Assert.Null(UpdateApplier.MissingFile(staged));   // '다시 시도'가 온전한 파일로 적용한다
+    }
+
+    [Fact]
+    public void 일부만_남은_받아_둔_폴더는_적용하지_않고_다시_받게_한다()
+    {
+        // Windows 에서 지우다 만 폴더: 잠겨 있던 실행 파일은 남고 나머지가 빠졌다
+        var staged = Path.Combine(DataDir, "staged", "0.3.1");
+        MakeVersion(staged, "0.3.1");
+        File.Delete(Path.Combine(staged, "wwwroot", "js", "app.js"));
+        Assert.Equal("wwwroot/js/app.js", UpdateApplier.MissingFile(staged));
+        WriteState(new UpdateState { Staged = new StagedUpdate("0.3.1", staged, new string('a', 64), "S1", null, DateTime.UtcNow, "download", "자동") });
+
+        var svc = Service();
+        var ex = Assert.Throws<UpdateException>(() => svc.Apply("테스터"));
+        Assert.Contains("app.js", ex.Message);
+        Assert.Null(svc.Status().Staged);   // 다시 받게 한다
+
+        // 시작할 때도 같은 기준으로 버린다 (다시 시도가 반쪽 폴더를 가리키지 않게)
+        WriteState(new UpdateState
+        {
+            Staged = new StagedUpdate("0.3.1", staged, new string('a', 64), "S1", null, DateTime.UtcNow, "download", "자동"),
+            StartFailure = new StartFailure("0.3.1", "0.3.0", "시작하다 멈춤", null, true, DateTime.UtcNow),
+        });
+        var restarted = Service();
+        restarted.Startup();
+        Assert.Null(restarted.Status().Staged);
+        Assert.NotEqual("apply", restarted.Status().StartFailure!.Retry);
+    }
+
     private static void TryDeleteDir(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch (IOException) { /* 무시 */ }

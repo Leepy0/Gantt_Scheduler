@@ -27,7 +27,8 @@ const expected404 = ['/Projects/Detail?id=999999', 'handler=Stamp'];
 const ONLY = (process.env.ONLY || '').split('|').map((x) => x.trim()).filter(Boolean);
 // ONLY 와 관계없이 도는 단계 (이름 앞부분). 이름 등록이 없으면 다른 화면이 열리지 않는다
 const SETUP = ['처음 접속하면', '이름·소속'];
-let active = null;       // 지금 단계가 쓰는 화면 (실패 캡처용)
+let active = null;       // 지금 단계가 쓰는 화면 (실패 캡처용). 다른 화면(동시 수정용 두 번째 화면 등)을 쓰는 동안은 그 화면
+let home = null;         // 단계가 끝나면 돌아갈 기본 화면 (데스크톱·모바일)
 
 function kstToday(offset = 0) {
     return new Date(Date.now() + 9 * 3600e3 + offset * 86400e3).toISOString().slice(0, 10);
@@ -48,6 +49,8 @@ async function step(name, fn) {
         await capture(r);
         results.push(r);
         console.log('  FAIL ' + name + ' — ' + r.error + (r.url ? ' (' + r.url + ')' : ''));
+    } finally {
+        active = home;
     }
 }
 
@@ -180,7 +183,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     // ── 데스크톱 ────────────────────────────────────────────────────
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
     const page = await desktop.newPage();
-    active = page;
+    home = active = page;
     watch(page, 'desktop');
     page.setDefaultTimeout(10000);
 
@@ -512,7 +515,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await stageRow(page, '설치').click();
         await page.waitForSelector(SHEET);
 
-        const other = await desktop.newPage();
+        const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
         await openProject(other, '광주 냉장고 3라인 AGV 도입');
         await other.locator('#stepper .step', { hasText: '설치' }).click();
@@ -522,6 +525,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await other.fill(SHEET + ' textarea[name=reason]', '설치 일정 조정');
         await submitSheet(other);
         await other.close();
+        active = page;
 
         await page.fill(SHEET + ' input[name=name]', '현장 설치');
         await page.locator(SHEET + ' button[type=submit]').click();
@@ -543,12 +547,67 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(installed.includes(kstToday(40).slice(5)), '다른 사람이 바꾼 목표일이 되돌려짐: ' + installed);
     });
 
+    await step('동시 수정 — 작업 시트를 연 뒤 다른 화면이 새 작업을 선행으로 걸어도, 목록을 다시 그려 다시 저장하면 그 연결이 남음', async () => {
+        const W = '안전 인증 서류 준비', X = '동시 추가 선행 작업';
+        await workRow(page, W).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        const wStart = await page.inputValue(SHEET + ' input[name=planStart]');
+        const wStage = await page.inputValue(SHEET + ' select[name=stageId]');
+        const xDay = new Date(Date.parse(wStart + 'T00:00:00Z') - 5 * 86400e3).toISOString().slice(0, 10);
+
+        // 다른 화면: 새 작업 X 를 만들고 W 의 선행으로 건다 (X 는 W 보다 먼저 끝난다)
+        const other = active = await desktop.newPage();
+        other.setDefaultTimeout(10000);
+        await openProject(other, '광주 냉장고 3라인 AGV 도입');
+        await other.click('#add-work');
+        await other.waitForSelector(SHEET);
+        await other.fill(SHEET + ' input[name=title]', X);
+        await other.selectOption(SHEET + ' select[name=stageId]', wStage);
+        await other.fill(SHEET + ' input[name=planStart]', xDay);
+        await other.fill(SHEET + ' input[name=planEnd]', xDay);
+        await submitSheet(other);
+        await workRow(other, W).locator('.g-name').click();
+        await other.waitForSelector(SHEET);
+        await other.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').check();
+        await submitSheet(other);
+        await other.close();
+        active = page;
+
+        // 시트를 연 뒤 생긴 작업이라 처음 목록에는 없다. 메모만 고쳐 저장 → 409 → 최신 과제로 목록을 다시 그린다
+        assert((await page.locator(SHEET + ' .pick-list label', { hasText: X }).count()) === 0, '시트를 연 뒤 생긴 작업이 처음부터 목록에 있음');
+        await page.fill(SHEET + ' textarea[name=note]', '동시 수정 확인');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('다른 사용자가 먼저'), '동시 수정 안내가 아님');
+        assert(await page.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').isChecked(), '다른 화면이 건 선행 작업이 목록에 없거나 체크되지 않음');
+        const note = await page.locator(SHEET + ' [data-field=predecessors] [data-conflict-note]').innerText();
+        assert(note.includes(X) && note.includes('그 값으로 바꿨습니다'), '선행 작업 안내가 다름: ' + note);
+        assert((await page.inputValue(SHEET + ' select[name=stageId]')) === wStage, '단계 선택이 비었거나 바뀜');
+        await page.locator(SHEET + ' [data-field=predecessors]').scrollIntoViewIfNeeded();
+        await shot(page, 'd12b-work-conflict', false);
+        await submitSheet(page);
+
+        // 다시 열면 연결과 내 메모가 모두 남아 있다
+        await workRow(page, W).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        assert(await page.locator(SHEET + ' .pick-list label', { hasText: X }).locator('input').isChecked(), '다시 저장한 뒤 선행 연결이 지워짐');
+        assert((await page.inputValue(SHEET + ' textarea[name=note]')) === '동시 수정 확인', '내 메모가 저장되지 않음');
+        await closeSheet(page);
+
+        // 정리: 추가한 작업을 지운다 (뒤 단계의 작업 수·의존선이 그대로이도록)
+        await workRow(page, X).locator('.g-name').click();
+        await page.waitForSelector(SHEET);
+        await page.click(SHEET + ' [data-danger]');
+        await page.click('dialog[open] [data-yes]');
+        await page.waitForSelector(SHEET, { state: 'detached' });
+        assert((await workRow(page, X).count()) === 0, '추가한 작업이 지워지지 않음');
+    });
+
     await step('다른 사용자가 이 과제를 바꾸면 띠로 알리고 새로 고침하면 반영, 내 저장은 띠 없음, 날짜가 바뀌면 다시 읽음', async () => {
         await page.evaluate(() => App.checkVersion());
         await page.waitForTimeout(500);
         assert(await page.locator('#change-banner').isHidden(), '아무도 바꾸지 않았는데 띠가 뜸');
 
-        const other = await desktop.newPage();
+        const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
         await openProject(other, '광주 냉장고 3라인 AGV 도입');
         await other.click('.tabs [data-tab=activity]');
@@ -556,6 +615,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await other.click('#comment-form button[type=submit]');
         await other.waitForFunction(() => document.getElementById('feed').innerText.includes('다른 화면에서 남긴 메모'));
         await other.close();
+        active = page;
 
         await page.evaluate(() => App.checkVersion());
         await page.waitForSelector('#change-banner:not([hidden])');
@@ -617,7 +677,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     await step('해외 PC — 오늘 시작은 그 나라 날짜, 시각은 그 나라 시각', async () => {
         const zone = 'America/Mexico_City';
         const abroad = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ko-KR', timezoneId: zone });
-        const p2 = await abroad.newPage();
+        const p2 = active = await abroad.newPage();
         watch(p2, 'abroad');
         p2.setDefaultTimeout(10000);
         await openProject(p2, '광주 냉장고 3라인 AGV 도입');
@@ -840,13 +900,14 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         const id = new URL(page.url()).searchParams.get('id');
         await page.goto(BASE + '/Projects/Edit?id=' + id);
         await page.waitForSelector('#edit-form');
-        const other = await desktop.newPage();
+        const other = active = await desktop.newPage();
         other.setDefaultTimeout(10000);
         await other.goto(BASE + '/Projects/Edit?id=' + id);
         await other.fill('textarea[name="Form.Description"]', '다른 화면에서 쓴 설명');
         await other.click('#edit-form button[type=submit]');
         await other.waitForSelector('#summary .summary-meta');
         await other.close();
+        active = page;
 
         await page.fill('input[name="Form.Vendor"]', '대성물류');
         await page.click('#edit-form button[type=submit]');
@@ -1016,8 +1077,16 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
     await step('업데이트 — 서명 검증 표시, 시작되지 않아 되돌린 버전 안내·다시 시도·안내 닫기', async () => {
         await page.goto(BASE + '/Admin/Update');
         await page.waitForSelector('.update-version');
-        // 저장소에 공개키가 없는 빌드는 출처를 확인하지 않는다는 것을 알린다
-        assert((await page.locator('.update-body dl').innerText()).includes('서명 검증 꺼짐'), '서명 검증 상태가 없음');
+        // 서명 검증 표시는 빌드에 공개키(update-key.pub)가 들었는지에 따라 다르다. 서버 상태를 먼저 읽어 그에 맞는 표시인지 본다
+        // (공개키를 커밋하면 켜짐·공개키 지문, 없으면 출처를 확인하지 않는다는 안내)
+        const sig = await page.evaluate(async () => {
+            const r = await fetch(App.url('/Admin/Update?handler=Status'), { headers: { 'Accept': 'application/json' } });
+            const s = (await r.json()).status;
+            return { on: s.signatureCheck, keyId: s.keyId || '', canApply: s.canApply };
+        });
+        const sigText = await page.locator('.update-body dl').innerText();
+        if (sig.on) assert(sigText.includes('켜짐') && sigText.includes(sig.keyId), '서명 검증 켜짐·공개키 표시가 없음: ' + sigText);
+        else assert(sigText.includes('서명 검증 꺼짐'), '서명 검증 꺼짐 안내가 없음: ' + sigText);
         assert((await page.locator('#upload-form input[type=file]').getAttribute('multiple')) !== null, '배포 정보·서명 파일을 함께 고를 수 없음');
         await mockStartFailure(page);
         await page.click('[data-act=check]');
@@ -1026,6 +1095,10 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         assert(text.includes('자동으로 되돌렸습니다') && text.includes('InvalidDataException'), '시작 실패 안내·원인이 없음: ' + text);
         assert(text.includes('자동으로 다시 받거나 적용하지 않습니다'), '자동 적용 제외 안내가 없음');
         assert(await page.locator('.start-failure [data-act=retry]').isVisible(), '다시 시도 단추가 없음');
+        // 받아 둔 파일로 다시 적용하는 단추는 '지금 적용'과 같이 막힌다 (화면 점검은 로컬 빌드라 적용할 수 없다)
+        assert((await page.locator('.start-failure [data-act=retry]').isDisabled()) === !sig.canApply,
+            '다시 시도 단추가 적용 가능 여부와 다름 (적용 가능: ' + sig.canApply + ')');
+        assert((await page.locator('[data-act=apply]').isDisabled()) === !sig.canApply, '지금 적용 단추가 적용 가능 여부와 다름');
         assert((await page.locator('.update-body').innerText()).includes('시작되지 않아 되돌렸던 버전이라'), '받아 둔 버전의 자동 적용 안내가 다름');
         await shot(page, 'd24b-update-start-failure');
         // 안내 닫기 → 서버에 기록된 안내가 없어지고(실제 응답) 화면에서도 사라진다
@@ -1085,6 +1158,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         await page.waitForURL(/\/Projects(\?|$)/);
         await page.goto(BASE + '/Projects?state=all');
         assert((await page.locator('.ptable-row', { hasText: '컨베이어 개선' }).count()) === 0, '삭제되지 않음');
+        active = other;
         await other.evaluate(() => App.checkVersion());
         await other.waitForSelector('#change-banner.alarm:not([hidden])');
         assert((await other.locator('#change-banner').innerText()).includes('삭제'), '삭제됨 안내가 아님');
@@ -1100,7 +1174,7 @@ const workRow = (page, name) => page.locator('#gantt .g-row.work', { hasText: na
         userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
     });
     const m = await mobile.newPage();
-    active = m;
+    home = active = m;
     watch(m, 'mobile');
     m.setDefaultTimeout(10000);
 

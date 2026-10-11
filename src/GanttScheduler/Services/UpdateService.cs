@@ -29,6 +29,16 @@ public class ActivityTracker
     private long _ticks = DateTime.UtcNow.Ticks;
     public DateTime LastUtc => new(Interlocked.Read(ref _ticks), DateTimeKind.Utc);
     public void Touch() => Interlocked.Exchange(ref _ticks, DateTime.UtcNow.Ticks);
+
+    // 화면이 사람의 조작 없이 주기적으로 보내는 요청에 붙이는 머리글 (app.js 의 App.poll)
+    public const string BackgroundHeader = "X-Background";
+
+    // 사람이 쓴 요청인지. 새 버전 확인(/version)·상태 확인(/health)과 배경 확인(X-Background: 1)은 뺀다 —
+    // 열어 둔 화면이 1분마다 묻는 것까지 세면 아무도 없는 밤에도 자동 적용이 되지 않는다
+    public static bool IsUserRequest(HttpRequest request) =>
+        !request.Path.StartsWithSegments("/version")
+        && !request.Path.StartsWithSegments("/health")
+        && request.Headers[BackgroundHeader] != "1";
 }
 
 public class UpdatePaths
@@ -56,6 +66,11 @@ public class UpdateService
     private readonly ILogger<UpdateService> _log;
     private readonly bool _sqlite;
     private readonly int _verifySeconds;
+    // 방금 적용한 받아 둔 폴더. 이 버전이 요청을 받기 시작(ApplicationStarted)할 때까지 지우지 않는다 —
+    // 그 전에 죽으면 도우미가 되돌리면서 상태를 교체 전으로 돌려(Staged = 이 폴더) '다시 시도'가 이 폴더를 쓰기 때문이다.
+    // 교체 도우미도 이 폴더에서 돌며 시작을 기다린다(Windows 에서는 실행 파일이 잠겨 반쪽만 지워진다)
+    private string? _appliedDir;
+    private volatile bool _started;
 
     private readonly object _gate = new();
     private readonly SemaphoreSlim _work = new(1, 1);   // 확인·받기는 한 번에 하나만
@@ -389,11 +404,12 @@ public class UpdateService
         lock (_gate)
         {
             var staged = _state.Staged ?? throw new UpdateException("받아 둔 업데이트가 없습니다.", "먼저 새 버전을 받거나 배포 파일을 올려 주세요.");
-            if (!File.Exists(Path.Combine(staged.Dir, UpdateApplier.EntryDll)))
+            // 실행 파일만 보지 않고 패키지 목록의 파일이 모두 있는지 본다 — 일부만 남은 폴더로 바꾸면 새 버전이 시작되지 않는다
+            if (UpdateApplier.MissingFile(staged.Dir) is { } missing)
             {
                 _state.Staged = null;
                 Save();
-                throw new UpdateException("받아 둔 업데이트 파일이 없어졌습니다.", "새 버전을 다시 받아 주세요.");
+                throw new UpdateException($"받아 둔 업데이트 파일이 없어졌습니다({missing}).", "새 버전을 다시 받아 주세요.");
             }
             Launch("apply", staged.Dir, _paths.PreviousDir, staged.Version, staged.Schema, by);
         }
@@ -567,6 +583,7 @@ public class UpdateService
                 if (ok && pending.Kind == "apply")
                 {
                     _state.Previous = new PreviousVersion(pending.From, pending.FromSchema, _paths.PreviousDir, DateTime.UtcNow);
+                    if (_state.Staged?.Version == pending.To) _appliedDir = Path.GetFullPath(_state.Staged.Dir);
                     _state.Staged = null;
                     _state.StartFailure = null;
                 }
@@ -584,8 +601,8 @@ public class UpdateService
             // 시작되지 않았다고 기록된 버전이 지금 떠 있으면 그 기록은 지난 일이다
             if (_state.StartFailure != null && _state.StartFailure.Version == _build.VersionText) _state.StartFailure = null;
 
-            // 이미 적용됐거나 없어진 받아 둔 파일 정리
-            if (_state.Staged != null && (!IsNewer(_state.Staged.Version) || !Directory.Exists(_state.Staged.Dir))) _state.Staged = null;
+            // 이미 적용됐거나 없어진(일부만 남은 것 포함) 받아 둔 파일 정리 — 반쪽 폴더로 적용하면 새 버전이 반드시 시작에 실패한다
+            if (_state.Staged != null && (!IsNewer(_state.Staged.Version) || UpdateApplier.MissingFile(_state.Staged.Dir) != null)) _state.Staged = null;
             if (_state.Previous != null && !Directory.Exists(_state.Previous.Dir)) _state.Previous = null;
             Save();
         }
@@ -598,17 +615,18 @@ public class UpdateService
         if (!_work.Wait(0)) return;   // 받거나 푸는 중인 파일을 지우지 않도록
         try
         {
-            string? keep;
+            var keep = new List<string>();
             bool hasPrevious;
             lock (_gate)
             {
-                keep = _state.Staged == null ? null : Path.GetFullPath(_state.Staged.Dir);
+                if (_state.Staged != null) keep.Add(Path.GetFullPath(_state.Staged.Dir));
+                if (_appliedDir != null && !_started) keep.Add(_appliedDir);   // 시작이 확인될 때까지 (위 _appliedDir 설명)
                 hasPrevious = _state.Previous != null;
             }
             if (Directory.Exists(_paths.StagedRoot))
             {
                 foreach (var dir in Directory.GetDirectories(_paths.StagedRoot))
-                    if (!string.Equals(Path.GetFullPath(dir), keep, StringComparison.OrdinalIgnoreCase)) TryDeleteDir(dir);
+                    if (!keep.Contains(Path.GetFullPath(dir), StringComparer.OrdinalIgnoreCase)) TryDeleteDir(dir);
             }
             TryDeleteDir(_paths.RolledBackDir);
             if (!hasPrevious) TryDeleteDir(_paths.PreviousDir);
@@ -627,6 +645,8 @@ public class UpdateService
     // 요청을 받기 시작했을 때(ApplicationStarted) 남기는 표시. 쓰다가 끊겨도 깨진 파일을 읽지 않게 임시 파일에 쓰고 바꿔치기한다
     internal void MarkStarted()
     {
+        // 이제 방금 적용한 받아 둔 폴더를 지워도 된다 (다음 정리 때 — 도우미가 이 표시를 보고 끝난 뒤)
+        _started = true;
         try
         {
             Directory.CreateDirectory(_paths.DataDir);

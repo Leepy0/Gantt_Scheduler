@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using GanttScheduler.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GanttScheduler.Tests;
 
@@ -129,6 +130,28 @@ public partial class HttpTests
     }
 
     [Fact]
+    public async Task 화면이_저절로_보내는_변경_확인은_사용으로_치지_않는다()
+    {
+        // 자동 업데이트는 마지막 사용 시각(ActivityTracker)으로 '아무도 안 쓴다'를 판단한다. 상세 화면을 켜 둔 PC 가 1분마다 보내는
+        // 변경 확인까지 사용으로 치면 받아 둔 업데이트가 밤새 적용되지 않는다
+        var client = await RegisteredClientAsync();
+        var tracker = _factory.Services.GetRequiredService<ActivityTracker>();
+        await client.GetAsync("/Projects/Detail?id=2");
+        var before = tracker.LastUtc;
+        await Task.Delay(20);
+
+        var poll = JsonGet("/Projects/Detail?handler=Stamp&id=2");
+        poll.Headers.Add(ActivityTracker.BackgroundHeader, "1");     // App.poll 이 붙이는 머리글
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(poll)).StatusCode);
+        await client.GetAsync("/version");
+        Assert.Equal(before, tracker.LastUtc);
+
+        // 사람이 연 화면·누른 요청은 사용이다
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(JsonGet("/Projects/Detail?handler=Data&id=2"))).StatusCode);
+        Assert.True(tracker.LastUtc > before, "사람의 요청이 사용으로 기록되지 않음");
+    }
+
+    [Fact]
     public async Task 화면이_보낸_오늘로_진행률만_올린_작업의_실적_시작을_넣는다()
     {
         var (client, token) = await DetailAsync(await RegisteredClientAsync(), 2);
@@ -167,6 +190,8 @@ public partial class HttpTests
         var up = await client.SendAsync(Upload(token, 5, "내 자료.txt", System.Text.Encoding.UTF8.GetBytes("권한 확인")));
         var body = await up.Content.ReadAsStringAsync();
         Assert.True(up.StatusCode == HttpStatusCode.OK, body);
+        // 올리기 응답도 다른 변경 응답처럼 한국 날짜를 싣는다 (오래 열어 둔 상세 화면의 '오늘' 갱신)
+        Assert.Equal(KstToday, JsonDocument.Parse(body).RootElement.GetProperty("today").GetString());
         var mine = JsonDocument.Parse(body).RootElement.GetProperty("project").GetProperty("attachments")
             .EnumerateArray().Single(a => a.GetProperty("fileName").GetString() == "내 자료.txt");
         Assert.True(mine.GetProperty("canDelete").GetBoolean());

@@ -389,7 +389,14 @@ public partial class UpdateTests : IDisposable
         Assert.True(log.Ok);
         Assert.Equal(("apply", "0.2.0", "0.3.0", "평영"), (log.Kind, log.From, log.To, log.By));
         Assert.False(File.Exists(Path.Combine(DataDir, "result.json")));
-        Assert.False(Directory.Exists(staged));   // 쓰고 남은 폴더 정리
+        // 방금 적용한 받아 둔 폴더는 이 버전이 요청을 받기 시작할 때까지 남긴다 — 그 전에 죽으면 도우미가 되돌리고
+        // 상태를 교체 전으로 돌려 '다시 시도'가 이 폴더를 쓴다
+        Assert.True(Directory.Exists(staged));
+        svc.Cleanup();
+        Assert.True(Directory.Exists(staged));
+        svc.MarkStarted();
+        svc.Cleanup();
+        Assert.False(Directory.Exists(staged));   // 시작한 뒤에는 쓰고 남은 폴더로 정리
     }
 
     [Fact]
