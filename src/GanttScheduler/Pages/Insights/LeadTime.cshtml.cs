@@ -14,7 +14,17 @@ public class LeadTimeModel : PageModel
     [BindProperty(SupportsGet = true)] public string? Zero { get; set; }
     public bool ExcludeZero => Zero == "exclude";
 
+    // 종료 연도: 그 해에 끝난 완료 과제만 (없으면 전체 — 진행 과제의 완료 단계 포함)
+    [BindProperty(SupportsGet = true)] public int? Year { get; set; }
+    public List<int> Years { get; private set; } = new();
+
     public List<LeadGroup> Groups { get; private set; } = new();
 
-    public async Task OnGetAsync() => Groups = await _insights.LeadTimesAsync(ExcludeZero);
+    public async Task OnGetAsync()
+    {
+        if (Year is < 2000 or > 2099) Year = null;
+        Groups = await _insights.LeadTimesAsync(ExcludeZero, Year);
+        Years = await _insights.ClosedYearsAsync();
+        if (Year is int y && !Years.Contains(y)) Years = Years.Append(y).OrderByDescending(x => x).ToList();
+    }
 }

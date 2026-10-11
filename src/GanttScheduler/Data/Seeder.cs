@@ -50,6 +50,9 @@ public static class DbInitializer
         // 기준선 차수 이력이 생기기 전에 확정한 과제에 1차를 만든다(멱등 — 이미 차수가 있으면 건너뛴다)
         var migrated = await GanttScheduler.Services.BaselineHistory.EnsureFirstRoundsAsync(db);
         if (migrated > 0) log.LogInformation("기준선 차수 이력: 과제 {Count}건의 기존 기준선을 1차로 옮겼습니다.", migrated);
+        // 종료일 열이 생기기 전에 끝난(완료·중단) 과제의 종료일을 한 번 채운다(멱등 — 값이 있으면 건너뛴다)
+        var closed = await GanttScheduler.Services.ClosedDates.FillAsync(db, clock.Today);
+        if (closed > 0) log.LogInformation("과제 종료일: 완료·중단 과제 {Count}건의 종료일을 채웠습니다.", closed);
     }
 
     public static string SchemaHash(string script) =>
@@ -334,6 +337,7 @@ public static class Seeder
                 i++;
             }
             p.Activities.Add(new Activity { Type = ActivityType.Created, Text = "과제 등록", UserId = owner.Id, At = now.AddDays(startOffset) });
+            p.ClosedOn = Rules.ClosedOn(p, D(0));
             db.Projects.Add(p);
             return p;
         }

@@ -129,10 +129,30 @@ public class InsightService
     // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다.
     // excludeZero: 근무일 0 이하 표본(몰아서 완료 처리한 기록)을 소요일 평균에서 뺀다
     // 진행 과제의 지금 단계 체류(단계 병목)도 같은 표본 기준으로 센다(today)
-    public async Task<List<LeadGroup>> LeadTimesAsync(bool excludeZero = false) =>
-        Reporting.LeadTimes(await _db.LiveProjects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
-            .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync(),
+    // year: 그 해에 끝난(종료일 Project.ClosedOn) 완료 과제만 센다 — 없으면 진행 과제의 완료 단계까지 전체.
+    // 연도를 고르면 진행 중 과제가 없으므로 '진행 중 · 평균 초과' 열은 비어 있다
+    public async Task<List<LeadGroup>> LeadTimesAsync(bool excludeZero = false, int? year = null)
+    {
+        var q = _db.LiveProjects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages).Where(p => p.State != ProjectState.Dropped);
+        if (year is int y)
+        {
+            var (from, to) = Rules.YearRange(y);
+            q = q.Where(p => p.State == ProjectState.Done && p.ClosedOn >= from && p.ClosedOn <= to);
+        }
+        return Reporting.LeadTimes(await q.AsSplitQuery().ToListAsync(),
             await _projects.CalendarAsync(), await FirstTargetsAsync(), excludeZero, _clock.Today);
+    }
+
+    // 끝난 과제가 있는 연도(가장 이른 종료 연도 ~ 올해, 최근 해가 먼저) — 연도 고르기 목록. 가장 이른 날짜 하나만 읽는다
+    public async Task<List<int>> ClosedYearsAsync()
+    {
+        var first = await _db.LiveProjects.AsNoTracking().Where(p => p.State == ProjectState.Done && p.ClosedOn != null)
+            .OrderBy(p => p.ClosedOn).Select(p => p.ClosedOn).FirstOrDefaultAsync();
+        var list = new List<int>();
+        if (first == null) return list;
+        for (var y = Math.Max(_clock.Today.Year, first.Value.Year); y >= first.Value.Year; y--) list.Add(y);
+        return list;
+    }
 
     // 단계마다 처음 정한 목표일: 첫 목표일 변경(TargetChanged)의 이전 값. 바꾼 적이 없는 단계는 목록에 없다(지금 목표일이 처음 값).
     // 목표일 변경 행만 열 몇 개로 읽는다

@@ -191,6 +191,7 @@ public class AnalyticsRulesTests
         {
             var p = new Project { Id = id, State = state, CategoryId = 1, CorporationId = 1, Category = new Category { Id = 1, Name = "물류" }, StartDate = D(1, 1) };
             p.Stages.Add(new Stage { Id = id * 10, Name = "검토", TargetDate = D(12, 1), CompletedDate = done });
+            p.ClosedOn = Rules.ClosedOn(p, today);   // 서비스가 저장하는 종료일 — 막대는 이 값으로 연도를 본다
             return p;
         }
         var all = new List<Project>

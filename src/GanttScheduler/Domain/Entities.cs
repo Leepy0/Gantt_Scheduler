@@ -180,6 +180,9 @@ public class Project
     public DateTime UpdatedAt { get; set; }
     public int Version { get; set; }                // 동시 수정 감지용 — 과제 정보·상태가 바뀔 때마다 증가
     public DateTime? BaselineAt { get; set; }       // 기준선을 확정한 시각 (없으면 미확정)
+    // 과제 종료일: 완료면 마지막 단계 완료일, 중단이면 중단 처리일(Rules.ClosedOn). 진행·보류는 없음.
+    // 목록의 완료·중단 연도 조건과 '올해 완료'가 단계 완료일을 매번 다시 모으지 않고 DB 에서 거르기 위해 저장한다
+    public DateOnly? ClosedOn { get; set; }
     // 휴지통: 지운 과제는 표시만 하고 모든 조회에서 뺀다(AppDb.LiveProjects). 보관 기간(Trash:KeepDays)이 지나면 영구 삭제한다
     public DateTime? DeletedAt { get; set; }
     public int? DeletedById { get; set; }

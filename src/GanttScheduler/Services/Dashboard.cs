@@ -41,12 +41,13 @@ public record RecentNote(string Text, string User, DateTime At);
 // 위험 판정에 쓰는 것: 근무일 달력(전진 계산), 과제 간 단계 연결(위반), 정체 기준 시각. 없으면(시험·옛 호출) 위험·정체는 예전 화면처럼 비어 있다
 public record RiskContext(WorkCalendar Calendar, IReadOnlyList<StageLink> CrossLinks, DateTime UtcNow);
 
-// DoneYear: 그 해에 끝난 완료 과제(Rules.CompletedOn — 대시보드 '올해 완료'와 같은 판정).
+// DoneYear: 그 해에 끝난 완료 과제(Project.ClosedOn — 대시보드 '올해 완료'와 같은 판정).
 // DueDays: 미완료 단계 목표일이 오늘부터 그 일수 안에 있는 진행 과제('n일 내 목표'·다가오는 일정과 같은 판정)
 // Sort·Desc: 목록 머리글 정렬(Dashboard.SortKeys — 없으면 상태 → 지연 큰 순 → 목표 종료). Excel 도 같은 순서로 내보낸다
 // Current: 대시보드 막대와 같은 범위(진행·보류 + 올해 완료 — Dashboard.InBars). OrgUnitId: 담당자 소속이 그 조직(하위 파트 포함)인 과제(Rules.InOrg)
+// ClosedYear: 종료일(Project.ClosedOn)이 그 해인 과제 — 목록의 완료·중단 탭 연도 고르기(기본 올해). 해가 갈수록 끝난 과제가 화면을 채우지 않게
 public record ProjectFilter(string? Q, int? CategoryId, int? CorporationId, string? State, bool Mine, int? DoneYear = null, int? DueDays = null,
-    string? Sort = null, bool Desc = false, bool Current = false, int? OrgUnitId = null);
+    string? Sort = null, bool Desc = false, bool Current = false, int? OrgUnitId = null, int? ClosedYear = null);
 
 public class DashboardService
 {
@@ -71,7 +72,7 @@ public class DashboardService
         {
             if (query.CategoryId is int category) q = q.Where(p => p.CategoryId == category);
             if (query.CorporationId is int corp) q = q.Where(p => p.CorporationId == corp);
-            return q;
+            return Dashboard.InScope(q, _clock.Today);
         }, withLinks: true);
         if (query.Mine) all = all.Where(p => Dashboard.IsMine(p, _me.Id)).ToList();
         if (query.OrgUnitId is int org) all = all.Where(p => Rules.InOrg(p.Owner?.OrgUnit, org)).ToList();
@@ -94,6 +95,12 @@ public class DashboardService
             if (Dashboard.StateOf(filter.State) is { } state) q = q.Where(p => p.State == state);
             if (filter.CategoryId is int category) q = q.Where(p => p.CategoryId == category);
             if (filter.CorporationId is int corp) q = q.Where(p => p.CorporationId == corp);
+            // 연도 조건은 종료일 범위로 DB 에서 거른다 — 지난 해의 완료·중단 과제(단계·작업까지)를 읽지 않게
+            if ((filter.ClosedYear ?? filter.DoneYear) is int year)
+            {
+                var (from, to) = Rules.YearRange(year);
+                q = q.Where(p => p.ClosedOn >= from && p.ClosedOn <= to);
+            }
             return q;
         }, withLinks: true);
         return Dashboard.Filter(all, await _projects.LocationsAsync(), _clock.Today, filter, _me.Id, await RiskAsync());
@@ -122,7 +129,16 @@ public static class Dashboard
 
     // 유형·법인 막대에 넣는 과제: 진행·보류 과제와 올해 끝난 완료 과제. 역대 완료·중단 과제까지 세면 진행·지연 비교가 묻힌다
     public static bool InBars(Project p, DateOnly today) =>
-        p.State is ProjectState.Active or ProjectState.Hold || (p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == today.Year);
+        p.State is ProjectState.Active or ProjectState.Hold || (p.State == ProjectState.Done && p.ClosedOn?.Year == today.Year);
+
+    // 대시보드·상황판이 DB 에서 읽는 과제: 진행·보류와 올해 끝난 완료 과제(InBars 와 같은 범위). KPI·카드·막대가 이 밖의 과제를 쓰지 않으므로
+    // 지난 해 완료·중단 과제를 단계·작업까지 읽지 않는다
+    public static IQueryable<Project> InScope(IQueryable<Project> q, DateOnly today)
+    {
+        var (from, to) = Rules.YearRange(today.Year);
+        return q.Where(p => p.State == ProjectState.Active || p.State == ProjectState.Hold
+            || (p.State == ProjectState.Done && p.ClosedOn >= from && p.ClosedOn <= to));
+    }
 
     public static bool IsMine(Project p, int userId) =>
         p.OwnerId == userId || p.Stages.Any(s => s.Works.Any(w => w.OwnerId == userId || w.CoOwnerId == userId));
@@ -146,7 +162,7 @@ public static class Dashboard
             .OrderBy(d => d.Date).ThenBy(d => d.Project)
             .ToList();
 
-        var doneThisYear = all.Count(p => p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == today.Year);
+        var doneThisYear = all.Count(p => p.State == ProjectState.Done && p.ClosedOn?.Year == today.Year);
 
         // 진행 과제 화면 모델(위험·정체 판정 포함)은 한 번만 만든다 — KPI·카드·간트가 같은 값을 쓴다
         var views = active.ToDictionary(p => p.Id, p => ViewOf(p, locations, today, risk));
@@ -251,7 +267,8 @@ public static class Dashboard
         if (f.CategoryId != null) q = q.Where(p => p.CategoryId == f.CategoryId.Value);
         if (f.CorporationId != null) q = q.Where(p => p.CorporationId == f.CorporationId.Value);
         // 대시보드 숫자에서 온 조건: 그 숫자와 같은 판정으로 거른다
-        if (f.DoneYear is int year) q = q.Where(p => p.State == ProjectState.Done && Rules.CompletedOn(p)?.Year == year);
+        if (f.DoneYear is int year) q = q.Where(p => p.State == ProjectState.Done && p.ClosedOn?.Year == year);
+        if (f.ClosedYear is int closedYear) q = q.Where(p => p.ClosedOn?.Year == closedYear);
         if (f.Current) q = q.Where(p => InBars(p, today));
         if (f.OrgUnitId is int org) q = q.Where(p => Rules.InOrg(p.Owner?.OrgUnit, org));
         if (f.DueDays is int days) q = q.Where(p => p.State == ProjectState.Active && Rules.HasStageDueWithin(p, today, Math.Clamp(days, 0, MaxDueDays)));

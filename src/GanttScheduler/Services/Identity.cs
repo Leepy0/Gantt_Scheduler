@@ -102,7 +102,10 @@ public class UserGateMiddleware
             }
         }
 
-        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/Error");
+        // 상황판(/Board)은 사람 없이 켜 두는 PC 가 보는 읽기 전용 화면이라 이름 등록 없이 연다(GET 만 — 고치는 요청은 없다).
+        // 허용 대역 검사는 위에서 그대로 거쳤고, 사용자를 만들지 않으므로 첫 관리자 판정·담당자 목록에도 닿지 않는다
+        var open = path.StartsWithSegments("/Welcome") || path.StartsWithSegments("/Error")
+            || (path.StartsWithSegments("/Board") && (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)));
         if ((!me.IsKnown || me.NeedsConfirm) && !open)
         {
             var wantsJson = ctx.Request.Headers.Accept.ToString().Contains("application/json");

@@ -17,14 +17,30 @@
     <span class="spacer"></span>
     @* 0일 표본: 앞 단계와 같은 날(또는 먼저) 완료한 기록 — 몰아서 완료 처리해 실제 기간을 알 수 없다 *@
     <div class="seg small" role="group" aria-label="0일 표본">
-        <a asp-page="/Insights/LeadTime" class="@(Model.ExcludeZero ? "" : "on")">0일 표본 포함</a>
-        <a asp-page="/Insights/LeadTime" asp-route-zero="exclude" class="@(Model.ExcludeZero ? "on" : "")" data-zero-exclude>0일 표본 제외</a>
+        <a asp-page="/Insights/LeadTime" asp-route-year="@Model.Year" class="@(Model.ExcludeZero ? "" : "on")">0일 표본 포함</a>
+        <a asp-page="/Insights/LeadTime" asp-route-zero="exclude" asp-route-year="@Model.Year" class="@(Model.ExcludeZero ? "on" : "")" data-zero-exclude>0일 표본 제외</a>
     </div>
+    @* 종료 연도: 그 해에 끝난 완료 과제만 센다(해마다 공정·인원이 달라 평균을 해별로 견주기 위해). 전체는 진행 과제의 완료 단계까지 *@
+    <form method="get" class="lead-year">
+        @if (Model.ExcludeZero) { <input type="hidden" name="zero" value="exclude" /> }
+        <select name="year" id="lead-year" aria-label="종료 연도" onchange="this.form.submit()">
+            <option value="">전체 기간</option>
+            @foreach (var y in Model.Years)
+            {
+                <option value="@y" selected="@(Model.Year == y)">@(y)년 종료 과제</option>
+            }
+        </select>
+        <noscript><button type="submit" class="btn small">조회</button></noscript>
+    </form>
 </div>
+@if (Model.Year != null)
+{
+    <p class="form-note lead-year-note" data-lead-year>@(Model.Year)년에 끝난 완료 과제만 셉니다. 진행 중인 과제가 없으므로 '진행 중 · 평균 초과' 열은 비어 있습니다.</p>
+}
 
 @if (Model.Groups.All(g => g.Rows.Count == 0))
 {
-    <section class="card"><p class="empty">완료한 단계가 아직 없어 통계를 낼 수 없습니다.</p></section>
+    <section class="card"><p class="empty">@(Model.Year != null ? $"{Model.Year}년에 끝난 과제가 없어 통계를 낼 수 없습니다." : "완료한 단계가 아직 없어 통계를 낼 수 없습니다.")</p></section>
 }
 
 @foreach (var g in Model.Groups.Where(g => g.Rows.Count > 0))

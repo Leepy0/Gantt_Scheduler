@@ -46,6 +46,9 @@ builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileL
 builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
+// TV 상황판(/Board): 과제 그래프가 저장될 때마다 오르는 데이터 버전(AppDb.SaveChangesAsync 가 올린다)과 상황판 요약
+builder.Services.AddSingleton<DataVersion>();
+builder.Services.AddScoped<BoardService>();
 // 접속 제어(허용 대역·첫 관리자·IP 재확인). 테스트가 바꾼 설정도 보이도록 서비스가 처음 쓰일 때 읽는다
 builder.Services.AddSingleton(sp => AccessOptions.From(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped<CurrentUser>();
