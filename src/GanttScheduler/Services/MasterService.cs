@@ -94,6 +94,11 @@ public class MasterService
                     .OrderBy(e => e.SortOrder).ThenBy(e => e.Name)
                     .Select(e => new MasterNode(e.Id, null, 1, e.Name, e.IsActive, e.SortOrder)).ToList();
 
+            case "reason":
+                return (await _db.DelayReasons.AsNoTracking().ToListAsync())
+                    .OrderBy(e => e.SortOrder).ThenBy(e => e.Id)
+                    .Select(e => new MasterNode(e.Id, null, 1, e.Name, e.IsActive, e.SortOrder)).ToList();
+
             case "holiday":
                 return (await _db.Holidays.AsNoTracking().ToListAsync())
                     .OrderBy(h => h.Date)
@@ -133,10 +138,11 @@ public class MasterService
         "org" => Limits.OrgName,
         "user" => Limits.UserName,
         "holiday" => Limits.HolidayName,
+        "reason" => Limits.DelayReasonName,
         _ => Limits.CategoryName,
     };
 
-    public static readonly string[] Kinds = { "location", "category", "equipment", "container", "vendor", "org", "user", "holiday" };
+    public static readonly string[] Kinds = { "location", "category", "equipment", "container", "vendor", "org", "user", "holiday", "reason" };
 
     public async Task SaveAsync(MasterSave input)
     {
@@ -286,6 +292,20 @@ public class MasterService
                 break;
             }
 
+            case "reason":
+            {
+                DelayReason e;
+                if (input.Id == null)
+                {
+                    var all = await _db.DelayReasons.ToListAsync();
+                    e = new DelayReason { SortOrder = NextSort(all.Select(s => s.SortOrder)) };
+                    _db.DelayReasons.Add(e);
+                }
+                else e = await _db.DelayReasons.FirstOrDefaultAsync(t => t.Id == input.Id.Value) ?? throw NotFound();
+                e.Name = name;
+                break;
+            }
+
             case "holiday":
             {
                 if (input.Date == null) throw new RuleException("날짜를 입력해 주세요.", "date");
@@ -424,6 +444,12 @@ public class MasterService
             case "vendor":
             {
                 var e = await _db.Vendors.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
+                e.IsActive = Wanted();
+                break;
+            }
+            case "reason":
+            {
+                var e = await _db.DelayReasons.FirstOrDefaultAsync(x => x.Id == r.Id) ?? throw NotFound();
                 e.IsActive = Wanted();
                 break;
             }
@@ -611,6 +637,13 @@ public class MasterService
                 var all = await _db.Vendors.ToListAsync();
                 var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
                 Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
+                break;
+            }
+            case "reason":
+            {
+                var all = await _db.DelayReasons.ToListAsync();
+                var e = all.FirstOrDefault(x => x.Id == r.Id) ?? throw NotFound();
+                Swap(all.OrderBy(x => x.SortOrder).ThenBy(x => x.Id).ToList(), e, r.Dir, (x, v) => x.SortOrder = v);
                 break;
             }
             default:

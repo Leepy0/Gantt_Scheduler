@@ -9,7 +9,7 @@ public record StageTargetInput(int TemplateId, DateOnly? TargetDate);
 // 단계 일정 표 저장: 바꾼 단계만 보낸다. Version 은 표를 연 때(또는 동시 수정 뒤 다시 맞춘 때)의 단계 버전
 public record StageScheduleRow(int StageId, int? Version, DateOnly? TargetDate, DateOnly? CompletedDate);
 
-public record StageScheduleInput(int ProjectId, List<StageScheduleRow>? Rows, string? Reason);
+public record StageScheduleInput(int ProjectId, List<StageScheduleRow>? Rows, string? Reason, int? ReasonCode = null);
 
 // 단계 일정 표 미리보기: 저장 전의 날짜로 다시 계산한 근무일 간격·추천 입고일 (화면이 계산하지 않도록 서버가 준다)
 public record StagePlanRow(int StageId, DateOnly? TargetDate, DateOnly? CompletedDate);
@@ -114,6 +114,7 @@ public partial class ProjectService
     public async Task SaveStageScheduleAsync(StageScheduleInput input)
     {
         var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
         var p = await RequireAsync(input.ProjectId);
         var rows = input.Rows ?? new();
         if (rows.Select(r => r.StageId).Distinct().Count() != rows.Count)

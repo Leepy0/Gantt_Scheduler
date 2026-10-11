@@ -10,12 +10,13 @@ namespace GanttScheduler.Services;
 // 목표 대비(완료일 − 목표일, 달력일 — 기준선 대비 일수와 같은 단위)는 소요일과 관계없이 완료한 단계 모두로 센다:
 //  AvgOver/LateCount/OverCount: 지금 목표일 대비(여러 번 미룬 단계일수록 지킨 것처럼 보인다), AvgOverFirst/FirstCount: 처음 정한 목표일 대비,
 //  AvgOverBaseline/BaselineCount: 기준선 대비(기준선이 있는 단계만)
+// Active·ActiveOver: 지금 이 단계에 있는 진행 과제 수와 그중 체류 근무일이 평균 소요일(AvgWorkDays)을 넘은 수(단계 병목 — Rules.StageDwell)
 public record LeadRow(string Stage, int Count, double AvgDays, int MinDays, int MaxDays, double? AvgOver, int LateCount,
     double AvgWorkDays = 0, int ZeroCount = 0, double? AvgOverFirst = null, int FirstCount = 0, double? AvgOverBaseline = null, int BaselineCount = 0,
-    int OverCount = 0);
+    int OverCount = 0, int Active = 0, int ActiveOver = 0);
 
 public record LeadGroup(int CategoryId, string Category, int Projects, int DoneProjects, double? AvgTotalDays, int ScaleMax, List<LeadRow> Rows,
-    double? AvgTotalWorkDays = null);
+    double? AvgTotalWorkDays = null, List<BottleneckItem>? Over = null);
 
 // 단계 리드타임 표본 하나 (Days: 달력일, 음수는 0 / WorkDays: 근무일 거리 WorkCalendar.Distance). Zero: 근무일 0 이하
 public record LeadSample(Stage Stage, int Days, int WorkDays)
@@ -114,10 +115,11 @@ public class InsightService
 
     // 리드타임은 단계 완료일만 본다 — 작업·담당자는 읽지 않는다. 중단 과제는 표본에서 빠지므로 DB 에서 거른다.
     // excludeZero: 근무일 0 이하 표본(몰아서 완료 처리한 기록)을 소요일 평균에서 뺀다
+    // 진행 과제의 지금 단계 체류(단계 병목)도 같은 표본 기준으로 센다(today)
     public async Task<List<LeadGroup>> LeadTimesAsync(bool excludeZero = false) =>
         Reporting.LeadTimes(await _db.LiveProjects.AsNoTracking().Include(p => p.Category).Include(p => p.Stages)
             .Where(p => p.State != ProjectState.Dropped).AsSplitQuery().ToListAsync(),
-            await _projects.CalendarAsync(), await FirstTargetsAsync(), excludeZero);
+            await _projects.CalendarAsync(), await FirstTargetsAsync(), excludeZero, _clock.Today);
 
     // 단계마다 처음 정한 목표일: 첫 목표일 변경(TargetChanged)의 이전 값. 바꾼 적이 없는 단계는 목록에 없다(지금 목표일이 처음 값).
     // 목표일 변경 행만 열 몇 개로 읽는다
@@ -260,7 +262,7 @@ public class InsightService
 }
 
 // 통계·보고 계산 (순수 함수)
-public static class Reporting
+public static partial class Reporting
 {
     public static readonly (string Key, string Label)[] Kinds =
     {
@@ -316,7 +318,9 @@ public static class Reporting
     }
 
     // firstTargets: 단계 Id → 처음 정한 목표일(InsightService.FirstTargetsAsync). 없는 단계는 지금 목표일이 처음 값이다
-    public static List<LeadGroup> LeadTimes(List<Project> all, WorkCalendar? cal = null, IReadOnlyDictionary<int, DateOnly>? firstTargets = null, bool excludeZero = false)
+    // today: 주면 진행 과제의 지금 단계 체류 근무일을 같은 기준점(Rules.StageEntered)으로 세어 '진행 중 n · 평균 초과 n'(단계 병목)을 채운다
+    public static List<LeadGroup> LeadTimes(List<Project> all, WorkCalendar? cal = null, IReadOnlyDictionary<int, DateOnly>? firstTargets = null, bool excludeZero = false,
+        DateOnly? today = null)
     {
         cal ??= WorkCalendar.WeekendsOnly;
         var groups = new List<LeadGroup>();
@@ -361,10 +365,26 @@ public static class Reporting
                     Avg(overFirst), overFirst.Count, Avg(overBase), overBase.Count, over.Count));
             }
 
+            // 단계 병목: 지금 단계에 머문 근무일을 그 단계의 평균 소요일(근무일)과 견준다. 표본이 없는 단계도 진행 중 수는 보인다
+            var overList = new List<BottleneckItem>();
+            if (today != null)
+            {
+                foreach (var d in Dwells(g, cal, today.Value).GroupBy(x => x.Stage))
+                {
+                    var i = rows.FindIndex(r => r.Stage == d.Key);
+                    var avg = i >= 0 && rows[i].Count > 0 ? rows[i].AvgWorkDays : (double?)null;
+                    var over = avg == null ? new List<(int CategoryId, string Stage, Project Project, int Dwell)>() : d.Where(x => x.Dwell > avg.Value).ToList();
+                    overList.AddRange(over.Select(x => new BottleneckItem(x.Project.Id, x.Project.Title, x.Stage, x.Dwell, avg!.Value)));
+                    if (i >= 0) rows[i] = rows[i] with { Active = d.Count(), ActiveOver = over.Count };
+                    else rows.Add(new LeadRow(d.Key, 0, 0, 0, 0, null, 0, Active: d.Count()));
+                }
+                overList = overList.OrderByDescending(x => x.Dwell - x.Avg).ThenBy(x => x.Project, StringComparer.Ordinal).ToList();
+            }
+
             groups.Add(new LeadGroup(g.Key, g.First().Category?.Name ?? "", g.Count(), totals.Count,
                 totals.Count > 0 ? Math.Round(totals.Average(t => t.Days), 1) : null,
                 rows.Count > 0 ? Math.Max(1, rows.Max(r => r.MaxDays)) : 1, rows,
-                totals.Count > 0 ? Math.Round(totals.Average(t => t.WorkDays), 1) : null));
+                totals.Count > 0 ? Math.Round(totals.Average(t => t.WorkDays), 1) : null, overList));
         }
         return groups;
     }

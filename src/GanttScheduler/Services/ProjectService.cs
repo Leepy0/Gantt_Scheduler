@@ -15,7 +15,7 @@ public record ProjectInput(
 // CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다
 public record StageInput(
     int ProjectId, int? Id, string? Name, DateOnly? TargetDate, DateOnly? CompletedDate, string? Reason, bool Cascade,
-    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false);
+    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false, int? ReasonCode = null);
 
 // ClientToday: 화면(접속한 PC)의 오늘 날짜. 진행률만 올렸을 때 넣는 실적 시작에 쓴다(Rules.UserToday)
 // Links: 선행 작업마다 유형·간격(LinkInput). 없으면 Predecessors(id 목록 — 새 연결은 '끝나면 시작'·간격 0, 있던 연결은 유형·간격 유지)를 쓴다
@@ -23,7 +23,7 @@ public record WorkInput(
     int? Id, int StageId, string? Title, string? Owner, string? CoOwner,
     DateOnly? PlanStart, DateOnly? PlanEnd, DateOnly? ActualStart, DateOnly? ActualEnd,
     int Progress, string? Note, string? Reason, int? Version = null, List<int>? Predecessors = null, DateOnly? ClientToday = null,
-    List<LinkInput>? Links = null);
+    List<LinkInput>? Links = null, int? ReasonCode = null);
 
 // Mentions: 알릴 사람(사용자 Id). 이름은 공백이 있을 수 있어 본문을 파싱하지 않고 화면이 목록에서 고른 Id 를 보낸다
 public record CommentInput(int ProjectId, int? StageId, int? WorkId, string? Text, List<int>? Mentions = null);
@@ -559,6 +559,7 @@ public partial class ProjectService
     {
         var name = Text(input.Name, Limits.StageName, "단계명", "name", required: true)!;
         var reason = Text(input.Reason, Limits.Reason, "사유", "reason");
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
         var p = await RequireAsync(input.ProjectId);
 
         if (input.Id == null)
@@ -727,12 +728,15 @@ public partial class ProjectService
             var end = start > done ? start : done;    // 완료일보다 늦게 시작한 작업은 시작일에 닫는다(종료가 시작보다 앞설 수 없다)
             changes.Add($"실적 종료 {Fmt(end)}");
             if (w.Progress != 100) changes.Add($"진행률 {w.Progress}% → 100%");
+            var oldProgress = w.Progress;
             w.ActualStart = start;
             w.ActualEnd = end;
             w.Progress = 100;
             w.Version++;
-            p.Activities.Add(NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
-                stageId: s.Id, workId: w.Id, batch: batch));
+            var closed = NewActivity(ActivityType.WorkEdited, $"[{w.Title}] 단계 완료로 닫음: " + string.Join(", ", changes),
+                stageId: s.Id, workId: w.Id, batch: batch);
+            SetProgressValues(closed, oldProgress, 100);
+            p.Activities.Add(closed);
         }
     }
 
@@ -887,6 +891,7 @@ public partial class ProjectService
         if (input.PlanStart.Value > input.PlanEnd.Value)
             throw new RuleException("목표 시작일이 종료일보다 늦습니다.", "planStart");
         Rules.ValidateActuals(input.ActualStart, input.ActualEnd, input.Progress);
+        using var reasonCode = await UseReasonCodeAsync(input.ReasonCode);
 
         var cal = await CalendarAsync();
         var p = await RequireByStageAsync(input.StageId);
@@ -952,6 +957,7 @@ public partial class ProjectService
             }
 
             var changed = new List<string>();
+            var oldProgress = w.Progress;
             if (w.Title != title) { changed.Add($"작업명 → {title}"); w.Title = title; }
             if (w.StageId != stage.Id)
             {
@@ -972,6 +978,7 @@ public partial class ProjectService
             if (changed.Count > 0)
             {
                 var edited = NewActivity(ActivityType.WorkEdited, $"[{title}] " + string.Join(", ", changed), stageId: stage.Id, workId: w.Id);
+                SetProgressValues(edited, oldProgress, progress);
                 p.Activities.Add(edited);
                 // 이번에 맡게 된 사람 — 저장 전 담당(이전 담당자)은 작업으로 찾아 알린다
                 InvolveOwners(edited, w.OwnerId, w.CoOwnerId);
@@ -1238,9 +1245,14 @@ public partial class ProjectService
     }
 
     // 활동은 모두 ActivityLog 한 곳에서 만든다(누가·언제, 그리고 저장할 때 알림을 함께 계산한다)
+    // 일정 변경(목표일·작업 일정)에 사유를 남길 때는 이 요청에서 고른 사유 분류(UseReasonCodeAsync)도 함께 남긴다
     public Activity NewActivity(ActivityType type, string text, string? reason = null, int? stageId = null, int? workId = null,
-                                string? oldValue = null, string? newValue = null, Guid? batch = null) =>
-        _log.New(type, text, reason, stageId, workId, oldValue, newValue, batch);
+                                string? oldValue = null, string? newValue = null, Guid? batch = null)
+    {
+        var a = _log.New(type, text, reason, stageId, workId, oldValue, newValue, batch);
+        if (reason != null && _reasonCode != null && type is ActivityType.TargetChanged or ActivityType.WorkPlanChanged) a.ReasonCode = _reasonCode;
+        return a;
+    }
 
     public static string Fmt(DateOnly? d) => d == null ? "미정" : d.Value.ToString("yyyy-MM-dd");
 

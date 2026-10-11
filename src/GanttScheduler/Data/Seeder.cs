@@ -141,6 +141,14 @@ public static class Seeder
                 db.ContainerTypes.Add(new ContainerType { Name = name, SortOrder = ++order });
         }
 
+        // 지연 사유 분류 — 일정 변경 사유 시트의 '분류' 선택과 변경 분석의 원인 파레토(S10)
+        if (!await db.DelayReasons.AnyAsync())
+        {
+            var order = 0;
+            foreach (var name in new[] { "자재·납품 지연", "설계·사양 변경", "협력사 일정", "고객·현업 요청", "인력·우선순위", "품질·시험 문제", "기타" })
+                db.DelayReasons.Add(new DelayReason { Name = name, SortOrder = ++order });
+        }
+
         // 공휴일은 해마다 따로 본다: 내장 목록의 해 중 그 해 공휴일이 하나도 없는 해만 채운다. 서버는 시작할 때마다 이 일을 하므로
         // 새 릴리스가 다음 해 공휴일을 실어 보내면 운영 중인 서버에도 들어간다(예전에는 표가 비어 있을 때만 넣어 다음 해가 조용히 빠졌다).
         // 관리자가 일부를 지운 해는 다른 날이 남아 있으므로 다시 채우지 않는다. 내장 목록에 없는 해는 관리자 알림(OpsAlerts)이 10월부터 알린다

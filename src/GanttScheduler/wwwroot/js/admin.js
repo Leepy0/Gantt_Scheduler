@@ -24,7 +24,8 @@
         vendor: { levels: ['협력사'] },
         org: { levels: ['그룹', '파트'] },
         user: { levels: ['사용자'], fixedOrder: true },
-        holiday: { levels: ['공휴일'], fixedOrder: true, removable: [1] }
+        holiday: { levels: ['공휴일'], fixedOrder: true, removable: [1] },
+        reason: { levels: ['지연 사유 분류'] }
     };
 
     var kind = 'location';
