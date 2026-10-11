@@ -115,7 +115,8 @@
     }
     else
     {
-        <div id="gantt" class="gantt-host"></div>
+        @* tall: 과제가 많아도 화면 높이 안에서 스크롤한다(머리글은 붙어 있다) — 수백 건이면 페이지가 수천 px 로 늘어나지 않게 *@
+        <div id="gantt" class="gantt-host tall"></div>
         <div class="legend">
             <span><i class="lg plan"></i>목표</span>
             <span><i class="lg done"></i>실행(완료)</span>

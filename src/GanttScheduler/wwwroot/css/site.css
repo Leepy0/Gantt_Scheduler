@@ -370,6 +370,7 @@ input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-colo
 .feed-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 .feed-reason { margin-top: 4px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); overflow-wrap: anywhere; }
 .feed-meta { color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.feed-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: var(--fs-xs); }
 
 /* ── 간트 ──────────────────────────────────────────────────── */
 .gantt-host { position: relative; --g-left: 300px; --g-width: 1000px; }
@@ -545,6 +546,8 @@ dialog.sheet::backdrop { background: rgba(16, 24, 40, .45); }
     .seg.small > * { min-height: 40px; }
     .btn.small { min-height: 40px; }
     .feed > li { padding: 12px 16px; }
+    .feed-foot { padding: 12px 16px; }
+    .feed-foot .btn { flex: 1; }
     .dl { grid-template-columns: 80px minmax(0, 1fr); }
 
     .gantt-host { --g-left: 128px; }

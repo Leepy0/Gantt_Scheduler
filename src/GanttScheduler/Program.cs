@@ -1,8 +1,10 @@
+using System.IO.Compression;
 using System.Text.Json.Serialization;
 using GanttScheduler.Data;
 using GanttScheduler.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 
 // 업데이트 교체 도우미로 불린 경우: 웹 서버를 띄우지 않고 파일만 바꾸고 끝낸다 (Services/UpdateApplier.cs)
@@ -88,7 +90,24 @@ if (serviceName != null && OperatingSystem.IsWindows()) dataProtection.ProtectKe
 
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddRazorPages()
-    .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // 한글을 \uXXXX 로 바꾸지 않는다(페이지에 심는 JSON 과 같은 인코더 — AppJson.Encoder)
+        o.JsonSerializerOptions.Encoder = AppJson.Encoder;
+    });
+
+// 응답 압축: Kestrel 단독(Windows 서비스)이라 앞단에서 압축해 줄 곳이 없다. 상세 JSON·대시보드 페이지·스크립트가
+// 해외 법인 WAN 에서 그대로 오가지 않게 한다. 운영은 HTTP 라 EnableForHttps 는 기본값(꺼짐)으로 둔다 —
+// HTTPS 로 바꾸면 비밀 값이 든 응답(text/html)의 BREACH 위험을 먼저 검토한다(DESIGN 6장)
+builder.Services.AddResponseCompression(o =>
+{
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 
 var app = builder.Build();
 
@@ -128,6 +147,8 @@ app.Use(async (ctx, next) =>
 // 화면이 JSON 으로 묻는 요청의 예기치 않은 예외는 오류 번호가 든 JSON 으로 돌려준다 (예외 처리기 뒤에 있어야 먼저 잡는다)
 app.UseMiddleware<JsonErrorMiddleware>();
 
+// 정적 파일(js·css)까지 압축하도록 UseStaticFiles 앞에 둔다
+app.UseResponseCompression();
 app.UseStaticFiles();
 app.UseRouting();
 

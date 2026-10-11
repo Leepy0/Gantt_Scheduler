@@ -498,10 +498,50 @@
             '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></div></li>';
     }
 
+    // 활동은 서버가 최근 것만 싣는다(P.activities, 전체 건수 P.activityTotal). 나머지는 '더 보기'로 나눠 받는다.
+    // 화면에 쌓인 목록(feedItems)은 최근부터 빈틈없이 이어진다 — 변경 응답이 새 최근 목록을 주면 합쳐서, 더 받아 둔 옛 활동을 잃지 않는다
+    var feedItems = [];
+    var feedEnd = false;          // 서버가 더 없다고 했다 (그 사이 다른 사람이 활동을 남겨 건수가 늘어도 다시 묻지 않게)
+    function byRecent(a, b) {
+        var d = Date.parse(b.at) - Date.parse(a.at);
+        return d !== 0 ? d : b.id - a.id;
+    }
+    function mergeActivities(list) {
+        var seen = {};
+        feedItems = (list || []).concat(feedItems).filter(function (a) {
+            if (seen[a.id]) return false;
+            seen[a.id] = true;
+            return true;
+        }).sort(byRecent);
+    }
+
     function renderFeed() {
-        var list = P.activities || [];
-        $('activity-count').textContent = list.length ? String(list.length) : '';
-        $('feed').innerHTML = list.length ? list.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        mergeActivities(P.activities);
+        var total = Math.max(P.activityTotal || 0, feedItems.length);
+        $('activity-count').textContent = total ? String(total) : '';
+        $('feed').innerHTML = feedItems.length ? feedItems.map(feedItem).join('') : '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        var more = !feedEnd && feedItems.length < total;
+        $('feed-more').hidden = !more;
+        $('feed-status').textContent = total > 0 ? (more ? '최근 ' + feedItems.length + '건 / 전체 ' + total + '건' : '전체 ' + total + '건') : '';
+    }
+
+    // 활동 한 쪽 받기 (beforeId 다음부터). workId 를 주면 그 작업의 활동만
+    function fetchActivities(beforeId, workId) {
+        return App.get(detailUrl('Activities') + '&id=' + P.id + (beforeId ? '&beforeId=' + beforeId : '') + (workId ? '&workId=' + workId : ''));
+    }
+
+    async function moreFeed() {
+        var btn = $('feed-more');
+        var last = feedItems[feedItems.length - 1];
+        if (!last) return;
+        await App.busy(btn, async function () {
+            try {
+                var r = await fetchActivities(last.id);
+                mergeActivities(r.activities);
+                if (!r.more) feedEnd = true;
+                renderFeed();
+            } catch (err) { App.toast(err.message, 'error'); }
+        });
     }
 
     function renderAll(keepScroll) {
@@ -803,14 +843,33 @@
         });
     }
 
-    function workFeedHtml(workId) {
-        var list = (P.activities || []).filter(function (a) { return a.workId === workId; });
-        if (!list.length) return '<li class="muted">아직 기록이 없습니다.</li>';
-        return list.map(function (a) {
-            return '<li><div class="feed-text">' + esc(a.text) + '</div>' +
-                (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
-                '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
-        }).join('');
+    // 작업 시트의 진행 내용: 그 작업의 활동만 서버에서 따로 받는다(과제 데이터에는 최근 활동 일부만 있다)
+    function workFeedItemHtml(a) {
+        return '<li><div class="feed-text">' + esc(a.text) + '</div>' +
+            (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
+            '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
+    }
+
+    // box: 시트의 [data-feed]. 처음 받을 때는 목록을 바꾸고, '더 보기'는 뒤에 붙인다
+    async function loadWorkFeed(box, workId, beforeId) {
+        if (!beforeId) box.innerHTML = '<li class="muted">불러오는 중…</li>';
+        try {
+            var r = await fetchActivities(beforeId, workId);
+            if (!box.isConnected) return;
+            var old = box.querySelector('[data-work-more]');
+            if (old) old.remove();
+            var html = r.activities.map(workFeedItemHtml).join('');
+            if (!beforeId) box.innerHTML = html || '<li class="muted">아직 기록이 없습니다.</li>';
+            else box.insertAdjacentHTML('beforeend', html);
+            var last = r.activities[r.activities.length - 1];
+            if (r.more && last) {
+                box.insertAdjacentHTML('beforeend', '<li data-work-more><button type="button" class="btn small ghost">' + icon('down') + '더 보기</button></li>');
+                box.querySelector('[data-work-more] button').addEventListener('click', function () { loadWorkFeed(box, workId, last.id); });
+            }
+        } catch (err) {
+            if (!beforeId && box.isConnected) box.innerHTML = '<li class="muted">진행 내용을 불러오지 못했습니다. ' + esc(err.message) + '</li>';
+            else App.toast(err.message, 'error');
+        }
     }
 
     function openWorkSheet(w, stageId) {
@@ -880,7 +939,7 @@
             field('note', '메모', '<textarea name="note" rows="2" maxlength="1000">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
 
         if (!isNew) {
-            html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed>' + workFeedHtml(w.id) + '</ul>' +
+            html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
                 '<textarea data-comment data-draft="comment" rows="2" maxlength="1000" placeholder="이 작업의 진행 내용 남기기" aria-label="진행 내용"></textarea>' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button></div></div>';
         }
@@ -984,12 +1043,13 @@
                                 box.value = '';
                                 box.defaultValue = '';
                                 sheet.saveDraft();
-                                form.querySelector('[data-feed]').innerHTML = workFeedHtml(w.id);
+                                await loadWorkFeed(form.querySelector('[data-feed]'), w.id);
                                 sheet.setError(null);
                             } catch (err) { sheet.setError(err.message, err.field); }
                         });
                     });
                 }
+                if (!isNew) loadWorkFeed(form.querySelector('[data-feed]'), w.id);
             },
             onSubmit: async function (form) {
                 var f = form.elements;
@@ -1202,6 +1262,8 @@
             note.remove();
         });
     })();
+
+    $('feed-more').addEventListener('click', moreFeed);
 
     $('comment-form').addEventListener('submit', function (e) {
         e.preventDefault();

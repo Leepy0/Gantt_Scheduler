@@ -15,9 +15,19 @@ public static class ErrorNumber
     public static bool WantsJson(HttpRequest request) => request.Headers.Accept.ToString().Contains("application/json");
 }
 
+// Server-Timing 머리글 (W3C): 'total;dur=12.3'
+public static class ServerTiming
+{
+    public const string Header = "Server-Timing";
+
+    public static string Total(TimeSpan elapsed) =>
+        "total;dur=" + elapsed.TotalMilliseconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+}
+
 // 요청 시간 재기와 오류 번호 머리글 — 파이프라인 맨 앞에 둔다.
 // 1초(Logs:SlowRequestMs)를 넘는 요청은 경고로 남긴다: 성능 개선 순서를 가상 데이터가 아니라 실제 운영 기록으로 정하기 위해서다.
-// 5xx 응답에는 오류 번호 머리글을 붙여, 본문이 JSON 이 아니어도(개발 환경의 오류 화면 등) 화면이 번호를 보일 수 있게 한다
+// 5xx 응답에는 오류 번호 머리글을 붙여, 본문이 JSON 이 아니어도(개발 환경의 오류 화면 등) 화면이 번호를 보일 수 있게 한다.
+// 모든 응답에 Server-Timing(total) 머리글을 붙인다
 public sealed class RequestTimingMiddleware
 {
     private readonly RequestDelegate _next;
@@ -37,6 +47,9 @@ public sealed class RequestTimingMiddleware
         ctx.Response.OnStarting(() =>
         {
             if (ctx.Response.StatusCode >= 500) ctx.Response.Headers[ErrorNumber.Header] = ctx.TraceIdentifier;
+            // 서버에서 걸린 시간(응답을 보내기 시작할 때까지). 브라우저 개발자 도구의 Timing 에 그대로 보여, 사용자 PC 에서
+            // '느리다'는 화면이 서버 탓인지 네트워크 탓인지 바로 가를 수 있다
+            ctx.Response.Headers[ServerTiming.Header] = ServerTiming.Total(Stopwatch.GetElapsedTime(started));
             return Task.CompletedTask;
         });
         try

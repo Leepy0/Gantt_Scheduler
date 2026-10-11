@@ -10,10 +10,11 @@ public record DueItem(int ProjectId, string Project, string Stage, DateOnly Date
     public ChipView Chip => Views.DueChip(DDay, late: false);
 }
 
+// Timeline: 간트용 가벼운 행(TimelineView) — 페이지에 JSON 으로 심으므로 쓰는 값만 싣는다
 public record DashboardView(
     DateOnly Today, Kpi Kpi,
     List<GroupStat> ByCategory, List<GroupStat> ByCorporation,
-    List<ProjectView> Delayed, List<DueItem> Upcoming, List<ProjectView> Timeline);
+    List<ProjectView> Delayed, List<DueItem> Upcoming, List<TimelineView> Timeline);
 
 public record ProjectFilter(string? Q, int? CategoryId, int? CorporationId, string? State, bool Mine);
 
@@ -37,9 +38,17 @@ public class DashboardService
         return Dashboard.Build(all, await _projects.LocationsAsync(), _clock.Today);
     }
 
+    // 목록: 상태 탭·유형·법인은 DB 에서 거른다(두 DB 에서 똑같이 번역되는 같음 조건만). 지연 탭은 진행 과제만 읽고
+    // 지연 판정(Rules)은 메모리에서 한다. 내 과제·검색은 계산 값(담당 작업·위치 경로)을 보므로 메모리에서
     public async Task<List<ProjectView>> ListAsync(ProjectFilter filter)
     {
-        var all = await _projects.AllAsync();
+        var all = await _projects.AllAsync(q =>
+        {
+            if (Dashboard.StateOf(filter.State) is { } state) q = q.Where(p => p.State == state);
+            if (filter.CategoryId is int category) q = q.Where(p => p.CategoryId == category);
+            if (filter.CorporationId is int corp) q = q.Where(p => p.CorporationId == corp);
+            return q;
+        });
         return Dashboard.Filter(all, await _projects.LocationsAsync(), _clock.Today, filter, _me.Id);
     }
 }
@@ -48,6 +57,16 @@ public class DashboardService
 public static class Dashboard
 {
     public const int UpcomingDays = 14;
+
+    // 목록 상태 탭이 DB 에서 거를 과제 상태 ('delayed' 는 진행 과제 중 지연, 'all'·모르는 값은 null = 거르지 않음)
+    public static ProjectState? StateOf(string? tab) => tab switch
+    {
+        "active" or "delayed" => ProjectState.Active,
+        "hold" => ProjectState.Hold,
+        "done" => ProjectState.Done,
+        "dropped" => ProjectState.Dropped,
+        _ => null,
+    };
 
     public static bool IsMine(Project p, int userId) =>
         p.OwnerId == userId || p.Stages.Any(s => s.Works.Any(w => w.OwnerId == userId || w.CoOwnerId == userId));
@@ -94,17 +113,17 @@ public static class Dashboard
             .OrderByDescending(s => s.Total).ThenBy(s => s.Name).ToList();
 
         // 간트: 진행 과제를 지연 큰 순 → 목표 종료 빠른 순으로
-        var timeline = active
+        var views = active
             .OrderByDescending(p => Rules.DelayDays(p, today))
             .ThenBy(p => Rules.EndTarget(p) ?? DateOnly.MaxValue)
             .ThenBy(p => p.Title)
             .Select(p => Views.Project(p, today, locations, detail: false, withWorks: false))
             .ToList();
 
-        var delayedViews = timeline.Where(v => v.DelayDays > 0).ToList();
+        var delayedViews = views.Where(v => v.DelayDays > 0).ToList();
 
         return new DashboardView(today, kpi, byCategory, byCorp, delayedViews,
-            due.Where(d => d.DDay <= UpcomingDays).Take(8).ToList(), timeline);
+            due.Where(d => d.DDay <= UpcomingDays).Take(8).ToList(), views.Select(TimelineView.From).ToList());
     }
 
     public static List<ProjectView> Filter(List<Project> all, LocationIndex locations, DateOnly today, ProjectFilter f, int userId)
