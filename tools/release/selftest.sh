@@ -153,14 +153,21 @@ if [ "${MODE:-}" = service ]; then
   say "서비스 등록·시작 (v0.0.1)"
   # 서비스 계정이 업데이트 폴더를 읽을 수 있게 한다 (프로그램 폴더 권한은 설치 명령이 준다)
   MSYS_NO_PATHCONV=1 icacls "$SRC" /grant "*S-1-1-0:(OI)(CI)RX" /Q > /dev/null
+  # 잘못 적은 인자는 아무것도 바꾸기 전에 거절해야 한다 (예전에는 -port 를 못 읽고 80 으로 등록했다)
+  "$APP/GanttScheduler.exe" install --name "$SVC" -port "$PORT" < /dev/null > "$WORK/install-bad.log" 2>&1; rc=$?
+  [ "$rc" = 1 ] && grep -q "사용법" "$WORK/install-bad.log" || fail "잘못 적은 인자를 거절하지 않음 (코드 $rc): $(tr -d '\r' < "$WORK/install-bad.log" | head -3)"
+  sc.exe query "$SVC" > /dev/null 2>&1 && fail "잘못 적은 인자로 서비스가 만들어짐"
   "$APP/GanttScheduler.exe" install --name "$SVC" --port "$PORT" > "$WORK/install.log" 2>&1; rc=$?
   tr -d '\r' < "$WORK/install.log"
   [ "$rc" = 0 ] || die "서비스 등록 실패"
   running || die "서비스가 실행 중이 아님"
   # SYSTEM 이 아니라 전용 계정으로 돌아야 한다 (업데이트 뒤 재시작도 이 계정의 권한으로 한다)
   sc.exe qc "$SVC" | tr -d '\r' | grep -i "SERVICE_START_NAME" | grep -qi "NT SERVICE.$SVC" || fail "서비스가 전용 계정으로 등록되지 않음: $(sc.exe qc "$SVC" | tr -d '\r' | grep -i START_NAME)"
-  # 설치 명령을 다시 실행해도(설정 변경) 문제없이 다시 떠야 한다
-  "$APP/GanttScheduler.exe" install --name "$SVC" --port "$PORT" > "$WORK/install.log" 2>&1 || die "서비스 다시 등록 실패"
+  # 설치 명령을 다시 실행해도(설정 변경) 문제없이 다시 떠야 한다. 운영자가 쓰는 install-service.cmd 로, --port=N 형식으로 한다
+  # (출력을 파일로 돌리므로 프로그램도 .cmd 도 Enter 를 기다리지 않는다)
+  MSYS_NO_PATHCONV=1 cmd.exe /c "$(cygpath -w "$APP/install-service.cmd")" --name "$SVC" "--port=$PORT" < /dev/null > "$WORK/install.log" 2>&1 \
+    || die "서비스 다시 등록 실패 (install-service.cmd)"
+  grep -q "$SVC" "$APP/App_Data/install.log" 2>/dev/null || fail "설치 기록(App_Data/install.log)이 남지 않음"
   sc.exe qc "$SVC" | tr -d '\r' | grep -i "SERVICE_START_NAME" | grep -qi "NT SERVICE.$SVC" || fail "다시 등록한 뒤 계정이 바뀜"
 else
   say "서버 시작 (v0.0.1)"

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 using System.Text;
@@ -20,8 +21,82 @@ public static class ServiceInstaller
     public const string DisplayName = "과제 스케줄러";
     public const int DefaultPort = 80;
     public const string StartupErrorFile = "startup-error.log";
+    // 설치·제거 명령이 화면에 쓴 내용을 그대로 남기는 파일(App_Data 아래). 창이 닫혀도 무엇이 일어났는지 볼 수 있게
+    public const string InstallLogFile = "install.log";
+    public const string Usage = "사용법: install-service.cmd [--port 8080] [--remoteip 10.0.0.0/8,192.168.0.0/16] [--name GanttScheduler] [--system]";
 
-    public static bool IsCommand(string[] args) => args.Length > 0 && args[0] is "install" or "uninstall";
+    // 첫 인자가 install/uninstall 이면 명령이다. 옵션을 앞에 적은 경우(--port 8080 install)도 받는다 — 놓치면 웹 서버로 떠 버린다.
+    // 서비스로 시작된 프로세스(--service)는 명령이 아니다
+    public static bool IsCommand(string[] args) =>
+        args.Length > 0 && (args[0] is "install" or "uninstall"
+            || args[0].StartsWith('-') && !args.Contains("--service") && args.Any(a => a is "install" or "uninstall"));
+
+    public sealed record Options(string Verb, string Name, int Port, bool System, string? RemoteIp, bool Pause);
+
+    // 명령 인자를 읽는다. 모르는 인자나 값이 빠진 옵션은 거절한다 — 예전에는 --port=8080 이나 -port 8080 을 못 읽고
+    // 조용히 80 으로 등록해, 80 을 쓰는 다른 프로그램(IIS 등)과 부딪혀 엉뚱한 오류가 났다.
+    // 문서·메신저에서 복사하면 '--' 가 긴 줄표(—, –)나 전각 문자로 바뀌어 오므로 그것은 고쳐 읽는다
+    public static Options ParseOptions(string[] args)
+    {
+        var verb = args.First(a => a is "install" or "uninstall");
+        var install = verb == "install";
+        string name = DefaultName;
+        var port = DefaultPort;
+        bool system = false, pause = false, verbSeen = false;
+        string? remote = null;
+        for (var i = 0; i < args.Length; i++)
+        {
+            var raw = Normalize(args[i]);
+            if (raw.Length == 0) continue;
+            if (raw == verb && !verbSeen) { verbSeen = true; continue; }
+            var key = raw;
+            string? value = null;
+            var eq = raw.IndexOf('=');
+            if (raw.StartsWith("--", StringComparison.Ordinal) && eq > 2) { key = raw[..eq]; value = raw[(eq + 1)..]; }
+            string Value() => value ?? (i + 1 < args.Length ? Normalize(args[++i]) : throw new ArgumentException($"{key} 다음에 값을 적어 주세요. {Usage}"));
+            switch (key.ToLowerInvariant())
+            {
+                case "--pause":
+                    pause = true;
+                    break;
+                case "--name":
+                    name = CheckName(Value());
+                    break;
+                case "--system" when install:
+                    system = true;
+                    break;
+                case "--port" when install:
+                    var text = Value();
+                    if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out port) || port is < 1 or > 65535)
+                        throw new ArgumentException($"--port 에는 1~65535 사이의 숫자를 지정해 주세요: '{text}'" + Environment.NewLine + Usage);
+                    break;
+                case "--remoteip" when install:
+                    remote = RemoteIp(Value());
+                    break;
+                default:
+                    throw new ArgumentException(UnknownHint(raw) + Environment.NewLine + Usage);
+            }
+        }
+        return new Options(verb, name, port, system, remote, pause);
+    }
+
+    private static string Normalize(string arg)
+    {
+        // 전각 숫자·하이픈(８０８０, －－port)은 반각으로, 줄표로 시작하면 '--' 로 바꾼다
+        var s = arg.Trim().Normalize(NormalizationForm.FormKC);
+        foreach (var dash in new[] { "\u2014", "\u2013", "\u2012", "\u2212" })
+            if (s.StartsWith(dash, StringComparison.Ordinal)) return "--" + s[dash.Length..].TrimStart('-');
+        return s;
+    }
+
+    private static string UnknownHint(string arg)
+    {
+        if (arg.All(char.IsAsciiDigit)) return $"'{arg}' 을(를) 알 수 없습니다. 포트는 --port {arg} 처럼 앞에 --port 를 붙여 적어 주세요.";
+        var bare = arg.TrimStart('-', '/');
+        if (bare.Length > 0 && !arg.StartsWith("--", StringComparison.Ordinal) && new[] { "port", "name", "remoteip", "system", "pause" }.Contains(bare.ToLowerInvariant()))
+            return $"'{arg}' 을(를) 알 수 없습니다. --{bare.ToLowerInvariant()} 처럼 하이픈 두 개로 적어 주세요.";
+        return $"'{arg}' 을(를) 알 수 없는 인자입니다.";
+    }
 
     // 서비스로 시작될 때 SCM 이 넘기는 인자(--service <이름>)에서 서비스 이름을 읽는다. 없으면 서비스가 아니다
     public static string? ServiceNameFrom(string[] args)
@@ -94,11 +169,30 @@ public static class ServiceInstaller
         return m.Success ? m.Groups[1].Value : null;
     }
 
+    // 끝날 때 Enter 를 기다릴지. --pause 를 받았거나, 이 창이 이 프로세스만의 것이면(탐색기·실행 창·바로 가기로 띄웠거나
+    // 권한 상승으로 새로 연 창) 끝나는 순간 창이 닫혀 결과를 못 보므로 기다린다. 입출력이 파일·파이프로 돌려져 있으면(CI 등) 기다리지 않는다
+    public static bool ShouldPause(bool flag, bool ownsConsole, bool redirected) => !redirected && (flag || ownsConsole);
+
     public static int Run(string[] args)
     {
         try { Console.OutputEncoding = Encoding.UTF8; } catch (Exception) { /* 콘솔이 없는 경우 */ }
-        var pause = args.Contains("--pause");
+        var pause = ShouldPause(args.Any(a => Normalize(a) == "--pause"), OwnsConsole(), Redirected());
+        using var log = InstallLog.Start(args);
+        // 아래 try 밖에서(다른 스레드 등) 죽어도 이유를 남기고, 창이 닫히기 전에 읽을 수 있게 한다
+        UnhandledExceptionEventHandler crash = (_, e) =>
+        {
+            try
+            {
+                Console.WriteLine();
+                Console.WriteLine("예기치 않은 오류로 끝납니다: " + e.ExceptionObject);
+                log?.Flush();
+                if (pause) WaitEnter();
+            }
+            catch (Exception) { /* 마지막 시도 */ }
+        };
+        AppDomain.CurrentDomain.UnhandledException += crash;
         int code;
+        var shownElsewhere = false;
         try
         {
             if (!OperatingSystem.IsWindows())
@@ -106,8 +200,10 @@ public static class ServiceInstaller
                 Console.WriteLine("Windows 에서만 서비스로 등록할 수 있습니다.");
                 return 1;
             }
-            if (!IsAdmin()) return Elevate(args);
-            code = args[0] == "install" ? Install(args) : Uninstall(args);
+            // 인자는 권한 확인 창을 띄우기 전에 읽는다 — 잘못 적었으면 이 창에서 바로 알린다
+            var options = ParseOptions(args);
+            if (!IsAdmin()) (code, shownElsewhere) = Elevate(args, InstallLog.DefaultPath);
+            else code = options.Verb == "install" ? Install(options) : Uninstall(options);
         }
         catch (Exception ex)
         {
@@ -115,13 +211,41 @@ public static class ServiceInstaller
             Console.WriteLine("실패: " + ex.Message);
             code = 1;
         }
-        if (pause)
+        finally
         {
-            Console.WriteLine();
-            Console.WriteLine("Enter 를 누르면 닫습니다.");
-            Console.ReadLine();
+            AppDomain.CurrentDomain.UnhandledException -= crash;
         }
+        if (log != null && !shownElsewhere) Console.WriteLine($"기록: {log.Path}");
+        // 권한 상승한 새 창이 결과를 보여 주고 기다렸으면 이 창은 기다리지 않는다
+        if (pause && !shownElsewhere) WaitEnter();
         return code;
+    }
+
+    private static void WaitEnter()
+    {
+        // 오래 기다리는 동안 눌러 둔 Enter·붙여넣기가 이 질문에 바로 답해 결과가 뜨자마자 창이 닫히지 않게 먼저 비운다
+        try { while (Console.KeyAvailable) Console.ReadKey(intercept: true); }
+        catch (Exception) { /* 입력이 콘솔이 아니면 비울 것이 없다 */ }
+        Console.WriteLine();
+        Console.WriteLine("Enter 를 누르면 닫습니다.");
+        Console.ReadLine();
+    }
+
+    private static bool Redirected()
+    {
+        try { return Console.IsInputRedirected || Console.IsOutputRedirected; }
+        catch (Exception) { return true; }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetConsoleProcessList(uint[] processList, uint processCount);
+
+    // 이 콘솔 창에 붙어 있는 프로세스가 자기 하나뿐인가 (명령 프롬프트에서 실행했으면 cmd.exe 가 함께 붙어 있다)
+    private static bool OwnsConsole()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try { return GetConsoleProcessList(new uint[4], 4) == 1; }
+        catch (Exception) { return false; }
     }
 
     [SupportedOSPlatform("windows")]
@@ -131,43 +255,72 @@ public static class ServiceInstaller
         return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    // 관리자 권한이 아니면 권한 상승 창(UAC)을 띄워 같은 명령을 다시 실행한다. 새 창이 바로 닫히지 않게 --pause 를 붙인다
-    private static int Elevate(string[] args)
+    // 관리자 권한이 아니면 권한 상승 창(UAC)을 띄워 같은 명령을 다시 실행한다. 새 창이 바로 닫히지 않게 --pause 를 붙인다.
+    // 돌려주는 ShownElsewhere: 새 창이 결과를 보여 주고 Enter 를 기다렸는가(그러면 이 창은 기다리지 않는다)
+    [SupportedOSPlatform("windows")]
+    private static (int Code, bool ShownElsewhere) Elevate(string[] args, string? logPath)
     {
-        Console.WriteLine("관리자 권한이 필요합니다. 권한 확인 창에서 '예'를 눌러 주세요.");
-        var psi = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas" };
+        Console.WriteLine("관리자 권한이 필요합니다. 권한 확인 창에서 '예'를 눌러 주세요. 결과는 새로 열리는 관리자 창에 나옵니다.");
+        var exe = Environment.ProcessPath!;
+        // 권한 상승한 프로세스는 작업 폴더가 System32 로 바뀔 수 있어 프로그램 폴더로 정해 준다
+        var psi = new ProcessStartInfo(exe) { UseShellExecute = true, Verb = "runas", WorkingDirectory = AppContext.BaseDirectory };
         foreach (var a in args) psi.ArgumentList.Add(a);
-        if (!args.Contains("--pause")) psi.ArgumentList.Add("--pause");
+        if (!args.Any(a => Normalize(a) == "--pause")) psi.ArgumentList.Add("--pause");
+        Process p;
         try
         {
-            using var p = Process.Start(psi)!;
-            p.WaitForExit();
-            return p.ExitCode;
+            p = Process.Start(psi) ?? throw new InvalidOperationException("관리자 창을 열지 못했습니다.");
         }
-        catch (Win32Exception)
+        catch (Win32Exception ex)
         {
-            Console.WriteLine("권한 확인이 취소되어 아무것도 바꾸지 않았습니다.");
-            return 1;
+            Console.WriteLine();
+            if (ex.NativeErrorCode == 1223)   // ERROR_CANCELLED: 권한 확인 창에서 '아니요'
+                Console.WriteLine("권한 확인이 취소되어 아무것도 바꾸지 않았습니다.");
+            else
+            {
+                Console.WriteLine($"관리자 권한으로 다시 실행하지 못했습니다: {ex.Message} (코드 {ex.NativeErrorCode})");
+                if (IsNetworkPath(exe))
+                    Console.WriteLine("  - 프로그램이 네트워크 드라이브에 있습니다. 관리자 권한으로는 연결된 드라이브가 보이지 않을 수 있으니 서버의 로컬 디스크(예: D:\\GanttScheduler)에 풀어 주세요.");
+            }
+            Console.WriteLine("  - 시작 메뉴에서 '명령 프롬프트'를 마우스 오른쪽 단추 > '관리자 권한으로 실행'으로 연 뒤, 이 폴더로 이동해 같은 명령을 다시 실행해 보세요.");
+            return (1, false);
+        }
+        using (p)
+        {
+            p.WaitForExit();
+            if (p.ExitCode == 0) return (0, true);
+            // 실패했으면 관리자 창이 이유를 보여 주고 기다렸다. 그 창이 그보다 먼저 닫혔을 수도 있으니(예기치 않은 종료) 기록 끝부분을 여기에도 보인다
+            Console.WriteLine();
+            Console.WriteLine($"관리자 창의 작업이 실패했습니다 (코드 {p.ExitCode}).");
+            var tail = logPath == null ? null : InstallLog.Tail(logPath, 15);
+            if (tail != null)
+            {
+                Console.WriteLine($"기록({logPath}) 끝부분:");
+                Console.WriteLine(tail);
+            }
+            // 코드는 1 로 돌려준다. install-service.cmd 는 0·1 밖의 코드를 '실행 파일이 결과를 보이지 못했다'로 보고 한 번 더 기다린다
+            return (1, false);
         }
     }
 
-    private static string Opt(string[] args, string key, string fallback)
+    private static bool IsNetworkPath(string path)
     {
-        var i = Array.IndexOf(args, key);
-        return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback;
+        try
+        {
+            if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+            var root = Path.GetPathRoot(path);
+            return root != null && new DriveInfo(root).DriveType == DriveType.Network;
+        }
+        catch (Exception) { return false; }
     }
 
     private static string CheckName(string name) =>
         Regex.IsMatch(name, "^[A-Za-z][A-Za-z0-9_.-]{0,60}$") ? name
             : throw new ArgumentException("서비스 이름은 영문자로 시작하는 영문·숫자여야 합니다: " + name);
 
-    private static int Install(string[] args)
+    private static int Install(Options o)
     {
-        var name = CheckName(Opt(args, "--name", DefaultName));
-        if (!int.TryParse(Opt(args, "--port", DefaultPort.ToString()), out var port) || port is < 1 or > 65535)
-            throw new ArgumentException("--port 에는 1~65535 사이의 숫자를 지정해 주세요.");
-        var system = args.Contains("--system");
-        var remote = RemoteIp(Opt(args, "--remoteip", ""));
+        var (name, port, system, remote) = (o.Name, o.Port, o.System, o.RemoteIp);
         var account = system ? "LocalSystem" : $"NT SERVICE\\{name}";
         var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var exe = Path.Combine(dir, "GanttScheduler.exe");
@@ -266,9 +419,9 @@ public static class ServiceInstaller
         return 0;
     }
 
-    private static int Uninstall(string[] args)
+    private static int Uninstall(Options o)
     {
-        var name = CheckName(Opt(args, "--name", DefaultName));
+        var name = o.Name;
         if (Sc("query", name).Code != 0)
         {
             Console.WriteLine($"'{name}' 서비스가 등록되어 있지 않습니다.");
@@ -296,20 +449,25 @@ public static class ServiceInstaller
     {
         Sc("stop", name);
         var until = DateTime.UtcNow.AddSeconds(60);
+        var dots = new Progress();
         while (StateOf(Sc("query", name).Output) is { } state && state != "STOPPED")
         {
             if (DateTime.UtcNow > until) throw new TimeoutException("서비스가 멈추지 않습니다. 작업 관리자에서 GanttScheduler.exe 를 끝낸 뒤 다시 실행해 주세요.");
             Thread.Sleep(500);
+            dots.Tick();
         }
     }
 
     // 서비스가 떠서 요청에 답할 때까지 기다린다. 도중에 멈추면(시작 실패) 바로 그만둔다
     private static bool WaitHealthy(string name, int port, TimeSpan timeout)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        // 이 서버 자신에게 묻는 것이므로 시스템 프록시를 거치지 않는다 — 프록시가 localhost 요청을 삼키면 서비스가 떠 있어도 2분을 기다리다 실패로 본다
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(3) };
         var began = DateTime.UtcNow;
+        var dots = new Progress();
         while (DateTime.UtcNow - began < timeout)
         {
+            dots.Tick();
             try
             {
                 if (http.GetAsync($"http://localhost:{port}/health").GetAwaiter().GetResult().IsSuccessStatusCode) return true;
@@ -320,6 +478,19 @@ public static class ServiceInstaller
             Thread.Sleep(1000);
         }
         return false;
+    }
+
+    // 오래 걸리는 단계에서 몇 초마다 점을 찍는다. 아무것도 안 바뀌는 창은 멈춘 것처럼 보여 Enter 를 누르게 된다
+    private sealed class Progress
+    {
+        private readonly DateTime _began = DateTime.UtcNow;
+        private int _shown;
+
+        public void Tick()
+        {
+            var due = (int)((DateTime.UtcNow - _began).TotalSeconds / 5);
+            for (; _shown < due; _shown++) Console.Write(".");
+        }
     }
 
     private static void Step(string title, Action action, bool required = true)
@@ -402,6 +573,96 @@ public static class ServiceInstaller
             catch (Exception ex) { last = ex.Message; }
             if (DateTime.UtcNow > until) return last;
             Thread.Sleep(2000);
+        }
+    }
+}
+
+// 설치·제거 명령이 화면에 쓰는 내용을 App_Data/install.log 에도 덧붙여 남긴다. 창이 닫혀 버려도 무엇이 일어났는지 볼 수 있고,
+// 관리자 창이 먼저 닫히면 원래 창이 그 끝부분을 보여 줄 수 있다. 파일을 열지 못하면(쓰기 권한 없음 등) 화면에만 쓴다
+public sealed class InstallLog : IDisposable
+{
+    public static string DefaultPath => System.IO.Path.Combine(AppContext.BaseDirectory, "App_Data", ServiceInstaller.InstallLogFile);
+
+    public string Path { get; }
+    private readonly StreamWriter _file;
+    private readonly TextWriter _console;
+
+    private InstallLog(string path, StreamWriter file, TextWriter console)
+    {
+        Path = path;
+        _file = file;
+        _console = console;
+    }
+
+    public static InstallLog? Start(string[] args)
+    {
+        try
+        {
+            var path = DefaultPath;
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+            // 관리자 창과 원래 창이 같은 파일에 쓰고 읽으므로 공유로 연다
+            var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            var file = new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
+            file.WriteLine();
+            file.WriteLine($"==== {DateTime.Now:yyyy-MM-dd HH:mm:ss} {string.Join(' ', args)} (PID {Environment.ProcessId})");
+            var console = Console.Out;
+            Console.SetOut(new Tee(console, file));
+            return new InstallLog(path, file, console);
+        }
+        catch (Exception) { return null; }
+    }
+
+    public void Flush()
+    {
+        try { _file.Flush(); } catch (Exception) { /* 기록 실패는 무시 */ }
+    }
+
+    public void Dispose()
+    {
+        Console.SetOut(_console);
+        try { _file.Dispose(); } catch (Exception) { /* 기록 실패는 무시 */ }
+    }
+
+    // 파일 끝 몇 줄. 읽지 못하거나 비어 있으면 null
+    public static string? Tail(string path, int lines)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(fs, Encoding.UTF8);
+            var all = reader.ReadToEnd().Replace("\r", "").TrimEnd('\n').Split('\n');
+            return all.Length == 0 || all.All(string.IsNullOrWhiteSpace) ? null : string.Join(Environment.NewLine, all.TakeLast(lines));
+        }
+        catch (Exception) { return null; }
+    }
+
+    // 화면과 파일에 함께 쓴다. 파일 쓰기가 실패해도 화면 출력은 막지 않는다
+    private sealed class Tee(TextWriter screen, TextWriter file) : TextWriter
+    {
+        public override Encoding Encoding => screen.Encoding;
+
+        public override void Write(char value)
+        {
+            screen.Write(value);
+            try { file.Write(value); } catch (Exception) { /* 기록 실패는 무시 */ }
+        }
+
+        public override void Write(string? value)
+        {
+            screen.Write(value);
+            try { file.Write(value); } catch (Exception) { /* 기록 실패는 무시 */ }
+        }
+
+        public override void WriteLine(string? value)
+        {
+            screen.WriteLine(value);
+            try { file.WriteLine(value); } catch (Exception) { /* 기록 실패는 무시 */ }
+        }
+
+        public override void Flush()
+        {
+            screen.Flush();
+            try { file.Flush(); } catch (Exception) { /* 기록 실패는 무시 */ }
         }
     }
 }
