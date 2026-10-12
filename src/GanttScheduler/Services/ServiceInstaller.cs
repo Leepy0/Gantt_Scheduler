@@ -223,6 +223,9 @@ public static class ServiceInstaller
 
     private static void WaitEnter()
     {
+        // 오래 기다리는 동안 눌러 둔 Enter·붙여넣기가 이 질문에 바로 답해 결과가 뜨자마자 창이 닫히지 않게 먼저 비운다
+        try { while (Console.KeyAvailable) Console.ReadKey(intercept: true); }
+        catch (Exception) { /* 입력이 콘솔이 아니면 비울 것이 없다 */ }
         Console.WriteLine();
         Console.WriteLine("Enter 를 누르면 닫습니다.");
         Console.ReadLine();
@@ -295,7 +298,8 @@ public static class ServiceInstaller
                 Console.WriteLine($"기록({logPath}) 끝부분:");
                 Console.WriteLine(tail);
             }
-            return (p.ExitCode, false);
+            // 코드는 1 로 돌려준다. install-service.cmd 는 0·1 밖의 코드를 '실행 파일이 결과를 보이지 못했다'로 보고 한 번 더 기다린다
+            return (1, false);
         }
     }
 
@@ -445,20 +449,25 @@ public static class ServiceInstaller
     {
         Sc("stop", name);
         var until = DateTime.UtcNow.AddSeconds(60);
+        var dots = new Progress();
         while (StateOf(Sc("query", name).Output) is { } state && state != "STOPPED")
         {
             if (DateTime.UtcNow > until) throw new TimeoutException("서비스가 멈추지 않습니다. 작업 관리자에서 GanttScheduler.exe 를 끝낸 뒤 다시 실행해 주세요.");
             Thread.Sleep(500);
+            dots.Tick();
         }
     }
 
     // 서비스가 떠서 요청에 답할 때까지 기다린다. 도중에 멈추면(시작 실패) 바로 그만둔다
     private static bool WaitHealthy(string name, int port, TimeSpan timeout)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        // 이 서버 자신에게 묻는 것이므로 시스템 프록시를 거치지 않는다 — 프록시가 localhost 요청을 삼키면 서비스가 떠 있어도 2분을 기다리다 실패로 본다
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(3) };
         var began = DateTime.UtcNow;
+        var dots = new Progress();
         while (DateTime.UtcNow - began < timeout)
         {
+            dots.Tick();
             try
             {
                 if (http.GetAsync($"http://localhost:{port}/health").GetAwaiter().GetResult().IsSuccessStatusCode) return true;
@@ -469,6 +478,19 @@ public static class ServiceInstaller
             Thread.Sleep(1000);
         }
         return false;
+    }
+
+    // 오래 걸리는 단계에서 몇 초마다 점을 찍는다. 아무것도 안 바뀌는 창은 멈춘 것처럼 보여 Enter 를 누르게 된다
+    private sealed class Progress
+    {
+        private readonly DateTime _began = DateTime.UtcNow;
+        private int _shown;
+
+        public void Tick()
+        {
+            var due = (int)((DateTime.UtcNow - _began).TotalSeconds / 5);
+            for (; _shown < due; _shown++) Console.Write(".");
+        }
     }
 
     private static void Step(string title, Action action, bool required = true)
