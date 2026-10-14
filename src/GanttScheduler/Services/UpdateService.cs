@@ -151,7 +151,7 @@ public class UpdateService
     {
         lock (_gate)
         {
-            var (ok, reason, fix) = ApplyBlock(_state.Staged?.Schema);
+            var (ok, reason, fix) = ApplyBlock(_state.Staged == null ? null : _state.Staged.Schema ?? "");
             var s = _state;
             var newer = s.Latest != null && IsNewer(s.Latest.Version);
             PreviousView? prev = null;
@@ -472,7 +472,7 @@ public class UpdateService
             if (_backup != null && _backup.Options.BeforeSchemaUpdate && SchemaChanged(staged.Schema))
             {
                 if (_phase != "idle") throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
-                var (ok, reason, fix) = ApplyBlock(staged.Schema);
+                var (ok, reason, fix) = ApplyBlock(staged.Schema ?? "");
                 if (!ok) throw new UpdateException(reason!, fix!);
                 _phase = "backing-up";
                 _progress = 0;
