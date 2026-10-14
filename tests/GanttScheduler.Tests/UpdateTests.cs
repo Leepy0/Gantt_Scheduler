@@ -112,6 +112,32 @@ public partial class UpdateTests : IDisposable
         Assert.False(new AppBuild(new Version(0, 3, 0), null, "local", "").SelfUpdating);
     }
 
+    [Fact]
+    public async Task 운영_SQLite에서_스키마가_바뀌는_업데이트는_데이터_보호를_위해_차단한다()
+    {
+        MakePackage("0.3.1", schema: "S2");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Database:Provider"] = "Sqlite",
+            ["Database:BlockSqliteSchemaChanges"] = "true",
+        }).Build();
+        var source = new UpdateSource(SourceDir, Release, null, null);
+        var svc = new UpdateService(Release, new UpdatePaths { AppDir = AppDir, DataDir = DataDir },
+            source, _activity, new FakeLifetime(), NullLogger<UpdateService>.Instance, config);
+
+        await svc.CheckAsync(CancellationToken.None);
+        Assert.NotNull(svc.Status().Latest);
+        svc.StartDownload("테스터");
+        for (var i = 0; i < 200 && svc.Status().Staged == null && svc.Status().Error == null; i++)
+            await Task.Delay(10);
+
+        var status = svc.Status();
+        Assert.NotNull(status.Staged);
+        Assert.False(status.CanApply);
+        Assert.Contains("운영 SQLite DB", status.BlockReason);
+        Assert.Throws<UpdateException>(() => svc.Apply("테스터"));
+    }
+
     // ── 파일 교체 ───────────────────────────────────────────────────────
     [Fact]
     public void 교체는_패키지_파일만_바꾸고_데이터와_서버_설정은_그대로_둔다()
