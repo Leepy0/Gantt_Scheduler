@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Text.Json;
 using GanttScheduler.Domain;
 using GanttScheduler.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -108,7 +110,14 @@ public class UpdateModel : PageModel
         if (file == null) throw new RuleException("테이블별 JSON 백업 ZIP 파일을 선택해 주세요.");
         if (file.Length > 300L * 1024 * 1024) throw new RuleException("백업 파일은 300MB 이하여야 합니다.");
         await using var stream = file.OpenReadStream();
-        await _jsonDatabase.RestoreAsync(stream, HttpContext.RequestAborted);
+        try
+        {
+            await _jsonDatabase.RestoreAsync(stream, HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException or OverflowException or DbException or IOException)
+        {
+            throw new RuleException("JSON 백업을 복원하지 못했습니다. 파일 형식·DB 구조·관계가 맞는지 확인하세요.");
+        }
         await RecordAsync("backup", $"테이블별 JSON 백업 복원: {Path.GetFileName(file.FileName)}");
     });
 
