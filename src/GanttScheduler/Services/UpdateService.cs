@@ -467,6 +467,15 @@ public class UpdateService
                 Save();
                 throw new UpdateException($"받아 둔 업데이트 파일이 없어졌습니다({missing}).", "새 버전을 다시 받아 주세요.");
             }
+            // 운영 SQLite에서 스키마 변경을 차단하도록 설정했다면, 백업 기능의 활성화 여부와 무관하게 적용을 막는다.
+            // 아래 백업 분기 안에서만 검사하면 BackupService가 없거나 BeforeSchemaUpdate가 꺼진 경우 보호 설정이 무력화된다.
+            if (_sqlite && _blockSqliteSchemaChanges && SchemaChanged(staged.Schema))
+            {
+                var (_, reason, fix) = ApplyBlock(staged.Schema ?? "");
+                throw new UpdateException(reason ?? "운영 SQLite DB의 구조를 바꾸는 업데이트는 현재 차단되어 있습니다.",
+                    fix ?? "SQLite 스키마 변경을 지원하는 버전이 준비되기 전에는 같은 DB 구조의 업데이트만 적용하세요.");
+            }
+
             // DB 구조가 바뀌는 업데이트는 적용 뒤 프로그램만 되돌릴 수 없다 — 먼저 DB 를 백업하고, 실패하면 적용하지 않는다.
             // 백업은 몇 분 걸릴 수 있어 요청과 떼어 돌리고(단계 backing-up), 끝나면 이어서 교체를 시작한다
             if (_backup != null && _backup.Options.BeforeSchemaUpdate && SchemaChanged(staged.Schema))
