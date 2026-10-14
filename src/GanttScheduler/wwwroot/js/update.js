@@ -240,7 +240,7 @@
 
     // ── 카드: 테이블별 JSON 내보내기·복원 ───────────────────────────
     function jsonBackupCard() {
-        if (!admin) return '';
+        if (!admin || !backup || backup.provider !== 'Sqlite') return '';
         var h = '<section class="card" id="json-backup"><div class="card-head"><h2>테이블별 JSON 백업</h2><span class="spacer"></span>' +
             '<a class="btn small" href="' + esc(url + '?handler=JsonExport') + '">' + icon('download') + 'JSON 백업 내려받기</a></div>' +
             '<p class="muted">SQLite DB의 각 테이블을 개별 JSON 파일로 내보내 ZIP으로 묶습니다. 일반 DB 백업과 별도로 데이터 확인·이관에 사용할 수 있습니다.</p>' +
