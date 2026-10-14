@@ -5,7 +5,7 @@ namespace GanttScheduler.Data;
 // DB 연결 구성 — 웹 서버와 콘솔 명령(admin)이 같은 설정으로 같은 DB 를 열도록 한곳에 둔다
 public static class DbSetup
 {
-    // DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택)
+    // 운영·미리보기·개발·테스트 기본 DB 는 SQLite. SQL Server 는 Database:Provider=SqlServer 로 명시한 경우에만 사용한다.
     public static bool UseSqlServer(IConfiguration config) =>
         string.Equals(config["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
 
