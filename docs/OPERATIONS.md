@@ -89,7 +89,7 @@ sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH R
 3. [배포 레포의 Releases](https://github.com/Leepy0/Gantt_Scheduler_Release/releases) 에서 **이전 버전 zip** 을 받아 프로그램 폴더에 덮어쓴다(`App_Data`, `appsettings.Production.json` 은 그대로 둔다).
 4. 서비스 시작. 새 버전은 다시 자동으로 적용되지 않게 업데이트 화면에서 자동 적용을 끄거나, 고친 다음 버전을 기다린다.
 
-## 4. 서버 이전
+## 5. 서버 이전
 
 1. 새 서버에 README "운영 배포" 1~3 단계로 같은 버전을 설치한다(서비스는 아직 시작하지 않거나 바로 멈춘다).
 2. 옛 서버에서 '지금 백업' → `.bak`(또는 `.db`)과 `.files.zip` 을 새 서버로 옮긴다.
@@ -97,13 +97,13 @@ sqlcmd -S <서버> -E -Q "ALTER DATABASE [GanttScheduler] SET SINGLE_USER WITH R
 4. 서비스 시작 → 아래 5 의 확인. 사용자는 IP 로 식별하므로 서버 주소가 바뀌어도 그대로 쓴다(서버 이름이 바뀌면 사용자에게 새 주소를 알린다).
 5. 옛 서버의 서비스는 `uninstall-service.cmd` 로 지운다(폴더와 데이터는 남는다).
 
-## 5. 복원·이전 뒤 확인
+## 6. 복원·이전 뒤 확인
 
 - **관리 > 서버 상태**: DB 연결·DB 구조(적용된 마이그레이션이 프로그램과 같은지)·폴더 쓰기 권한·PDF 글꼴이 모두 정상인지, **첨부 파일** 줄에 "파일이 없는 첨부" 가 0개인지 본다. 0개가 아니면 파일 묶음을 복원하지 않았거나 `Storage:Path` 가 다른 곳을 가리킨다.
 - `http://<서버>/health/ready` 가 200 과 `"status":"ok"` 를 준다(DB·디스크). 감시 도구는 이 주소를 본다(실패하면 503). `/health` 는 프로그램이 떠 있는지만 본다.
 - 최근 과제 하나를 열어 일정·활동·첨부 미리보기가 되는지 본다.
 
-## 6. 로그와 오류 번호
+## 7. 로그와 오류 번호
 
 - **파일 로그**: `Logs:Path`(기본 `App_Data/logs`)에 한국 날짜별 `yyyy-MM-dd.log`. `Logs:KeepDays`(기본 30)일이 지난 파일은 지운다. 서버 상태 화면에서 오늘 로그를 내려받을 수 있다(연결 문자열의 계정·비밀번호는 가린다).
 - **최근 경고·오류**: 서버 상태 화면에 최근 200건(서버를 다시 시작하면 비워진다).
