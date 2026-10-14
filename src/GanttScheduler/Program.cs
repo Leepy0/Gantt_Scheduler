@@ -42,7 +42,7 @@ var config = builder.Configuration;
 builder.Services.AddSingleton(_ => FileLog.From(config, builder.Environment.ContentRootPath));
 builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLog>());
 
-// DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택, Data/DbSetup.cs)
+// DB: SQLite 가 기본 운영 DB. 필요하면 Database:Provider=SqlServer 로 명시한다 (Data/DbSetup.cs)
 builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
@@ -88,6 +88,7 @@ builder.Services.AddHostedService<UpdateWorker>();
 
 // 백업·운영 점검 (Services/BackupService.cs, OpsChecks.cs). 야간 자동 백업은 Backup:Nightly 일 때만 돈다
 builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<JsonDatabaseService>();
 builder.Services.AddSingleton<OpsAlerts>();
 builder.Services.AddScoped<OpsChecks>();
 builder.Services.AddHostedService<BackupWorker>();
