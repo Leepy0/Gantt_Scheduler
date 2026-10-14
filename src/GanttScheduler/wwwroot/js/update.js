@@ -39,7 +39,7 @@
         var auto = backup && backup.beforeSchemaUpdate;
         return '<div class="form-note">' + icon('alert') + '<div><p>DB 구조가 바뀌는 업데이트입니다. 적용한 뒤에는 프로그램만 되돌릴 수 없습니다. ' +
             (auto ? '적용을 누르면 먼저 DB 를 백업하고, 백업에 실패하면 적용하지 않습니다.' : '먼저 DB 를 백업해 주세요.') + ' 자동으로는 적용되지 않습니다.</p>' +
-            (st.sqliteData ? '<p class="fix">지금은 미리보기용 SQLite DB 를 쓰고 있어, 적용하면 DB 가 새로 만들어지고 기존 데이터가 지워집니다.</p>' : '') + '</div></div>';
+            (st.sqliteData ? '<p class="fix">SQLite DB를 사용 중입니다. 개발 환경에서는 구조 변경 시 DB가 새로 만들어질 수 있으며, 운영 환경에서는 데이터 손실 방지를 위해 스키마 변경 업데이트를 차단합니다.</p>' : '') + '</div></div>';
     }
 
     function autoText(version) {
