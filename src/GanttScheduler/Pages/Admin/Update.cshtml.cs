@@ -21,10 +21,11 @@ public class UpdateModel : PageModel
     private readonly IHostApplicationLifetime? _lifetime;
     // 관리 변경 이력 — 설정 변경·적용·되돌리기·올리기·지금 백업을 남긴다(업데이트 기록은 state.json 에도 있지만 서버를 옮기면 사라진다)
     private readonly MasterLog? _changes;
+    private readonly JsonDatabaseService? _jsonDatabase;
 
     // 백업·로그는 선택 인자다 (업데이트 시험이 페이지를 직접 만들 때 없어도 되게)
     public UpdateModel(UpdateService updates, CurrentUser me, BackupService? backup = null, FileLog? log = null, IHostApplicationLifetime? lifetime = null,
-        MasterLog? changes = null)
+        MasterLog? changes = null, JsonDatabaseService? jsonDatabase = null)
     {
         _updates = updates;
         _me = me;
@@ -32,6 +33,7 @@ public class UpdateModel : PageModel
         _log = log;
         _lifetime = lifetime;
         _changes = changes;
+        _jsonDatabase = jsonDatabase;
     }
 
     public bool IsAdmin => _me.IsAdmin;
@@ -79,6 +81,35 @@ public class UpdateModel : PageModel
             throw new UpdateException("백업하지 못했습니다: " + entry.Error,
                 "백업 경로(Backup:Path, Backup:FilesPath)와 쓰기 권한·디스크 여유를 확인하세요. 아래 목록에 실패 기록이 남습니다.");
         await RecordAsync("backup", "지금 백업 실행");
+    });
+
+    // SQLite 테이블별 JSON 백업 내려받기. JSON 파일은 DB 전체 복구·이관에 쓰며 관리자만 접근한다.
+    public async Task<IActionResult> OnGetJsonExportAsync()
+    {
+        if (!_me.IsAdmin) return Denied();
+        try
+        {
+            if (_jsonDatabase == null) throw new RuleException("JSON 백업 기능을 사용할 수 없습니다.");
+            var bytes = await _jsonDatabase.ExportAsync(HttpContext.RequestAborted);
+            return File(bytes, "application/zip", $"gantt-json-{KoreaClock.ToKst(DateTime.UtcNow):yyyyMMdd-HHmmss}.zip");
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
+    // 테이블별 JSON 백업 복원은 현재 SQLite 스키마와 정확히 맞을 때만 허용한다.
+    public Task<IActionResult> OnPostJsonRestoreAsync() => Run(async () =>
+    {
+        if (_jsonDatabase == null) throw new RuleException("JSON 백업 기능을 사용할 수 없습니다.");
+        var files = Request.HasFormContentType ? Request.Form.Files : null;
+        var file = files?.FirstOrDefault(f => f.Length > 0 && f.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+        if (file == null) throw new RuleException("테이블별 JSON 백업 ZIP 파일을 선택해 주세요.");
+        if (file.Length > 300L * 1024 * 1024) throw new RuleException("백업 파일은 300MB 이하여야 합니다.");
+        await using var stream = file.OpenReadStream();
+        await _jsonDatabase.RestoreAsync(stream, HttpContext.RequestAborted);
+        await RecordAsync("backup", $"테이블별 JSON 백업 복원: {Path.GetFileName(file.FileName)}");
     });
 
     // 진단 정보: 교체 기록(apply.log) 끝부분, 시작 오류(startup-error.log), 상태 요약, 최근 업데이트·백업 경고
