@@ -279,6 +279,6 @@ public sealed class JsonDatabaseService
 
     private sealed record JsonColumn(string Name, string Type);
     private sealed record JsonTableSchema(string Name, List<JsonColumn> Columns);
-    private sealed record JsonTableInfo(string Name, string File, string[] Columns, string[] Types, long Rows);
-    private sealed record JsonManifest(int FormatVersion, DateTime ExportedAtUtc, string Provider, List<JsonTableInfo> Tables);
+    public sealed record JsonTableInfo(string Name, string File, string[] Columns, string[] Types, long Rows);
+    public sealed record JsonManifest(int FormatVersion, DateTime ExportedAtUtc, string Provider, List<JsonTableInfo> Tables);
 }
