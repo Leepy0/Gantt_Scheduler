@@ -47,7 +47,7 @@ public class OpsTests : IDisposable
         services.AddSingleton<IHostEnvironment>(new Env { EnvironmentName = environment, ContentRootPath = _dir });
         services.AddSingleton<IClock>(new FixedClock());
         services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
-        services.AddDbContext<AppDb>(o => DbSetup.Configure(o, cfg, _dir));
+        services.AddAppDb(cfg, _dir);
         return services.BuildServiceProvider();
     }
 
@@ -69,13 +69,64 @@ public class OpsTests : IDisposable
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
     }
 
+    // 마이그레이션 도입(0.6.0) 전의 DB 처럼 만든다: 이력 표를 지우고 그때의 구조 표시 파일을 남긴다
+    private async Task MakeLegacyAsync(string marker)
+    {
+        await using var sp = Services(Environments.Production);
+        using var scope = sp.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDb>();
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\";");
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(DbPath + ".schema", marker);
+    }
+
+    private async Task<List<string>> AppliedAsync()
+    {
+        await using var sp = Services(Environments.Production);
+        using var scope = sp.CreateScope();
+        var applied = (await scope.ServiceProvider.GetRequiredService<AppDb>().Database.GetAppliedMigrationsAsync()).ToList();
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        return applied;
+    }
+
     [Fact]
-    public async Task 운영에서_SQLite_구조가_바뀌면_기존_DB_를_지우지_않고_옆에_남긴다()
+    public async Task SQLite_는_마이그레이션으로_만들고_다시_시작해도_데이터가_남는다()
     {
         await InitAsync(Environments.Production);
         await AddUserAsync("실제 사용자");
-        // 다른 구조로 만든 DB 였다고 표시해 둔다 (EF 패치·모델 변경)
-        await File.WriteAllTextAsync(DbPath + ".schema", "옛 구조");
+        await InitAsync(Environments.Production);
+        Assert.NotEmpty(await AppliedAsync());
+        Assert.Empty(Directory.GetFiles(_dir, "*.bak"));
+        await using var sp = Services(Environments.Production);
+        using var scope = sp.CreateScope();
+        Assert.True(await scope.ServiceProvider.GetRequiredService<AppDb>().Users.AnyAsync(u => u.Name == "실제 사용자"));
+    }
+
+    [Fact]
+    public async Task 마이그레이션_도입_전_SQLite_DB_는_구조가_같으면_그대로_이어_쓴다()
+    {
+        await InitAsync(Environments.Production);
+        await AddUserAsync("실제 사용자");
+        await MakeLegacyAsync(SqliteAppDb.LegacySchemaHash + "\n");
+
+        await InitAsync(Environments.Production);
+
+        // 첫 마이그레이션이 적용된 것으로 표시되고, 데이터는 그대로, 표시 파일은 지운다
+        Assert.Empty(Directory.GetFiles(_dir, "*.bak"));
+        Assert.Contains(await AppliedAsync(), m => m.EndsWith("_Initial"));
+        Assert.False(File.Exists(DbPath + ".schema"));
+        await using var sp = Services(Environments.Production);
+        using var scope = sp.CreateScope();
+        Assert.True(await scope.ServiceProvider.GetRequiredService<AppDb>().Users.AnyAsync(u => u.Name == "실제 사용자"));
+    }
+
+    [Fact]
+    public async Task 운영에서_마이그레이션_도입_전_SQLite_DB_의_구조를_모르면_지우지_않고_옆에_남긴다()
+    {
+        await InitAsync(Environments.Production);
+        await AddUserAsync("실제 사용자");
+        // 첫 마이그레이션과 다른 구조로 만든 DB 였다고 표시해 둔다
+        await MakeLegacyAsync("옛 구조");
 
         await InitAsync(Environments.Production);
 
@@ -86,21 +137,23 @@ public class OpsTests : IDisposable
         await using (var old = new AppDb(options))
             Assert.True(await old.Users.AnyAsync(u => u.Name == "실제 사용자"));
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        // 새 DB 는 비어 있고 구조 표시가 새로 기록된다
+        // 새 DB 는 비어 있고 마이그레이션으로 만들어졌다
+        Assert.NotEmpty(await AppliedAsync());
+        Assert.False(File.Exists(DbPath + ".schema"));
         await using var sp = Services(Environments.Production);
         using var scope = sp.CreateScope();
         Assert.False(await scope.ServiceProvider.GetRequiredService<AppDb>().Users.AnyAsync());
-        Assert.NotEqual("옛 구조", await File.ReadAllTextAsync(DbPath + ".schema"));
     }
 
     [Fact]
-    public async Task 개발_환경에서는_구조가_바뀌면_미리보기_DB_를_새로_만든다()
+    public async Task 개발_환경에서는_구조를_모르는_옛_DB_를_새로_만든다()
     {
         await InitAsync(Environments.Development);
-        await File.WriteAllTextAsync(DbPath + ".schema", "옛 구조");
+        await MakeLegacyAsync("옛 구조");
         await InitAsync(Environments.Development);
         Assert.Empty(Directory.GetFiles(_dir, "*.bak"));
         Assert.True(File.Exists(DbPath));
+        Assert.NotEmpty(await AppliedAsync());
     }
 
     [Fact]

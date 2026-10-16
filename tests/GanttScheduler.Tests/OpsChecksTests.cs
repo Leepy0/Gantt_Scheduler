@@ -70,39 +70,35 @@ public sealed class OpsChecksTests : IDisposable
     }
 
     [Fact]
-    public async Task DB_구조는_SQLite_구조_표시_파일과_비교한다()
+    public async Task DB_구조는_마이그레이션_이력과_빌드_정보로_본다()
     {
-        if (TestDb.UseSqlServer)
-        {
-            // SQL Server: 시험 DB 는 마이그레이션으로 만들었으므로 적용 안 된 것이 없다. 빌드 정보의 구조값이
-            // 마지막 마이그레이션과 같으면 정상, 다르면(시험 기본값 'S1') 배포 패키지가 어긋났다는 경고
-            var stale = Make();
-            var last = stale.Db.Database.GetMigrations().Last();
-            Assert.Equal(CheckLevel.Ok, (await Make(build: BackupHelper.Build with { Schema = last }).Ops.SchemaAsync(CancellationToken.None)).Level);
-            var warn = await stale.Ops.SchemaAsync(CancellationToken.None);
-            Assert.Equal(CheckLevel.Warn, warn.Level);
-            Assert.Contains(last, warn.Message);
-            return;
-        }
-        var k = Make();
-        var marker = _db.SqlitePath + ".schema";
-        if (File.Exists(marker)) File.Delete(marker);
-        Assert.Equal(CheckLevel.Warn, (await k.Ops.SchemaAsync(CancellationToken.None)).Level);
-        File.WriteAllText(marker, DbInitializer.SchemaHash(k.Db.Database.GenerateCreateScript()));
-        Assert.Equal(CheckLevel.Ok, (await k.Ops.SchemaAsync(CancellationToken.None)).Level);
-        File.WriteAllText(marker, "옛 구조");
+        // 시험 DB 는 마이그레이션으로 만들었으므로 적용 안 된 것이 없다. 빌드 정보의 구조값(SchemaId = SQL Server 마지막 마이그레이션)이
+        // 같으면 정상, 다르면(시험 기본값 'S1') 배포 패키지가 어긋났다는 경고 — SQLite 서버도 같은 이름으로 견준다
+        var stale = Make();
+        var last = MigrationInfo.LastSqlServerId()!;
+        Assert.Equal(CheckLevel.Ok, (await Make(build: BackupHelper.Build with { Schema = last }).Ops.SchemaAsync(CancellationToken.None)).Level);
+        var warn = await stale.Ops.SchemaAsync(CancellationToken.None);
+        Assert.Equal(CheckLevel.Warn, warn.Level);
+        Assert.Contains(last, warn.Message);
+        if (TestDb.UseSqlServer) return;
+
+        // 모르는 마이그레이션이 적용돼 있으면(프로그램보다 새 DB) 실패
+        var k = Make(build: BackupHelper.Build with { Schema = last });
+        await k.Db.Database.ExecuteSqlRawAsync("INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ('99991231000000_Future', '10.0.0');");
         var r = await k.Ops.SchemaAsync(CancellationToken.None);
         Assert.Equal(CheckLevel.Fail, r.Level);
+        Assert.Contains("Future", r.Message);
         Assert.NotNull(r.Fix);
-        File.Delete(marker);
+        await k.Db.Database.ExecuteSqlRawAsync("DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '99991231000000_Future';");
     }
 
     [Fact]
-    public void 운영에서_SQLite_를_쓰면_경고한다()
+    public void DB_종류는_SQLite_도_운영에서_정상이다()
     {
-        if (TestDb.UseSqlServer) return;
-        Assert.Equal(CheckLevel.Warn, Make().Ops.DbKind().Level);
+        // SQLite 가 기본 운영 DB 다(마이그레이션으로 구조를 올린다) — 종류·위치만 보여 주고 경고하지 않는다
+        Assert.Equal(CheckLevel.Ok, Make().Ops.DbKind().Level);
         Assert.Equal(CheckLevel.Ok, Make(environment: "Development").Ops.DbKind().Level);
+        Assert.StartsWith(TestDb.UseSqlServer ? "SQL Server" : "SQLite", Make().Ops.DbKind().Message);
     }
 
     [Theory]

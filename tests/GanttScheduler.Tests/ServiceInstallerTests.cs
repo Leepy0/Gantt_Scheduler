@@ -20,7 +20,7 @@ public class ServiceInstallerTests
     public void 설치_명령인지_가린다(string[] args, bool expected) => Assert.Equal(expected, ServiceInstaller.IsCommand(args));
 
     [Theory]
-    [InlineData(new[] { "install" }, 80)]
+    [InlineData(new[] { "install" }, 8081)]
     [InlineData(new[] { "install", "--port", "8080" }, 8080)]
     [InlineData(new[] { "install", "--pause", "--port=8080" }, 8080)]
     [InlineData(new[] { "--port", "8080", "install" }, 8080)]
@@ -53,7 +53,7 @@ public class ServiceInstallerTests
     public void 나머지_옵션도_읽는다()
     {
         var o = ServiceInstaller.ParseOptions(new[] { "install", "--pause", "--name", "Gantt2", "--system", "--remoteip", "10.0.0.0/8" });
-        Assert.Equal(("install", "Gantt2", 80, true, "10.0.0.0/8", true), (o.Verb, o.Name, o.Port, o.System, o.RemoteIp, o.Pause));
+        Assert.Equal(("install", "Gantt2", 8081, true, "10.0.0.0/8", true), (o.Verb, o.Name, o.Port, o.System, o.RemoteIp, o.Pause));
         var u = ServiceInstaller.ParseOptions(new[] { "uninstall", "--name=Gantt2", "--pause" });
         Assert.Equal(("uninstall", "Gantt2", true), (u.Verb, u.Name, u.Pause));
     }

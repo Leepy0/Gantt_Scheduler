@@ -19,7 +19,8 @@ public static class ServiceInstaller
 {
     public const string DefaultName = "GanttScheduler";
     public const string DisplayName = "과제 스케줄러";
-    public const int DefaultPort = 80;
+    // 기본 포트. 80 은 IIS·다른 웹 서버와 자주 겹쳐 8081 을 쓴다 — 바꾸려면 install-service.cmd --port <번호>
+    public const int DefaultPort = 8081;
     public const string StartupErrorFile = "startup-error.log";
     // 설치·제거 명령이 화면에 쓴 내용을 그대로 남기는 파일(App_Data 아래). 창이 닫혀도 무엇이 일어났는지 볼 수 있게
     public const string InstallLogFile = "install.log";

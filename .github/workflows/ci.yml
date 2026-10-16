@@ -96,6 +96,22 @@ jobs:
           # APP_LOG: 앱 로그의 경고·오류 줄을 화면 점검 보고서(report.md)에 요약해 넣는다
           PW_CHANNEL=chrome OUT_DIR=$PWD/out APP_LOG=$PWD/out/logs/app.log node e2e/run.cjs 2>&1 | tee out/logs/e2e.log
 
+      - name: 테스트 실행 파일 게시 (Windows x64)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          dotnet publish src/GanttScheduler/GanttScheduler.csproj -c Release -r win-x64 --self-contained true --no-restore -p:BuildChannel=dev -o "$RUNNER_TEMP/GanttScheduler-win-x64"
+          sudo apt-get update -qq && sudo apt-get install -y -qq zip
+          cd "$RUNNER_TEMP"
+          zip -qr GanttScheduler-win-x64-test.zip GanttScheduler-win-x64
+
+      - name: 테스트 실행 파일 업로드
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: GanttScheduler-win-x64-test
+          path: ${{ runner.temp }}/GanttScheduler-win-x64-test.zip
+          if-no-files-found: error
+          retention-days: 30
       - name: 결과를 preview 브랜치에 올리기
         if: always() && github.event_name != 'pull_request'
         env:

@@ -160,38 +160,31 @@ public class OpsChecks
         }
     }
 
-    // 적용된 마이그레이션과 이 빌드의 마이그레이션(SQL Server) / 구조 표시 파일(SQLite) 비교
+    // 적용된 마이그레이션과 이 빌드의 마이그레이션 비교 (SQL Server·SQLite 모두 — SQLite 는 SqliteAppDb 의 마이그레이션)
     public async Task<CheckResult> SchemaAsync(CancellationToken ct)
     {
         const string name = "DB 구조";
         try
         {
-            if (_db.Database.IsSqlServer())
-            {
-                var applied = (await _db.Database.GetAppliedMigrationsAsync(ct)).ToList();
-                var known = _db.Database.GetMigrations().ToList();
-                var unknown = applied.Except(known).ToList();
-                var pending = known.Except(applied).ToList();
-                var build = _updates.Build.Schema;
-                if (unknown.Count > 0)
-                    return new CheckResult("schema", name, CheckLevel.Fail, $"DB 에 이 프로그램이 모르는 마이그레이션이 적용돼 있습니다({unknown[^1]}). DB 가 프로그램보다 새 구조입니다.",
-                        "새 버전 프로그램을 설치하거나, 업데이트 전 백업을 복원하세요(docs/OPERATIONS.md).");
-                if (pending.Count > 0)
-                    return new CheckResult("schema", name, CheckLevel.Fail, $"적용되지 않은 마이그레이션이 {pending.Count}개 있습니다({pending[^1]}).",
-                        "서버(서비스)를 다시 시작하면 시작할 때 적용됩니다. 계속되면 서비스 계정의 DB 권한(db_owner)을 확인하세요.");
-                if (build.Length > 0 && known.Count > 0 && build != known[^1])
-                    return new CheckResult("schema", name, CheckLevel.Warn, $"빌드 정보의 DB 구조({build})와 프로그램의 마지막 마이그레이션({known[^1]})이 다릅니다.",
-                        "배포 패키지를 다시 받아 설치하세요. 업데이트의 구조 변경 판단이 틀릴 수 있습니다.");
-                return new CheckResult("schema", name, CheckLevel.Ok, applied.Count == 0 ? "마이그레이션 없음" : $"마지막 마이그레이션 {applied[^1]}");
-            }
-
-            var marker = AppPaths.Sqlite(_cfg, Root) + ".schema";
-            var current = DbInitializer.SchemaHash(_db.Database.GenerateCreateScript());
-            if (!File.Exists(marker))
-                return new CheckResult("schema", name, CheckLevel.Warn, "SQLite 구조 표시 파일이 없습니다.", "서버를 다시 시작하면 만들어집니다.");
-            return await File.ReadAllTextAsync(marker, ct) == current
-                ? new CheckResult("schema", name, CheckLevel.Ok, "SQLite — 프로그램과 같은 구조")
-                : new CheckResult("schema", name, CheckLevel.Fail, "SQLite DB 구조가 이 프로그램과 다릅니다.", "서버를 다시 시작하면 새로 만듭니다(개발 환경이 아니면 기존 파일을 .bak 으로 옮겨 둡니다).");
+            var sqlServer = _db.Database.IsSqlServer();
+            var applied = (await _db.Database.GetAppliedMigrationsAsync(ct)).ToList();
+            var known = _db.Database.GetMigrations().ToList();
+            var unknown = applied.Except(known).ToList();
+            var pending = known.Except(applied).ToList();
+            var build = _updates.Build.Schema;
+            if (unknown.Count > 0)
+                return new CheckResult("schema", name, CheckLevel.Fail, $"DB 에 이 프로그램이 모르는 마이그레이션이 적용돼 있습니다({unknown[^1]}). DB 가 프로그램보다 새 구조입니다.",
+                    "새 버전 프로그램을 설치하거나, 업데이트 전 백업을 복원하세요(docs/OPERATIONS.md).");
+            if (pending.Count > 0)
+                return new CheckResult("schema", name, CheckLevel.Fail, $"적용되지 않은 마이그레이션이 {pending.Count}개 있습니다({pending[^1]}).",
+                    sqlServer ? "서버(서비스)를 다시 시작하면 시작할 때 적용됩니다. 계속되면 서비스 계정의 DB 권한(db_owner)을 확인하세요."
+                              : "서버(서비스)를 다시 시작하면 시작할 때 적용됩니다. 계속되면 App_Data 폴더의 쓰기 권한과 시작 오류(startup-error.log)를 확인하세요.");
+            // 빌드 정보의 DB 구조(SchemaId)는 SQL Server 마이그레이션 이름이다 — SQLite 서버에서도 그 이름으로 견준다
+            var last = MigrationInfo.LastSqlServerId();
+            if (build.Length > 0 && last != null && build != last)
+                return new CheckResult("schema", name, CheckLevel.Warn, $"빌드 정보의 DB 구조({build})와 프로그램의 마지막 마이그레이션({last})이 다릅니다.",
+                    "배포 패키지를 다시 받아 설치하세요. 업데이트의 구조 변경 판단이 틀릴 수 있습니다.");
+            return new CheckResult("schema", name, CheckLevel.Ok, applied.Count == 0 ? "마이그레이션 없음" : $"마지막 마이그레이션 {applied[^1]}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -307,15 +300,13 @@ public class OpsChecks
         catch (Exception) { return false; }
     }
 
-    // 운영에서 SQLite 를 쓰면 구조가 바뀔 때 DB 를 새로 만든다 — 실제 데이터라면 SQL Server 로 옮겨야 한다
+    // DB 종류와 위치. SQLite(기본)·SQL Server 모두 마이그레이션으로 구조를 올리므로 어느 쪽이든 정상이다
     public CheckResult DbKind()
     {
         const string name = "DB 종류";
         var target = _backups.Target;
         if (target.SqlServer) return new CheckResult("dbkind", name, CheckLevel.Ok, target.Describe);
-        if (_env.IsDevelopment()) return new CheckResult("dbkind", name, CheckLevel.Ok, "SQLite (개발·미리보기)");
-        return new CheckResult("dbkind", name, CheckLevel.Warn, $"운영 환경에서 SQLite 를 쓰고 있습니다 ({target.SqlitePath}).",
-            "SQLite 는 미리보기용입니다. DB 구조가 바뀌는 업데이트에서 새로 만들어집니다(기존 파일은 .bak 으로 옮김). appsettings.Production.json 에서 SQL Server 로 바꾸세요.");
+        return new CheckResult("dbkind", name, CheckLevel.Ok, _env.IsDevelopment() ? "SQLite (개발·미리보기)" : target.Describe);
     }
 
     public CheckResult PdfFont()

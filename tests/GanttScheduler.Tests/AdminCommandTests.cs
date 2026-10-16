@@ -112,15 +112,6 @@ public class AdminCommandTests
             Console.SetOut(output);
             var args = new[] { "admin", "복구관리자", "--ip", "10.78.0.1", "--contentRoot", root, "--environment", "Test" };
 
-            if (!TestDb.UseSqlServer)
-            {
-                // SQLite 는 서버가 시작할 때 남기는 구조 표식이 맞아야 한다 — 없으면 아무것도 바꾸지 않고 끝낸다
-                Assert.Equal(1, await AdminCommand.RunAsync(args));
-                Assert.Contains("DB 구조", output.ToString());
-                using var ctx = db.Open();
-                await File.WriteAllTextAsync(db.SqlitePath + ".schema", DbInitializer.SchemaHash(ctx.Database.GenerateCreateScript()));
-            }
-
             Assert.Equal(0, await AdminCommand.RunAsync(args));
             Assert.Contains("관리자로 지정했습니다", output.ToString());
             using (var ctx = db.Open())

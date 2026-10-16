@@ -2043,8 +2043,10 @@ function fillTemplate(template, sheets) {
         await page.selectOption('#settings-form select[name=windowFrom]', '22');
         await page.selectOption('#settings-form select[name=windowTo]', '4');
         await page.fill('#settings-form input[name=idleMinutes]', '45');
+        // '지금 확인'의 토스트가 아직 떠 있을 수 있어, 토스트 대신 저장 요청의 응답을 기다린다 (먼저 새로 고치면 저장 전이다)
+        const saved = page.waitForResponse((r) => r.url().includes('handler=Settings') && r.request().method() === 'POST');
         await page.click('#settings-form button[type=submit]');
-        await page.waitForSelector('.toast');
+        assert((await saved).status() === 200, '설정 저장 응답이 200 이 아님');
         await page.reload();
         await page.waitForSelector('#settings-form');
         assert((await page.inputValue('#settings-form input[name=idleMinutes]')) === '45', '설정이 저장되지 않음');

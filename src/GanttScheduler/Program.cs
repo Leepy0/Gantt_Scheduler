@@ -42,8 +42,8 @@ var config = builder.Configuration;
 builder.Services.AddSingleton(_ => FileLog.From(config, builder.Environment.ContentRootPath));
 builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLog>());
 
-// DB: 운영은 SQL Server, 미리보기·개발·테스트는 SQLite (Database:Provider 로 선택, Data/DbSetup.cs)
-builder.Services.AddDbContext<AppDb>(options => DbSetup.Configure(options, config, builder.Environment.ContentRootPath));
+// DB: 기본은 SQLite(운영 포함), Database:Provider=SqlServer 로 명시하면 SQL Server (Data/DbSetup.cs — SQLite 는 SqliteAppDb 를 넣는다)
+builder.Services.AddAppDb(config, builder.Environment.ContentRootPath);
 
 builder.Services.AddSingleton<IClock, KoreaClock>();
 // TV 상황판(/Board): 과제 그래프가 저장될 때마다 오르는 데이터 버전(AppDb.SaveChangesAsync 가 올린다)과 상황판 요약
@@ -88,6 +88,7 @@ builder.Services.AddHostedService<UpdateWorker>();
 
 // 백업·운영 점검 (Services/BackupService.cs, OpsChecks.cs). 야간 자동 백업은 Backup:Nightly 일 때만 돈다
 builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<JsonDatabaseService>();
 builder.Services.AddSingleton<OpsAlerts>();
 builder.Services.AddScoped<OpsChecks>();
 builder.Services.AddHostedService<BackupWorker>();

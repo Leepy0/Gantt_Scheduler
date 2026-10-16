@@ -14,36 +14,10 @@ public static class DbInitializer
         var env = sp.GetRequiredService<IHostEnvironment>();
         var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("DbInitializer");
 
-        // SQL Server 는 마이그레이션으로 스키마를 올리고, SQLite(미리보기·테스트용)는 그때그때 새로 만든다
-        if (db.Database.IsSqlServer())
-        {
-            await db.Database.MigrateAsync();
-        }
-        else
-        {
-            // SQLite 는 마이그레이션이 없으므로, 모델이 바뀌었으면 DB 를 새로 만든다(담긴 것은 샘플 데이터뿐이라는 전제).
-            // 구조 판정은 EF 가 만든 생성 스크립트의 해시라 EF 패치 버전이 바뀌어도 달라질 수 있다 — 패키지 버전을
-            // Directory.Packages.props 에 고정해 그런 일이 업그레이드 때만 생기게 했다
-            var path = AppPaths.Sqlite(cfg, env.ContentRootPath);
-            var marker = path + ".schema";
-            var schema = SchemaHash(db.Database.GenerateCreateScript());
-            if (File.Exists(marker) && await File.ReadAllTextAsync(marker) != schema)
-            {
-                if (env.IsDevelopment())
-                {
-                    log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다 (기존 미리보기 데이터는 지워집니다).");
-                    await db.Database.EnsureDeletedAsync();
-                }
-                else
-                {
-                    // 개발 환경이 아니면 누군가 실제로 쓰던 데이터일 수 있어 지우지 않고 옆에 남겨 둔다
-                    var backup = SetAside(path, clock.UtcNow);
-                    log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다. 기존 DB 는 {Backup} 로 옮겨 두었습니다.", backup);
-                }
-            }
-            await db.Database.EnsureCreatedAsync();
-            await File.WriteAllTextAsync(marker, schema);
-        }
+        // 두 DB 모두 마이그레이션으로 구조를 올린다 (SQL Server: Data/Migrations, SQLite: Data/Migrations/Sqlite — SqliteAppDb 가 고른다).
+        // SQLite 는 마이그레이션을 도입(0.6.0)하기 전에 EnsureCreated 로 만든 DB 가 있을 수 있어 먼저 기준선을 잡는다
+        if (!db.Database.IsSqlServer()) await BaselineLegacySqliteAsync(db, cfg, env, clock, log);
+        await db.Database.MigrateAsync();
 
         await Seeder.SeedMastersAsync(db);
         if (cfg.GetValue<bool>("Seed:Demo")) await Seeder.SeedDemoAsync(db, clock);
@@ -53,6 +27,46 @@ public static class DbInitializer
         // 종료일 열이 생기기 전에 끝난(완료·중단) 과제의 종료일을 한 번 채운다(멱등 — 값이 있으면 건너뛴다)
         var closed = await GanttScheduler.Services.ClosedDates.FillAsync(db, clock.Today);
         if (closed > 0) log.LogInformation("과제 종료일: 완료·중단 과제 {Count}건의 종료일을 채웠습니다.", closed);
+    }
+
+    // 마이그레이션 도입 전 SQLite DB(마이그레이션 이력 표가 없는데 내용이 있는 파일) 처리.
+    // 옆의 gantt.db.schema 가 그때 모델의 해시(SqliteAppDb.LegacySchemaHash)와 같으면 첫 마이그레이션을 적용된 것으로 표시해 그대로 이어 쓴다.
+    // 다르면 그보다 오래된 구조라 올릴 방법이 없다 — 개발 환경은 지우고(샘플뿐), 그 밖에서는 지우지 않고 옆에 남긴 뒤 새로 만든다
+    private static async Task BaselineLegacySqliteAsync(AppDb db, IConfiguration cfg, IHostEnvironment env, IClock clock, ILogger log)
+    {
+        var path = AppPaths.Sqlite(cfg, env.ContentRootPath);
+        var marker = path + ".schema";
+        // 비어 있지 않은 파일인데 적용된 마이그레이션이 없다 = 도입 전 DB (이력 표가 없으면 EF 는 빈 목록을 준다)
+        var legacy = File.Exists(path) && new FileInfo(path).Length > 0 && !(await db.Database.GetAppliedMigrationsAsync()).Any();
+        if (legacy)
+        {
+            var hash = File.Exists(marker) ? (await File.ReadAllTextAsync(marker)).Trim() : null;
+            if (hash == SqliteAppDb.LegacySchemaHash)
+            {
+                var first = db.Database.GetMigrations().First();
+                var product = typeof(DbContext).Assembly.GetName().Version?.ToString(3) ?? "10.0.0";
+                // EF 가 만드는 것과 같은 이력 표 (Microsoft.EntityFrameworkCore.Sqlite 의 HistoryRepository)
+                await db.Database.ExecuteSqlRawAsync(
+                    "CREATE TABLE IF NOT EXISTS \"__EFMigrationsHistory\" (\"MigrationId\" TEXT NOT NULL CONSTRAINT \"PK___EFMigrationsHistory\" PRIMARY KEY, \"ProductVersion\" TEXT NOT NULL);");
+                await db.Database.ExecuteSqlRawAsync("INSERT INTO \"__EFMigrationsHistory\" (\"MigrationId\", \"ProductVersion\") VALUES ({0}, {1});", new object[] { first, product });
+                log.LogInformation("마이그레이션 도입 전에 만든 SQLite DB 를 그대로 이어 씁니다 (기준선 {Migration}).", first);
+            }
+            else if (env.IsDevelopment())
+            {
+                log.LogWarning("모델이 바뀌어 SQLite DB 를 새로 만듭니다 (기존 미리보기 데이터는 지워집니다).");
+                await db.Database.EnsureDeletedAsync();
+            }
+            else
+            {
+                // 적용 이력을 읽느라 연 연결(풀)이 옛 파일을 계속 가리키지 않게 먼저 닫는다 (Windows 는 열린 파일을 옮기지 못한다)
+                await db.Database.CloseConnectionAsync();
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                var backup = SetAside(path, clock.UtcNow);
+                log.LogWarning("마이그레이션 도입 전의 SQLite DB 구조를 알 수 없어 새로 만듭니다. 기존 DB 는 {Backup} 로 옮겨 두었습니다.", backup);
+            }
+        }
+        // 구조 표시 파일은 더 쓰지 않는다 (구조는 마이그레이션 이력으로 본다)
+        if (File.Exists(marker)) File.Delete(marker);
     }
 
     public static string SchemaHash(string script) =>

@@ -15,6 +15,8 @@
     var backup = data.backup || null;   // 백업 설정·목록 (관리자에게만 온다)
     var backupBusy = false;    // '지금 백업'을 누르고 기다리는 중
     var backupFailure = null;  // 마지막 '지금 백업'의 실패 { message, fix }
+    var jsonRestoreBusy = false;
+    var jsonRestoreFailure = null;
     var pendingApply = null;   // 적용 전 백업이 끝나면 교체가 시작된다 — 그때 보일 문구
     var diag = null;           // 진단 정보 (열었을 때만 받아 온다)
     var diagOpen = false;
@@ -37,7 +39,7 @@
         var auto = backup && backup.beforeSchemaUpdate;
         return '<div class="form-note">' + icon('alert') + '<div><p>DB 구조가 바뀌는 업데이트입니다. 적용한 뒤에는 프로그램만 되돌릴 수 없습니다. ' +
             (auto ? '적용을 누르면 먼저 DB 를 백업하고, 백업에 실패하면 적용하지 않습니다.' : '먼저 DB 를 백업해 주세요.') + ' 자동으로는 적용되지 않습니다.</p>' +
-            (st.sqliteData ? '<p class="fix">지금은 미리보기용 SQLite DB 를 쓰고 있어, 적용하면 DB 가 새로 만들어지고 기존 데이터가 지워집니다.</p>' : '') + '</div></div>';
+            (st.sqliteData ? '<p class="fix">SQLite DB 는 적용한 새 버전이 처음 시작할 때 구조를 올립니다(마이그레이션). 되돌리려면 적용 전 백업(.db)을 복원해야 합니다.</p>' : '') + '</div></div>';
     }
 
     function autoText(version) {
@@ -235,6 +237,21 @@
         return h + '</section>';
     }
 
+
+    // ── 카드: 테이블별 JSON 내보내기·복원 ───────────────────────────
+    function jsonBackupCard() {
+        if (!admin || !backup || backup.provider !== 'Sqlite') return '';
+        var h = '<section class="card" id="json-backup"><div class="card-head"><h2>테이블별 JSON 백업</h2><span class="spacer"></span>' +
+            '<a class="btn small" href="' + esc(url + '?handler=JsonExport') + '">' + icon('download') + 'JSON 백업 내려받기</a></div>' +
+            '<p class="muted">SQLite DB의 각 테이블을 개별 JSON 파일로 내보내 ZIP으로 묶습니다. 일반 DB 백업과 별도로 데이터 확인·이관에 사용할 수 있습니다.</p>' +
+            '<form id="json-restore-form" class="upload-row"><input type="file" name="file" accept=".zip" aria-label="테이블별 JSON 백업 ZIP" required />' +
+            '<button type="submit" class="btn ghost"' + (jsonRestoreBusy ? ' disabled' : '') + '>' +
+            (jsonRestoreBusy ? '<span class="spinner"></span>복원 중…' : icon('upload') + 'JSON 백업 복원') + '</button></form>' +
+            '<p class="hint">복원하면 현재 DB의 모든 테이블 데이터가 백업 내용으로 교체됩니다. 현재 앱 버전과 스키마가 일치하는 백업만 허용되며, 실패하면 전체 복원이 취소됩니다.</p>';
+        if (jsonRestoreFailure) h += fixBlock('form-error', jsonRestoreFailure.message, jsonRestoreFailure.fix);
+        return h + '</section>';
+    }
+
     // ── 카드: 진단 정보 (apply.log 끝부분, startup-error.log, 상태 요약) ──
     function diagCard() {
         if (!admin) return '';
@@ -271,7 +288,7 @@
         var active = document.activeElement;
         if (active && active.closest && active.closest('#settings-form') && !waiting) return;
         root.innerHTML = '<div class="grid-2">' + currentCard() + nextCard() + '</div>' +
-            (waiting ? '' : '<div class="grid-2">' + uploadCard() + settingsCard() + '</div>' + rollbackCard() + backupCard()) + historyCard() +
+            (waiting ? '' : '<div class="grid-2">' + uploadCard() + settingsCard() + '</div>' + rollbackCard() + backupCard() + jsonBackupCard()) + historyCard() +
             (waiting ? '' : diagCard());
         schedulePoll();
     }
@@ -414,6 +431,44 @@
             }).then(function () { App.toast('설정을 저장했습니다.'); }).catch(fail);
         } else if (form.id === 'upload-form') {
             upload(form.file.files);
+        } else if (form.id === 'json-restore-form') {
+            var file = form.file.files && form.file.files[0];
+            if (!file) return;
+            App.confirm({
+                title: 'JSON 백업 복원',
+                message: '현재 DB의 모든 테이블 데이터를 선택한 백업으로 교체합니다. 되돌리려면 별도의 백업이 필요합니다. 계속할까요?',
+                verb: '복원'
+            }).then(function (yes) {
+                if (!yes) return;
+                jsonRestoreBusy = true;
+                jsonRestoreFailure = null;
+                render();
+                var fd = new FormData();
+                fd.append('file', file);
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', url + '?handler=JsonRestore');
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('input[name="__RequestVerificationToken"]').value);
+                xhr.onload = function () {
+                    jsonRestoreBusy = false;
+                    var body = null;
+                    try { body = JSON.parse(xhr.responseText); } catch (err) { /* JSON 응답이 아닐 수 있음 */ }
+                    if (xhr.status === 200 && body && body.ok) {
+                        take(body);
+                        App.toast('JSON 백업 복원을 마쳤습니다. 화면을 새로고침합니다.');
+                        location.reload();
+                    } else {
+                        jsonRestoreFailure = { message: body && body.error ? body.error : 'JSON 백업을 복원하지 못했습니다(' + xhr.status + ').', fix: '' };
+                    }
+                    render();
+                };
+                xhr.onerror = function () {
+                    jsonRestoreBusy = false;
+                    jsonRestoreFailure = { message: '서버에 연결하지 못했습니다.', fix: 'DB 복원 결과가 불분명하면 서버 상태와 로그를 확인해 주세요.' };
+                    render();
+                };
+                xhr.send(fd);
+            });
         }
     });
 
