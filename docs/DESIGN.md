@@ -232,12 +232,14 @@ MasterChange(At, User?, Kind, EntityId?, Text, OldValue, NewValue)   ← 관리 
 
 | | 용도 | 스키마 관리 |
 |---|---|---|
-| SQL Server | 운영 | EF 마이그레이션 — 앱 시작 시 자동 적용. 테이블은 `pm` 스키마. 일시적인 연결 끊김은 EF 재시도 전략(`EnableRetryOnFailure`)으로 다시 시도한다 |
-| SQLite | 미리보기·개발·테스트 | 파일이 없으면 그때 새로 만든다(`EnsureCreated`). 모델이 바뀌면(스키마 해시 비교) 새로 만든다 — 개발 환경은 지우고, 그 밖에서는 지우지 않고 `gantt.db.<시각>.bak` 으로 옮겨 둔다 |
+| SQLite | 기본 — 운영·미리보기·개발·테스트 (`App_Data/gantt.db`) | EF 마이그레이션(`Data/Migrations/Sqlite`, 컨텍스트 `SqliteAppDb`) — 앱 시작 시 자동 적용. 파일이 없으면 그때 만든다 |
+| SQL Server | `Database:Provider=SqlServer` 로 명시한 서버 | EF 마이그레이션(`Data/Migrations`, 컨텍스트 `AppDb`) — 앱 시작 시 자동 적용. 테이블은 `pm` 스키마. 일시적인 연결 끊김은 EF 재시도 전략(`EnableRetryOnFailure`)으로 다시 시도한다 |
 
-마이그레이션은 SQL Server 기준 한 벌만 관리한다. SQLite DB 는 버려도 되는 데이터만 담는다는 전제다. 그래도 운영 설정으로 SQLite 를 쓰는 서버가 있을 수 있어, 개발 환경이 아니면 구조가 바뀌어도 기존 파일을 남긴다(옮기지 못하면 지우지 않고 시작을 멈춘다).
+마이그레이션은 공급자마다 한 벌씩, 같은 이름으로 관리한다. EF 는 마이그레이션을 컨텍스트 형(`[DbContext]`)으로 고르므로, SQLite 는 `AppDb` 를 상속한 `SqliteAppDb` 를 DI 에 넣어(`DbSetup.AddAppDb` — 서비스는 `AppDb` 로 받는다) 자기 마이그레이션을 쓴다. 모델은 하나다. 모델을 바꾸면 두 벌을 같은 커밋에 넣는다(`MigrationTests` 가 모델과 스냅샷이 같은지 접속 없이 본다). 배포의 구조 이름(SchemaId)은 SQL Server 마이그레이션의 마지막 이름이고, SQLite 서버도 그 이름으로 "구조가 바뀌는 업데이트"를 판단한다(`MigrationInfo.LastSqlServerId`).
 
-스키마 해시는 EF 가 만든 생성 스크립트의 해시라 EF 패치 버전만 바뀌어도 달라질 수 있다. 패키지 버전은 `Directory.Packages.props` 에 정확한 값으로 고정하고(`packages.lock.json`, CI 는 잠금 모드 복원), 올리는 일은 Dependabot PR 로만 한다.
+마이그레이션 도입(0.6.0) 전의 SQLite DB(이력 표가 없는데 내용이 있는 파일)는 시작할 때 기준선을 잡는다: 옆의 `gantt.db.schema` 해시가 `SqliteAppDb.LegacySchemaHash`(첫 SQLite 마이그레이션과 같은 모델)와 같으면 첫 마이그레이션을 적용된 것으로 표시해 그대로 이어 쓴다. 다르면 올릴 방법이 없다 — 개발 환경은 지우고(샘플뿐), 그 밖에서는 지우지 않고 `gantt.db.<시각>.bak` 으로 옮긴 뒤 새로 만든다(옮기지 못하면 지우지 않고 시작을 멈춘다). 표시 파일은 그 뒤 지운다. 그 밖의 구조 차이는 두 DB 모두 마이그레이션 이력으로 본다(서버 상태의 DB 구조 점검, `admin` 명령).
+
+패키지 버전은 `Directory.Packages.props` 에 정확한 값으로 고정하고(`packages.lock.json`, CI 는 잠금 모드 복원), 올리는 일은 Dependabot PR 로만 한다.
 
 코드에서 트랜잭션을 직접 열지 않는다(`SaveChanges` 한 번이 트랜잭션 하나). 재시도 전략과 함께 직접 트랜잭션을 쓰려면 `Database.CreateExecutionStrategy()` 안에서 열어야 한다.
 

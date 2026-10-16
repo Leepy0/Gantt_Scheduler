@@ -15,7 +15,7 @@
 - **자동 업데이트** — 서버가 새 버전을 확인해 받아 두고, 아무도 쓰지 않는 시간에 스스로 바꾼다. 열려 있는 화면에는 새로 고침 안내가 뜬다
 - **관리** — 법인·제품군·라인·층, 유형·단계·체크 항목·작업 템플릿(단계별 기본 기간 — 완료 과제의 과거 평균을 참고로 보임), 기기·용기 종류, 협력사, 조직(그룹 → 파트), 사용자, 공휴일(연도별, 정부 발표표를 여러 줄 붙여넣기 — 내장 목록은 확정된 해만 들어 있어 다음 해 공휴일은 발표 뒤 넣는다)
 
-ASP.NET Core Razor Pages (.NET 10) · EF Core · SQLite(운영 기본값, SQL Server 선택 지원)
+ASP.NET Core Razor Pages (.NET 10) · EF Core · SQLite(기본, 운영 포함) / SQL Server(선택)
 
 설계 내용은 [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -36,36 +36,54 @@ http://localhost:5080 — 처음 접속하면 이름을 등록한다. 개발 환
 
 ## 운영 배포 (Windows 서비스 + SQLite)
 
-기본 운영 DB는 SQLite 파일이며 SQL Server 설치·별도 DB 서버가 필요 없다. 처음 한 번만 설치하면 그 뒤로는 서버가 스스로 업데이트한다. IIS 나 .NET 을 따로 설치하지 않는다.
+기본 DB 는 프로그램 폴더의 SQLite 파일(`App_Data\gantt.db`)이라 SQL Server 나 별도 DB 서버가 필요 없다. 처음 한 번만 직접 설치하고, 그 뒤로는 서버가 스스로 업데이트한다(DB 구조도 새 버전이 시작할 때 마이그레이션으로 올린다). IIS 나 .NET 을 따로 설치하지 않는다.
 
-1. [배포 레포의 Releases](https://github.com/Leepy0/Gantt_Scheduler_Release/releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 폴더(예: `D:\\GanttScheduler`)에 푼다.
-2. 기본 설정은 `appsettings.Production.json` 의 `Database:Provider=Sqlite`, DB 경로는 `App_Data/gantt.db` 이다. 다른 경로가 필요하면 다음처럼 설정한다.
+1. [배포 레포의 Releases](https://github.com/Leepy0/Gantt_Scheduler_Release/releases/latest) 에서 `GanttScheduler-win-x64.zip` 을 받아 서버의 폴더(예: `D:\GanttScheduler`)에 푼다.
+2. DB 설정은 기본값(`appsettings.Production.json` 의 `Database:Provider=Sqlite`, 경로 `App_Data/gantt.db`)으로 바로 쓴다. 파일을 다른 곳에 두려면 `SqlitePath` 를 바꾼다. 기존 SQL Server 를 써야 하면 아래 "SQL Server 로 쓰기".
    ```json
    {
-     "Database": {
-       "Provider": "Sqlite",
-       "SqlitePath": "App_Data/gantt.db"
-     }
+     "Database": { "Provider": "Sqlite", "SqlitePath": "App_Data/gantt.db" }
    }
    ```
-   기존 SQL Server를 명시적으로 사용해야 할 때만 `Provider=SqlServer` 와 `ConnectionStrings:SqlServer` 를 설정한다.
 3. `install-service.cmd` 를 실행한다(권한 확인 창에서 "예"). 서비스 등록 → 권한 설정 → 방화벽 허용 → 시작까지 하고, 시작에 실패하면 원인을 보여 준다.
    - 기본 포트는 80. 다른 프로그램이 쓰고 있으면 `install-service.cmd --port 8080` 처럼 지정한다. 포트를 지정하려면 명령 프롬프트(cmd)를 열고 프로그램 폴더에서 실행한다(파일을 더블클릭하면 옵션을 줄 수 없다).
    - 인자를 잘못 적으면(`--port=8080` 은 받는다, `8080`·`-port 8080` 은 거절) 등록하기 전에 알려 준다.
-   - 화면에 나온 내용은 `App_Data\\install.log` 에도 남는다. 창이 바로 닫혀 결과를 못 봤으면 이 파일을 연다. 관리자 권한 창이 열리지 않으면 시작 메뉴에서 명령 프롬프트를 '관리자 권한으로 실행'한 뒤 프로그램 폴더로 이동해(`cd /d D:\\GanttScheduler`) 다시 실행한다.
-   - 방화벽에서 사내 대역만 열려면 `--remoteip 10.0.0.0/8,192.168.0.0/16` 처럼 쉼표로 구분한 CIDR·주소(또는 `LocalSubnet`)를 붙인다. 앱에서도 막으려면 `Access:AllowedNetworks` 에 같은 대역을 적는다.
-4. **서버 PC 의 브라우저**에서 `http://localhost/` 로 접속해 이름을 등록한다. 관리자가 아직 없을 때는 서버 자신에서 등록한 사람만 관리자가 된다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다. 다른 사람은 `http://<서버 이름>/` 으로 접속한다.
+   - 화면에 나온 내용은 `App_Data\install.log` 에도 남는다. 창이 바로 닫혀 결과를 못 봤으면 이 파일을 연다. 관리자 권한 창이 열리지 않으면(권한 확인이 막힌 PC) 시작 메뉴에서 명령 프롬프트를 '관리자 권한으로 실행'한 뒤 프로그램 폴더로 이동해(`cd /d D:\GanttScheduler`) 다시 실행한다.
+   - 방화벽에서 사내 대역만 열려면 `--remoteip 10.0.0.0/8,192.168.0.0/16` 처럼 쉼표로 구분한 CIDR·주소(또는 `LocalSubnet`)를 붙인다. 앱에서도 막으려면 아래 `Access:AllowedNetworks` 에 같은 대역을 적는다. `LocalSubnet` 은 방화벽만 아는 이름이라 앱 설정에는 적을 수 없다(적으면 서버가 시작하지 않는다) — 서버가 속한 실제 대역을 `10.1.0.0/16` 처럼 적는다.
+   - 주소는 앞자리 0 없는 십진수로 적는다(`192.168.1.10`). `192.168.001.010` 처럼 앞자리 0 을 붙이면 8진수로 읽혀 다른 주소가 되므로 거절한다(관리 화면의 IP 연결, `admin --ip` 도 같다).
+   - 포트를 바꾸거나 폴더를 옮겼을 때도 같은 명령을 다시 실행하면 된다(`--remoteip` 도 다시 붙인다 — 빼면 모든 주소에 열린다).
+4. **서버 PC 의 브라우저**에서 `http://localhost/` 로 접속해 이름을 등록한다. 관리자가 아직 없을 때는 서버 자신에서 등록한 사람만 관리자가 된다(다른 PC 에서 먼저 등록해도 일반 사용자). 서버 PC 에서도 `http://<서버 이름>/` 이나 IP 로 접속하면 다른 PC 로 본다. 관리 화면에서 법인 등 계층과 조직(그룹 → 파트)부터 등록한다. 다른 사람은 `http://<서버 이름>/` 으로 접속한다.
 
 알아둘 것:
 
-- **데이터 위치**: DB는 `App_Data/gantt.db`, 첨부 파일은 `App_Data/uploads`, 암호화 키는 `App_Data/keys` 에 있다. 업데이트는 이 데이터 폴더를 건드리지 않는다.
-- **백업**: 관리 > 업데이트에서 일반 DB 백업을 실행하면 SQLite DB 사본과 첨부·암호화 키·운영 설정 ZIP을 만든다. 같은 화면의 **테이블별 JSON 백업**에서 각 테이블을 JSON으로 내보내거나 현재 DB로 복원할 수 있다. 복원은 현재 DB의 데이터를 전부 교체하므로 실행 전에 별도 백업을 만든다. 복원 ZIP은 현재 스키마와 일치해야 한다.
-- **스키마 변경 업데이트 보호**: SQLite 운영 DB에서 데이터 손실을 막기 위해 구조가 바뀌는 업데이트는 기본 차단된다. SQLite용 스키마 마이그레이션이 마련되기 전까지 같은 DB 구조의 업데이트만 적용할 수 있다.
-- **첫 설정·서버 상태**: 관리 > **서버 상태**에서 DB 연결·DB 구조·디스크 여유·폴더 권한·PDF 글꼴·첨부 파일 대조·공휴일·마지막 백업을 점검한다. 감시 도구는 `/health/ready`(DB·디스크, 실패하면 503)를 본다.
+- **서비스 계정**: 서비스는 전용 계정 `NT SERVICE\GanttScheduler` 로 돈다(SYSTEM 권한을 쓰지 않는다). 설치 명령이 이 계정에 프로그램 폴더 수정 권한과 자기 서비스를 시작·중지할 권한을 준다. 모두 자동 업데이트(파일 교체, 다시 시작, 시작되지 않은 새 버전 되돌리기)에 필요하다. 예전에 설치한 서버는 `install-service.cmd` 를 다시 실행하면 중지 권한이 더해진다.
+- **데이터**는 프로그램 폴더의 `App_Data` 에 있다(DB `gantt.db`, 첨부 `uploads`, 업데이트 파일, 암호화 키 `keys`, 로그). 업데이트는 `App_Data` 를 건드리지 않는다. `Database:SqlitePath`·`Storage:Path` 등을 폴더 밖으로 옮기면 서비스 계정에 그 폴더의 수정 권한을 따로 준다.
+- **백업**: 관리 > 업데이트의 **DB 백업**에서 '지금 백업'을 누르면 DB 사본(`.db`)과 첨부·암호화 키·운영 설정 묶음(zip)을 같은 이름으로 만든다. DB 구조가 바뀌는 업데이트는 적용 직전에 자동으로 백업한다. 같은 화면의 **테이블별 JSON 백업**은 표마다 JSON 으로 내보내고(내용 확인·이관용) 같은 구조의 DB 에 되돌릴 수 있다 — 복원은 DB 의 모든 데이터를 바꾸므로 먼저 일반 백업을 만든다. 복원·서버 이전 절차는 [docs/OPERATIONS.md](docs/OPERATIONS.md).
+- **첫 설정·서버 상태**: 관리 > **서버 상태**(관리자)에서 DB 연결·DB 구조·디스크 여유·폴더 권한·PDF 글꼴·첨부 파일 대조·공휴일·마지막 백업을 점검한다. 처음 설치한 서버는 맨 위의 "첫 설정 점검표"(법인·조직·올해와 내년 공휴일·PDF 글꼴·백업 경로)를 따라 채운다. 문제가 있으면 관리자 화면 위쪽에 알림 칩이 뜬다. 감시 도구는 `/health/ready`(DB·디스크, 실패하면 503)를 본다.
 - **PDF 내보내기**는 서버의 한글 글꼴 파일(TTF)을 쓴다. Windows 는 맑은 고딕(`malgun.ttf`)을 자동으로 찾는다. 없으면 `Pdf:Font` 에 경로를 지정한다.
-- **문제가 생기면**: 관리 > 서버 상태의 최근 경고·오류와 로그를 확인한다. 파일 로그는 `App_Data/logs/yyyy-MM-dd.log` 에 있다.
+- **문제가 생기면**: 관리 > 서버 상태의 "최근 경고·오류"와 오늘 로그 내려받기, 파일 로그 `App_Data/logs/yyyy-MM-dd.log`(한국 날짜, 30일 보존 — Windows 이벤트 뷰어에도 경고 이상이 남는다). 사용자가 본 **오류 번호**로 로그에서 그 요청을 찾는다. 업데이트·시작 실패는 업데이트 화면의 **진단 정보**(`App_Data/updates/apply.log` 끝부분, `App_Data/startup-error.log`, 상태 요약)를 보거나 내려받는다.
 - **제거**: `uninstall-service.cmd`. 서비스와 방화벽 규칙만 지우고 폴더와 데이터는 그대로 둔다.
 - HTTPS 가 필요하면 `appsettings.Production.json` 의 `Kestrel:Endpoints` 에 인증서와 주소를 설정한다(이 경우 `--port` 대신 그 설정이 쓰인다).
+
+### SQL Server 로 쓰기 (선택)
+
+기존 SQL Server 에 두어야 할 때만. DB 는 미리 만들어 두고(테이블은 앱이 만든다) `appsettings.Production.json` 에 적는다.
+
+```json
+{
+  "Database": { "Provider": "SqlServer" },
+  "ConnectionStrings": { "SqlServer": "Server=...;Database=GanttScheduler;User Id=...;Password=...;TrustServerCertificate=True" }
+}
+```
+
+- **Windows 인증으로** 쓰려면(`Trusted_Connection=True`) 서비스 계정의 로그인을 만들어야 한다. 같은 서버의 SQL Server 면 아래처럼, 다른 서버면 `도메인\서버이름$`(컴퓨터 계정)으로 만든다.
+  ```sql
+  CREATE LOGIN [NT SERVICE\GanttScheduler] FROM WINDOWS;
+  USE GanttScheduler;
+  CREATE USER [NT SERVICE\GanttScheduler] FOR LOGIN [NT SERVICE\GanttScheduler];
+  ALTER ROLE db_owner ADD MEMBER [NT SERVICE\GanttScheduler];
+  ```
+- **백업**은 `Backup:Path`(SQL Server 컴퓨터 기준, DB 가 다른 컴퓨터면 UNC 경로)를 지정하고 SQL Server 서비스 계정에 그 폴더의 쓰기 권한을 준다.
 
 ### 사용자 식별과 관리자 복구
 

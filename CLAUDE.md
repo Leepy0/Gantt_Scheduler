@@ -19,7 +19,8 @@
 ```
 src/GanttScheduler/
   Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
-  Data/        AppDb(EF 모델), Seeder(기준 정보·샘플), Migrations(SQL Server)
+  Data/        AppDb(EF 모델), SqliteAppDb(SQLite 컨텍스트 — 자기 마이그레이션을 고르게 하는 파생형), DbSetup(연결·등록), Seeder(기준 정보·샘플, DbInitializer),
+               Migrations(SQL Server), Migrations/Sqlite(SQLite), MigrationInfo(빌드의 구조 이름)
   Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정, .Trash: 휴지통 목록·복원·영구 삭제, .Baselines: 기준선 차수 이력, .Progress: 빠른 갱신, .Risk: 조기 경보 조회, .Analytics: 사유 분류·진척 값 기록), Trash(TrashService·TrashWorker 자동 정리), Dashboard, Insights(리드타임·기간 보고·변경 이력·내 할 일), Analytics(추세·변경 분석·부하·법인 × 기기 — 집계는 Reporting.Analytics), Snapshots(일별 진척 스냅샷 SnapshotWorker), AttachmentService,
                MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
                Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateKey(배포 파일 서명 확인),
@@ -81,11 +82,16 @@ cd e2e && npm install && node run.cjs           # 실행 중인 앱에 화면 �
 
 ## 모델을 바꿀 때
 
-`Domain/Entities.cs` 나 `Data/AppDb.cs` 를 바꾸면 SQL Server 마이그레이션을 추가해야 한다. 빠뜨리면 CI 의 SQL Server 테스트가 "pending model changes" 로 실패한다.
+`Domain/Entities.cs` 나 `Data/AppDb.cs` 를 바꾸면 마이그레이션을 **두 벌**(SQL Server `Data/Migrations`, SQLite `Data/Migrations/Sqlite`) 같은 이름으로 추가해야 한다. 빠뜨리면 `MigrationTests` 와 CI 의 SQL Server 테스트가 "pending model changes" 로 실패하고, 서버는 시작할 때 멈춘다.
 
-- PC: `dotnet ef migrations add <이름> --project src/GanttScheduler --output-dir Data/Migrations`
-- 클라우드 세션: `gh workflow run migration.yml -R Leepy0/Gantt_Scheduler --ref main -f name=<이름>` → 워크플로가 main 에 커밋하므로 `git pull` 후 이어서 작업. 워크플로가 끝에서 CI 를 실행하고, 적용될 SQL(idempotent)을 실행 요약(Summary)에 남긴다.
-- SQLite(미리보기) DB 는 마이그레이션을 쓰지 않는다. 모델이 바뀌면 시작할 때 자동으로 새로 만든다(스키마 해시 비교). 직접 지우려면 `App_Data/gantt.db`.
+- PC:
+  ```
+  dotnet ef migrations add <이름> --project src/GanttScheduler --context AppDb --output-dir Data/Migrations
+  dotnet ef migrations add <이름> --project src/GanttScheduler --context SqliteAppDb --output-dir Data/Migrations/Sqlite
+  ```
+- 클라우드 세션: `gh workflow run migration.yml -R Leepy0/Gantt_Scheduler --ref main -f name=<이름>` → 워크플로가 두 벌을 만들어 main 에 커밋하므로 `git pull` 후 이어서 작업. 워크플로가 끝에서 CI 를 실행하고, 적용될 SQL(idempotent, SQL Server 기준)을 실행 요약(Summary)에 남긴다. `dotnet ef` 를 쓸 수 있는 세션이면 PC 와 같이 직접 만들어도 된다.
+- 배포의 SchemaId("DB 구조가 바뀌는 업데이트" 판단)는 SQL Server 마이그레이션의 마지막 이름이다(`release.yml`, `MigrationInfo`). 두 벌을 같은 커밋에 넣으면 SQLite 서버에서도 같은 이름으로 판단한다.
+- SQLite(운영 포함)도 시작할 때 마이그레이션을 적용한다. 마이그레이션 도입(0.6.0) 전 `EnsureCreated` 로 만든 DB 는 옆의 `gantt.db.schema` 해시가 `SqliteAppDb.LegacySchemaHash` 와 같으면 첫 마이그레이션을 적용된 것으로 표시해 이어 쓰고, 다르면 개발 환경은 지우고 그 밖에서는 `gantt.db.<시각>.bak` 으로 옮긴 뒤 새로 만든다. 미리보기 DB 를 직접 초기화하려면 `App_Data/gantt.db` 를 지운다.
 
 
 ## 배포와 자동 업데이트
