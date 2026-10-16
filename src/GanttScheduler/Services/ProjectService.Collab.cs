@@ -200,6 +200,7 @@ public partial class ProjectService
     {
         var text = Text(input.Text, Limits.ActivityText, "내용", "text", required: true)!;
         var (p, c) = await RequireOwnCommentAsync(input.Id, "고칠");
+        await RequireImagesAsync(p.Id, text);
         var current = await _db.ActivityMentions.Where(m => m.ActivityId == c.Id).ToListAsync();
         var mentions = await ValidateMentionsAsync(input.Mentions, current.Select(m => m.UserId).ToList());
         var added = mentions.Where(id => current.All(m => m.UserId != id)).ToList();

@@ -126,6 +126,8 @@ public static class Seeder
                 ("입고", StageKind.Normal), ("적용", StageKind.Normal));
             var simulation = Cat("Simulation", CategoryKind.General, 4,
                 ("데이터 수집", StageKind.Normal), ("모델링", StageKind.Normal), ("검증", StageKind.Normal), ("보고", StageKind.Normal));
+            // 모델링은 데이터 수집과 동시에 진행한다(선후 관계 없음 — 규칙 23). 샘플에서 동시 진행 단계의 초안·간격을 볼 수 있게
+            simulation.StageTemplates.First(t => t.Name == "모델링").Parallel = true;
 
             // 기본 기간(근무일) — 등록 화면의 목표일 초안. 해외 입고는 법인마다 운송 기간이 달라 비워 두고 추천 입고일(검수일 + 해상 운송)을 쓴다
             Durations(automation, 10, 10, 5, 40, 5, null, 10, 20);

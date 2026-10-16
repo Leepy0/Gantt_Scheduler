@@ -61,6 +61,38 @@ public class IndexModel : PageModel
 
     public Task<IActionResult> OnPostRemoveIpAsync([FromBody] MasterIp input) => Run("user", () => _masters.RemoveAddressAsync(input));
 
+    // CSV 붙여넣기: 미리보기(apply=false) 또는 적용. 적용했으면 그 종류의 최신 목록도 함께 준다
+    public async Task<IActionResult> OnPostPasteAsync([FromBody] MasterPasteInput input)
+    {
+        try
+        {
+            var result = await _masters.PasteAsync(input);
+            if (result.Applied && input.Kind is "holiday" or "location") HttpContext.RequestServices.GetService<OpsAlerts>()?.Invalidate();
+            return new JsonResult(new { ok = true, result, nodes = result.Applied ? await _masters.ListAsync(input.Kind) : null, notice = _masters.Notice });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
+    // 종류별 샘플 CSV (복사용 JSON 또는 파일)
+    public IActionResult OnGetPasteSample(string kind, bool download = false)
+    {
+        try
+        {
+            var today = HttpContext.RequestServices.GetRequiredService<IClock>().Today;
+            var text = MasterService.PasteSample(kind, today);
+            if (!download) return new JsonResult(new { ok = true, text, columns = MasterService.PasteColumns(kind) });
+            var bytes = System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(text)).ToArray();
+            return File(bytes, "text/csv; charset=utf-8", $"관리_{kind}_샘플.csv");
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
     // ── 사용자 정리·관리 변경 이력·사용 현황 (UserAdminService·MasterLog) ──
     // 서비스는 요청에서 꺼낸다 — 이 페이지를 쓰는 다른 핸들러의 생성자를 늘리지 않으려고
     private UserAdminService People => HttpContext.RequestServices.GetRequiredService<UserAdminService>();

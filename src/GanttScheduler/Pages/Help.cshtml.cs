@@ -15,6 +15,8 @@ public class HelpModel : PageModel
         ("state", "상태는 어떻게 정해지나"),
         ("reason", "목표일을 바꿀 때 사유"),
         ("cascade", "연쇄 이동"),
+        ("parallel", "동시 진행 단계 · 작업에 맞춘 목표일"),
+        ("paste", "CSV 로 한 번에 넣기"),
         ("workdays", "근무일"),
         ("links", "의존 관계 — 유형과 간격"),
         ("float", "여유와 임계 작업"),

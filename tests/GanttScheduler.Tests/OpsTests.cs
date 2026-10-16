@@ -3,6 +3,7 @@ using GanttScheduler.Domain;
 using GanttScheduler.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -75,6 +76,9 @@ public class OpsTests : IDisposable
         await using var sp = Services(Environments.Production);
         using var scope = sp.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDb>();
+        // 마이그레이션 도입 전 DB 는 첫 마이그레이션('Initial')과 같은 구조다 — 그 뒤 마이그레이션은 되돌려(Down) 그때 구조로 맞춘 뒤 이력 표를 지운다
+        var initial = db.Database.GetMigrations().First(m => m.EndsWith("_Initial"));
+        await db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>().MigrateAsync(initial);
         await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\";");
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         await File.WriteAllTextAsync(DbPath + ".schema", marker);

@@ -18,11 +18,11 @@
 
 ```
 src/GanttScheduler/
-  Domain/      엔티티, 규칙(Rules), 화면용 모델(Views) — DB 접근 없음
+  Domain/      엔티티, 규칙(Rules), 화면용 모델(Views), 입력 해석(InputText), 댓글 이미지 참조(CommentText) — DB 접근 없음
   Data/        AppDb(EF 모델), SqliteAppDb(SQLite 컨텍스트 — 자기 마이그레이션을 고르게 하는 파생형), DbSetup(연결·등록), Seeder(기준 정보·샘플, DbInitializer),
                Migrations(SQL Server), Migrations/Sqlite(SQLite), MigrationInfo(빌드의 구조 이름)
-  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정, .Trash: 휴지통 목록·복원·영구 삭제, .Baselines: 기준선 차수 이력, .Progress: 빠른 갱신, .Risk: 조기 경보 조회, .Analytics: 사유 분류·진척 값 기록), Trash(TrashService·TrashWorker 자동 정리), Dashboard, Insights(리드타임·기간 보고·변경 이력·내 할 일), Analytics(추세·변경 분석·부하·법인 × 기기 — 집계는 Reporting.Analytics), Snapshots(일별 진척 스냅샷 SnapshotWorker), AttachmentService,
-               MasterService(관리), Identity(IP 사용자), ExcelExporter, PdfExporter,
+  Services/    ProjectService(+ .Schedule: 단계 일정 표·등록 초안, .Plan: 저장 전 미리보기·재계획, .Links: 과제 간 단계 연결, .Collab: 새 소식·관심 과제·댓글 수정, .Trash: 휴지통 목록·복원·영구 삭제, .Baselines: 기준선 차수 이력, .Progress: 빠른 갱신, .Risk: 조기 경보 조회, .Analytics: 사유 분류·진척 값 기록, .Works: 작업 여러 개 추가, .Import: Excel 가져오기, .Paste: 등록 화면 단계·작업 CSV 붙여넣기·샘플), Trash(TrashService·TrashWorker 자동 정리), Dashboard, Insights(리드타임·기간 보고·변경 이력·내 할 일), Analytics(추세·변경 분석·부하·법인 × 기기 — 집계는 Reporting.Analytics), Snapshots(일별 진척 스냅샷 SnapshotWorker), AttachmentService,
+               MasterService(관리, + .Paste: 기준 정보 CSV 일괄 입력·샘플), Identity(IP 사용자), ExcelExporter, PdfExporter,
                Updates·UpdateService(새 버전 확인·받기·적용 판단), UpdateKey(배포 파일 서명 확인),
                UpdateApplier(파일 교체 도우미 모드 — 새 버전 시작 확인·자동 되돌리기 포함),
                ServiceInstaller(Windows 서비스 등록·제거 명령), WindowsServiceSupport(서비스 호스팅),
@@ -32,7 +32,7 @@ src/GanttScheduler/
                Board(TV 상황판·데이터 버전), ClosedDates(과제 종료일 채우기), MasterChanges(관리 변경 이력), UserAdminService(사용자 병합·이관·사용 현황)
   Pages/       Index(대시보드), My/{Index,Notifications}, Projects/{Index,Edit,Detail,Files,Import}, Insights/{LeadTime,Weekly,Trend,Changes,Load,History},
                Admin/{Index,Update,Status,Trash}, Board(상황판), Help(도움말), Welcome
-  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,admin,org,update,status,works-paste,location-picker,import,board,admin-people}.js
+  wwwroot/     css/site.css, js/{app,gantt,dashboard,detail,schedule,plan-preview,collab,notifications,trash,quick,my,edit,stage-draft,project-paste,admin,org,update,status,works-paste,location-picker,import,board,admin-people}.js
 tests/GanttScheduler.Tests/   규칙 단위 테스트, DB 서비스 테스트, HTTP 통합 테스트
 e2e/run.cjs                   화면 점검(Playwright): 데스크톱·모바일 흐름 + 캡처
 tools/shadow/                 NuGet 없이 빌드하기 위한 가짜 EF·가짜 내보내기 (아래 참고)

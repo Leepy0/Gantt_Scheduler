@@ -13,7 +13,7 @@ public record MasterNode(
     DateOnly? LastSeen = null, List<UserIpView>? Addresses = null,
     int? DefaultWorkDays = null, StageLeadHint? Lead = null, string? Email = null,
     int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null,
-    int? Uses = null, int? OpenProjects = null, int? OpenWorks = null);
+    int? Uses = null, int? OpenProjects = null, int? OpenWorks = null, bool? Parallel = null);
 
 // Uses: 그 항목을 쓰는 수(계층·유형·기기·용기·협력사는 과제 수, 조직은 사용자 수, 지연 사유는 기록 수 — 휴지통 과제 제외).
 // OpenProjects·OpenWorks: 사용자가 맡은 진행 과제·미완료 작업 수(UserAdminService.LoadsAsync)
@@ -28,7 +28,7 @@ public record MasterSave(
     string Kind, int Level, int? Id, int? ParentId, string? Name,
     string? Country, int? OceanLeadDays, string? SubKind, int? OrgUnitId, bool? IsAdmin, DateOnly? Date,
     int? DefaultWorkDays = null, string? Email = null,
-    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null);
+    int? OffsetWorkDays = null, int? DurationWorkDays = null, int? PredecessorId = null, bool? Parallel = null);
 
 // Active: 사용 중지/다시 사용에서 원하는 상태. 서버는 뒤집지 않고 이 값으로 맞춘다(같으면 아무 일도 하지 않는다) —
 // 두 번 누르거나 오래 열어 둔 화면에서 눌러도 반대로 동작하지 않게(퇴사자 사용 중지가 풀리는 일 등)
@@ -36,7 +36,7 @@ public record MasterRef(string Kind, int Level, int Id, int Dir, bool? Active = 
 
 // 기준 정보(계층·유형·단계 템플릿·체크리스트·기기·용기·협력사·조직·사용자·공휴일) 관리.
 // 유형 트리는 1 유형 → 2 단계 템플릿 → 3 체크 항목이고, 단계 템플릿 아래의 작업 템플릿은 4 로 둔다(관리 화면은 단계 아래 따로 그린다)
-public class MasterService
+public partial class MasterService
 {
     public const int LocationDepth = 4;
     public const int OrgDepth = 2;
@@ -159,7 +159,7 @@ public class MasterService
                     foreach (var t in c.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id))
                     {
                         nodes.Add(new MasterNode(t.Id, c.Id, 2, t.Name, true, t.SortOrder, Kind: Views.Key(t.Kind),
-                            DefaultWorkDays: t.DefaultWorkDays, Lead: hints.GetValueOrDefault((c.Id, t.Name))));
+                            DefaultWorkDays: t.DefaultWorkDays, Lead: hints.GetValueOrDefault((c.Id, t.Name)), Parallel: t.Parallel));
                         foreach (var k in t.CheckItems.OrderBy(k => k.SortOrder).ThenBy(k => k.Id))
                             nodes.Add(new MasterNode(k.Id, t.Id, 3, k.Text, true, k.SortOrder));
                         foreach (var w in t.Works.OrderBy(w => w.SortOrder).ThenBy(w => w.Id))
@@ -353,8 +353,12 @@ public class MasterService
                 var stageKind = input.SubKind == null ? e.Kind : ParseEnum(input.SubKind, e.Kind);
                 Diff("단계 성격", e.Id == 0 ? null : Views.Key(e.Kind), Views.Key(stageKind));
                 Diff("기본 기간(근무일)", e.DefaultWorkDays, input.DefaultWorkDays);
+                // 앞 단계와 동시 진행(규칙 23) — 값이 없으면(이름만 고침) 그대로 둔다. 새 과제의 단계에 복사되므로 이력에 남긴다
+                var parallel = input.Parallel ?? e.Parallel;
+                Diff("동시 진행", e.Id == 0 ? null : (e.Parallel ? "앞 단계와 동시" : "순차"), parallel ? "앞 단계와 동시" : "순차");
                 e.Kind = stageKind;
                 e.DefaultWorkDays = input.DefaultWorkDays;
+                e.Parallel = parallel;
                 LogSave("stage", e, () => e.Id, "단계 템플릿", name);
                 break;
             }

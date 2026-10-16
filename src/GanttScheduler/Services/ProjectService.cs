@@ -8,15 +8,18 @@ public record ItemInput(int TypeId, int Quantity, string? Note);
 
 // StageTargets: 등록할 때 함께 정하는 단계 목표일(단계 템플릿 Id 별 — 등록 화면의 목표일 초안을 사람이 고친 값). 수정에서는 쓰지 않는다
 // WithTemplateWorks: 등록할 때 유형 템플릿 작업을 함께 만든다(없으면 만든다). 수정에서는 쓰지 않는다
+// PasteText: 등록 화면의 '단계·작업 붙여넣기'(CSV). 있으면 유형의 기본 단계·템플릿 작업·StageTargets 대신 붙여 넣은 단계·작업으로 만든다
 public record ProjectInput(
     string? Title, int CategoryId, int LocationId, string? Owner, DateOnly? StartDate,
     string? Vendor, string? Description, List<ItemInput>? Equipments, List<ItemInput>? Containers, int? Version = null,
-    List<StageTargetInput>? StageTargets = null, bool? WithTemplateWorks = null);
+    List<StageTargetInput>? StageTargets = null, bool? WithTemplateWorks = null, string? PasteText = null);
 
-// CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다
+// CloseWorks: 완료하면서 남은 작업을 완료일로 닫는다. CascadeWorks: 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮긴다.
+// Parallel: 앞 단계와 동시 진행(규칙 23). AutoTarget: 목표일을 작업 일정에 맞춤. 둘 다 null 이면 그대로 둔다(옛 화면 호환)
 public record StageInput(
     int ProjectId, int? Id, string? Name, DateOnly? TargetDate, DateOnly? CompletedDate, string? Reason, bool Cascade,
-    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false, int? ReasonCode = null);
+    int? Version = null, bool CloseWorks = false, bool CascadeWorks = false, int? ReasonCode = null,
+    bool? Parallel = null, bool? AutoTarget = null);
 
 // ClientToday: 화면(접속한 PC)의 오늘 날짜. 진행률만 올렸을 때 넣는 실적 시작에 쓴다(Rules.UserToday)
 // Links: 선행 작업마다 유형·간격(LinkInput). 없으면 Predecessors(id 목록 — 새 연결은 '끝나면 시작'·간격 0, 있던 연결은 유형·간격 유지)를 쓴다
@@ -290,6 +293,25 @@ public partial class ProjectService
         // 아직 저장 전인 새 담당자(Id 0)는 내비게이션으로 연결해 과제와 함께 저장한다
         if (owner.Id == 0) p.Owner = owner;
 
+        // CSV 붙여넣기(ProjectService.Paste): 붙여 넣은 단계·작업으로 만들고 기본 단계·템플릿 작업은 쓰지 않는다
+        var pasted = !string.IsNullOrWhiteSpace(input.PasteText);
+        if (pasted)
+        {
+            var (plans, _) = await BuildPastedStagesAsync(p, category, input.PasteText, apply: true);
+            await ApplyItemsAsync(p, category.Kind, input);
+            p.Activities.Add(NewActivity(ActivityType.Created, createdText + " (단계·작업 CSV 붙여넣기)"));
+            var pasteBatch = Guid.NewGuid();
+            foreach (var x in plans.Where(x => x.Stage!.TargetDate != null))
+                p.Activities.Add(NewActivity(ActivityType.Edited, $"[{x.Name}] 목표일 설정 {Fmt(x.Stage!.TargetDate)}" + (x.Stage.AutoTarget ? " (작업 일정에 맞춤)" : ""),
+                    newValue: Fmt(x.Stage.TargetDate), batch: pasteBatch));
+            // 담당을 비운 작업은 과제 담당이 맡는다(템플릿 작업과 같다)
+            foreach (var w in Rules.AllWorks(p).Where(w => w.Owner == null && w.OwnerId == null))
+            {
+                if (owner.Id == 0) w.Owner = owner; else w.OwnerId = owner.Id;
+            }
+            return p;
+        }
+
         // 단계 템플릿(체크리스트 포함)을 그 시점 그대로 복사 — 이후 템플릿이 바뀌어도 기존 과제는 영향 없음.
         // 등록 화면에서 정한 목표일(초안을 사람이 확인한 값)이 있으면 함께 넣는다
         var targets = InitialTargets(input.StageTargets);
@@ -297,7 +319,7 @@ public partial class ProjectService
         var templates = category.StageTemplates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).ToList();
         foreach (var t in templates)
         {
-            var stage = new Stage { Name = t.Name, Kind = t.Kind, SortOrder = t.SortOrder };
+            var stage = new Stage { Name = t.Name, Kind = t.Kind, SortOrder = t.SortOrder, Parallel = t.Parallel && templates[0] != t };
             foreach (var c in t.CheckItems.OrderBy(c => c.SortOrder))
                 stage.Checks.Add(new CheckItem { Text = c.Text, SortOrder = c.SortOrder });
             if (targets.TryGetValue(t.Id, out var target))
@@ -347,8 +369,9 @@ public partial class ProjectService
         var fixedAt = new Dictionary<int, DateOnly?>();
         for (var i = 0; i < stages.Count; i++)
             if (stages[i].TargetDate != null) fixedAt[i] = stages[i].TargetDate;
-        var targets = Rules.DraftTargets(p.StartDate, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt);
-        var starts = Rules.StageStarts(p.StartDate, targets, cal);
+        var flags = Rules.ParallelFlags(stages);
+        var targets = Rules.DraftTargets(p.StartDate, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt, flags);
+        var starts = Rules.StageStarts(p.StartDate, targets, cal, flags);
 
         var created = new List<WorkItem>();
         var map = new Dictionary<int, WorkItem>();
@@ -598,7 +621,11 @@ public partial class ProjectService
         var map = new Dictionary<int, WorkItem>();
         foreach (var s in Rules.Ordered(src))
         {
-            var stage = new Stage { Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = s.TargetDate == null ? null : Shift(s.TargetDate.Value) };
+            var stage = new Stage
+            {
+                Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = s.TargetDate == null ? null : Shift(s.TargetDate.Value),
+                Parallel = s.Parallel, AutoTarget = s.AutoTarget && input.IncludeWorks,    // 작업을 빼고 복제하면 맞출 작업이 없다
+            };
             foreach (var c in s.Checks.OrderBy(c => c.SortOrder).ThenBy(c => c.Id))
                 stage.Checks.Add(new CheckItem { Text = c.Text, SortOrder = c.SortOrder });
             if (input.IncludeWorks)
@@ -658,8 +685,12 @@ public partial class ProjectService
             Rules.ValidateDate(input.TargetDate, p.StartDate, "목표일", "targetDate");
             Rules.ValidateDate(input.CompletedDate, p.StartDate, "완료일", "completedDate");
             var order = p.Stages.Count == 0 ? 1 : p.Stages.Max(s => s.SortOrder) + 1;
-            p.Stages.Add(new Stage { Name = name, SortOrder = order, TargetDate = input.TargetDate, CompletedDate = input.CompletedDate });
-            p.Activities.Add(NewActivity(ActivityType.StageAdded, $"단계 추가: {name}"));
+            p.Stages.Add(new Stage
+            {
+                Name = name, SortOrder = order, TargetDate = input.TargetDate, CompletedDate = input.CompletedDate,
+                Parallel = input.Parallel == true && p.Stages.Count > 0, AutoTarget = input.AutoTarget == true,
+            });
+            p.Activities.Add(NewActivity(ActivityType.StageAdded, $"단계 추가: {name}" + (input.Parallel == true && p.Stages.Count > 1 ? " (앞 단계와 동시 진행)" : "")));
         }
         else
         {
@@ -679,27 +710,47 @@ public partial class ProjectService
                 changed = true;
             }
 
-            if (s.TargetDate != input.TargetDate)
+            // 동시 진행 표시(규칙 23): 첫 단계에는 뜻이 없어 늘 끈다. 연쇄 이동 범위·현재 단계 판정이 바뀌므로 활동으로 남긴다
+            var parallel = (input.Parallel ?? s.Parallel) && Rules.Ordered(p).First() != s;
+            if (s.Parallel != parallel)
+            {
+                p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] {(parallel ? "앞 단계와 동시 진행으로 바꿈" : "동시 진행 해제 — 앞 단계 뒤에 진행")}", stageId: s.Id));
+                s.Parallel = parallel;
+                changed = true;
+            }
+
+            // 목표일을 작업 일정에 맞춤: 켜면 이 저장부터 서버가 목표일을 작업의 가장 늦은 목표 종료일로 맞춘다(SyncAutoTargets).
+            // 켜져 있는 동안 화면이 보낸 목표일은 무시한다(화면도 입력칸을 잠근다)
+            var auto = input.AutoTarget ?? s.AutoTarget;
+            if (s.AutoTarget != auto)
+            {
+                p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 목표일을 작업 일정에 {(auto ? "맞춤 (자동)" : "맞추지 않음 — 직접 정함")}", stageId: s.Id));
+                s.AutoTarget = auto;
+                changed = true;
+            }
+            var wantedTarget = auto ? s.TargetDate : input.TargetDate;
+
+            if (s.TargetDate != wantedTarget)
             {
                 changed = true;
                 if (s.TargetDate == null)
                 {
-                    SetTarget(p, s, input.TargetDate, reason, null);
+                    SetTarget(p, s, wantedTarget, reason, null);
                 }
                 else
                 {
                     if (reason == null) throw new RuleException("목표일을 바꿀 때는 변경 사유를 입력해 주세요.", "reason");
                     var batch = Guid.NewGuid();
                     var old = s.TargetDate.Value;
-                    SetTarget(p, s, input.TargetDate, reason, batch);
+                    SetTarget(p, s, wantedTarget, reason, batch);
 
                     var cal = await CalendarAsync();
-                    var delta = input.TargetDate == null ? 0 : cal.Distance(old, input.TargetDate.Value);
+                    var delta = wantedTarget == null ? 0 : cal.Distance(old, wantedTarget.Value);
 
                     // 연쇄 이동: 이후 미완료 단계의 목표일을 같은 근무일 수만큼 옮긴다 (주말·공휴일은 건너뜀)
                     if (input.Cascade && delta != 0)
                     {
-                        foreach (var later in p.Stages.Where(x => x.SortOrder > s.SortOrder && x.CompletedDate == null && x.TargetDate != null))
+                        foreach (var later in Rules.LaterStages(p, s).Where(x => x.CompletedDate == null && x.TargetDate != null))
                         {
                             var from = later.TargetDate!.Value;
                             var to = cal.AddWorkingDays(from, delta);
@@ -1280,6 +1331,7 @@ public partial class ProjectService
         var p = await _db.LiveProjects.FirstOrDefaultAsync(x => x.Id == input.ProjectId)
             ?? throw new RuleException("과제를 찾을 수 없습니다. 삭제되었을 수 있습니다.");
         await RequireOwnedAsync(p.Id, input.StageId, input.WorkId);
+        await RequireImagesAsync(p.Id, text);
         var mentions = await ValidateMentionsAsync(input.Mentions);
         var comment = NewActivity(ActivityType.Comment, text, stageId: input.StageId, workId: input.WorkId);
         foreach (var userId in mentions)
@@ -1290,6 +1342,21 @@ public partial class ProjectService
         p.Activities.Add(comment);
         Touch(p);
         await _db.SaveChangesAsync();
+    }
+
+    // 본문의 '[이미지:첨부Id]'(CommentText)가 모두 이 과제의 이미지 첨부인지. 다른 과제의 첨부를 끌어오거나 지운 첨부를 가리키지 않게
+    private async Task RequireImagesAsync(int projectId, string text)
+    {
+        var ids = CommentText.ImageIds(text);
+        if (ids.Count == 0) return;
+        var found = await _db.Attachments.AsNoTracking().Where(a => a.ProjectId == projectId && ids.Contains(a.Id))
+            .Select(a => new { a.Id, a.ContentType }).ToListAsync();
+        var missing = ids.Where(id => found.All(a => a.Id != id)).ToList();
+        if (missing.Count > 0)
+            throw new RuleException($"본문이 가리키는 이미지 첨부({string.Join(", ", missing)})를 이 과제에서 찾을 수 없습니다. 이미지를 다시 넣어 주세요.", "text");
+        var notImage = found.Where(a => !a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)).Select(a => a.Id).ToList();
+        if (notImage.Count > 0)
+            throw new RuleException($"첨부 {string.Join(", ", notImage)}는 이미지가 아니라 본문에 그림으로 넣을 수 없습니다.", "text");
     }
 
     // 댓글이 가리키는 단계·작업이 그 과제 것인지 (다른 과제의 단계·작업 Id 로 남기면 그 과제의 활동 탭·작업 진행 내용에 섞인다).
@@ -1314,7 +1381,31 @@ public partial class ProjectService
         if (sent != null && sent.Value != current) throw new ConflictException(projectId);
     }
 
-    private void Touch(Project p) => p.UpdatedAt = _clock.UtcNow;
+    private void Touch(Project p)
+    {
+        SyncAutoTargets(p);
+        p.UpdatedAt = _clock.UtcNow;
+    }
+
+    // 목표일을 작업 일정에 맞추는 단계(Stage.AutoTarget — 규칙 1 의 예외)의 목표일을 작업들의 가장 늦은 목표 종료일로 맞춘다.
+    // 과제를 바꾸는 모든 경로가 Touch 를 거치므로 작업 추가·일정 변경·밀기·삭제가 모두 반영된다. 작업이 읽히지 않은 경로(댓글 등)는
+    // 작업이 비어 보여 그대로 둔다. 사유는 받지 않고(사람의 결정이 아니다) 연쇄 이동도 하지 않는다 — 이력에는 '작업 일정에 맞춤'으로 남긴다
+    private void SyncAutoTargets(Project p)
+    {
+        Guid? batch = null;
+        foreach (var s in p.Stages)
+        {
+            if (Rules.AutoTargetOf(s) is not { } target || s.TargetDate == target) continue;
+            batch ??= Guid.NewGuid();
+            if (s.TargetDate == null)
+                p.Activities.Add(NewActivity(ActivityType.Edited, $"[{s.Name}] 목표일 설정 {Fmt(target)} (작업 일정에 맞춤)", stageId: s.Id, newValue: Fmt(target), batch: batch));
+            else
+                p.Activities.Add(NewActivity(ActivityType.TargetChanged, $"[{s.Name}] 목표일 {Fmt(s.TargetDate)} → {Fmt(target)} (작업 일정에 맞춤)", "작업 일정에 맞춤",
+                    s.Id, oldValue: Fmt(s.TargetDate), newValue: Fmt(target), batch: batch));
+            s.TargetDate = target;
+            s.Version++;
+        }
+    }
 
     // 자동 상태 전환 활동의 문구. 주간 보고가 사람이 바꾼 상태와 구별해 '과제 완료'로 따로 센다(Reporting.IsAutoState) — 문구를 바꾸면 옛 기록도 함께 봐야 한다
     public const string AutoDoneText = "상태 변경: 진행 → 완료 (모든 단계 완료)";

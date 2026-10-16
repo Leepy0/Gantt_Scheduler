@@ -263,6 +263,8 @@
             var crossBad = (s.crossLinks || []).filter(function (x) { return x.violated; });
             if (crossBad.length) sideIcon = '<span class="warn" title="' + esc(crossBad.map(function (x) { return crossLinkText(x) + ' — ' + crossViolationText(x); }).join('\n')) + '">' + icon('link') + '</span>' + sideIcon;
             var sub = s.completedDate ? '완료 ' + D.md(s.completedDate) : s.targetDate ? '목표 ' + D.md(s.targetDate) : '목표일 미정';
+            if (s.autoTarget) sub += ' (작업 기준)';
+            if (s.parallel) sub += ' · 앞 단계와 동시';
             if (s.status === 'late') sub += ' · 지연 ' + s.lateDays + '일';
             if (s.checkTotal) sub += ' · 체크 ' + s.checkDone + '/' + s.checkTotal;
 
@@ -344,7 +346,7 @@
         allWorks().forEach(function (x) { titles[x.work.id] = x.work.title; });
 
         var html = P.stages.map(function (s) {
-            var dates = (s.targetDate ? '목표 ' + D.md(s.targetDate) : '목표일 미정') +
+            var dates = (s.targetDate ? '목표 ' + D.md(s.targetDate) : '목표일 미정') + (s.autoTarget ? ' (작업 기준)' : '') +
                 (s.completedDate ? '<br>완료 ' + D.md(s.completedDate) : '') +
                 (s.slipDays ? '<br>기준선 ' + signed(s.slipDays) + '일' : '');
             var warn = s.forecastOver > 0
@@ -374,6 +376,7 @@
             }).join('');
             return '<section class="stage-card ' + s.status + '">' +
                 '<button type="button" class="stage-head" data-stage="' + s.id + '"><h3>' + esc(s.name) + '</h3>' + stageChip(s) +
+                (s.parallel ? chip('', null, '앞 단계와 동시') : '') +
                 (s.checkTotal ? chip(s.checkDone === s.checkTotal ? 'ok' : '', 'tasks', '체크 ' + s.checkDone + '/' + s.checkTotal) : '') +
                 '<span class="stage-dates">' + dates + '</span></button>' + warn + cross +
                 (works ? '<ul class="work-list">' + works + '</ul>' : '') +
@@ -562,7 +565,7 @@
         var stage = a.stageId ? stageById(a.stageId) : null;
         var text = a.deleted
             ? '<div class="feed-text muted">' + icon('trash') + esc(a.text) + '</div>'
-            : '<div class="feed-text">' + esc(a.text) + '</div>';
+            : '<div class="feed-text">' + (a.type === 'comment' ? App.richText(a.text) : esc(a.text)) + '</div>';
         var mentions = (a.mentions || []).length
             ? '<div class="feed-mentions">' + a.mentions.map(function (m) { return '<span class="chip accent mention-chip">@' + esc(m.name) + '</span>'; }).join('') + '</div>'
             : '';
@@ -814,6 +817,65 @@
         renderFeed();
     }
 
+    // ── 진행 내용에 이미지 넣기 ─────────────────────────────────────
+    // 단추로 고르거나 클립보드에서 붙여 넣은(스크린샷) 이미지를 첨부로 올리고(Files?handler=Upload), 본문의 커서 자리에 '[이미지:첨부Id]'를 넣는다.
+    // 화면(App.richText)이 그 자리에 그림을 그린다. 올린 파일은 자료 탭에도 보인다(단계가 있으면 그 단계의 자료)
+    function bindImageInsert(textarea, button, stageId, onError) {
+        if (!textarea || !button) return;
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif';
+        input.hidden = true;
+        button.parentNode.insertBefore(input, button.nextSibling);
+
+        function insertAt(token) {
+            var start = textarea.selectionStart == null ? textarea.value.length : textarea.selectionStart;
+            var end = textarea.selectionEnd == null ? start : textarea.selectionEnd;
+            var before = textarea.value.slice(0, start);
+            var after = textarea.value.slice(end);
+            var glue = before.length && !/\s$/.test(before) ? ' ' : '';
+            textarea.value = before + glue + token + (after.length && !/^\s/.test(after) ? ' ' : '') + after;
+            var pos = (before + glue + token).length + 1;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus();
+            try { textarea.setSelectionRange(pos, pos); } catch (e) { /* 무시 */ }
+        }
+
+        async function upload(file) {
+            if (!file) return;
+            if (!/^image\/(png|jpeg|gif)$/.test(file.type)) { onError('이미지(PNG·JPG·GIF)만 넣을 수 있습니다.'); return; }
+            if (file.size > data.upload.maxBytes) { onError('이미지는 ' + data.upload.maxMB + 'MB 이하만 넣을 수 있습니다.'); return; }
+            var name = file.name && /\.(png|jpe?g|gif)$/i.test(file.name) ? file.name
+                : '붙여넣기-' + App.today.replace(/-/g, '') + '-' + Date.now().toString(36) + (file.type === 'image/png' ? '.png' : file.type === 'image/gif' ? '.gif' : '.jpg');
+            var form = new FormData();
+            form.append('projectId', P.id);
+            if (stageId) form.append('stageId', stageId);
+            form.append('file', file, name);
+            button.disabled = true;
+            try {
+                var r = await change(App.upload(App.url('/Projects/Files?handler=Upload') + compareQuery(), form));
+                if (r.attachmentId) insertAt('[이미지:' + r.attachmentId + ']');
+                App.toast('이미지를 넣었습니다. 등록하면 본문에 보입니다.');
+            } catch (err) { onError(err.message); }
+            finally { button.disabled = false; }
+        }
+
+        button.addEventListener('click', function () { input.click(); });
+        input.addEventListener('change', function () {
+            var file = input.files && input.files[0];
+            input.value = '';
+            upload(file);
+        });
+        textarea.addEventListener('paste', function (e) {
+            var items = e.clipboardData && e.clipboardData.files;
+            if (!items || !items.length) return;
+            var file = Array.prototype.filter.call(items, function (f) { return /^image\//.test(f.type); })[0];
+            if (!file) return;
+            e.preventDefault();
+            upload(file);
+        });
+    }
+
     // ── 시트 공통 ───────────────────────────────────────────────────
     function field(name, label, inner, optional) {
         return '<label class="field" data-field="' + name + '"><span class="label">' + label +
@@ -1008,6 +1070,12 @@
         }
         html += field('targetDate', '목표일', '<input type="date" name="targetDate" value="' + (isNew ? '' : s.targetDate || '') + '" />', true) +
             '<span class="hint" data-target-hint></span>';
+        // 선후 관계·목표일 정하는 방식(규칙 23·규칙 1 의 예외). 첫 단계에는 '앞 단계'가 없어 동시 진행을 고를 수 없다
+        var canParallel = isNew ? P.stages.length > 0 : index > 0;
+        html += '<div class="field stage-flags" data-field="flags">' +
+            (canParallel ? '<label class="check"><input type="checkbox" name="parallel"' + (!isNew && s.parallel ? ' checked' : '') + ' />앞 단계와 동시 진행 (선후 관계 없음)' + helpQ('parallel', '동시 진행 단계') + '</label>' : '') +
+            '<label class="check"><input type="checkbox" name="autoTarget"' + (!isNew && s.autoTarget ? ' checked' : '') + ' />목표일을 작업 일정에 맞춤 (가장 늦은 작업 목표 종료일로 자동)' + helpQ('parallel', '작업 일정에 맞춘 목표일') + '</label>' +
+            '<span class="hint" data-auto-hint hidden></span></div>';
         if (!isNew && s.inboundHint && s.inboundHint !== s.targetDate) {
             html += '<div class="form-note"><span>추천 입고일 <b>' + s.inboundHint + '</b></span>' +
                 '<span class="muted">검수일 + 해상 운송 ' + P.oceanLeadDays + '일</span>' +
@@ -1121,6 +1189,25 @@
                     noMoves: '다른 단계·작업은 옮겨지지 않습니다.'
                 });
 
+                var autoBox = f.autoTarget;
+                var autoHint = form.querySelector('[data-auto-hint]');
+                // 작업 일정에 맞추면 목표일 칸은 잠기고(서버가 정한다) 사유도 받지 않는다. 작업이 없으면 지금 목표일을 그대로 둔다
+                function onAuto() {
+                    var on = autoBox.checked;
+                    target.disabled = on;
+                    autoHint.hidden = !on;
+                    if (on) {
+                        var n = isNew ? 0 : s.works.length;
+                        if (n) {
+                            target.value = s.worksTo || target.value;
+                            autoHint.textContent = '작업 ' + n + '개 중 가장 늦은 목표 종료 ' + (s.worksTo || '') + ' 로 맞춥니다. 작업 일정이 바뀌면 함께 바뀝니다.';
+                        } else {
+                            autoHint.textContent = '작업이 없어 지금 목표일을 그대로 둡니다. 작업을 추가하면 그 일정으로 맞춥니다.';
+                        }
+                    } else if (!isNew) {
+                        target.value = s.targetDate || '';
+                    }
+                }
                 function onTarget() {
                     var notes = '';
                     if (!isNew && s.baselineDate) {
@@ -1128,9 +1215,11 @@
                         notes += '기준선 ' + s.baselineDate + (slip == null ? '' : slip === 0 ? ' (그대로)' : ' (' + signed(slip) + '일)');
                     }
                     hint.textContent = notes;
-                    if (reasonBox) reasonBox.hidden = !(s.targetDate && target.value !== s.targetDate);
+                    if (reasonBox) reasonBox.hidden = autoBox.checked || !(s.targetDate && target.value !== s.targetDate);
                     preview.update();
                 }
+                autoBox.addEventListener('change', function () { onAuto(); onTarget(); });
+                onAuto();
                 var closeWorks = form.querySelector('[data-close-works]');
                 function onDone() {
                     if (future) future.hidden = !(done.value && done.value > userToday());
@@ -1266,6 +1355,8 @@
                     cascade: f.cascade ? f.cascade.checked : false,
                     cascadeWorks: f.cascadeWorks ? f.cascadeWorks.checked : false,
                     closeWorks: f.closeWorks ? f.closeWorks.checked : false,
+                    parallel: f.parallel ? f.parallel.checked : false,
+                    autoTarget: f.autoTarget.checked,
                     version: version
                 });
                 App.toast(isNew ? '단계를 추가했습니다.' : '단계를 저장했습니다.');
@@ -1448,7 +1539,7 @@
 
     // 작업 시트의 진행 내용: 그 작업의 활동만 서버에서 따로 받는다(과제 데이터에는 최근 활동 일부만 있다)
     function workFeedItemHtml(a) {
-        return '<li><div class="feed-text' + (a.deleted ? ' muted' : '') + '">' + esc(a.text) + '</div>' +
+        return '<li><div class="feed-text' + (a.deleted ? ' muted' : '') + '">' + (a.type === 'comment' && !a.deleted ? App.richText(a.text) : esc(a.text)) + '</div>' +
             ((a.mentions || []).length ? '<div class="feed-mentions">' + a.mentions.map(function (m) { return '<span class="chip accent mention-chip">@' + esc(m.name) + '</span>'; }).join('') + '</div>' : '') +
             (a.reason ? '<div class="feed-reason">' + esc(a.reason) + '</div>' : '') +
             '<div class="feed-meta">' + esc(a.user) + ' · ' + App.timeTag(a.at) + '</div></li>';
@@ -1590,9 +1681,11 @@
 
         if (!isNew) {
             html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
-                '<textarea data-comment data-draft="comment" rows="2" maxlength="' + LIM.text + '" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기)" aria-label="진행 내용"></textarea>' +
+                '<textarea data-comment data-draft="comment" rows="2" maxlength="' + LIM.text + '" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기, 이미지는 붙여 넣거나 단추로)" aria-label="진행 내용"></textarea>' +
                 '<div data-work-mentions data-field="mentions"></div>' +
-                '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button></div></div>';
+                '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button>' +
+                '<button type="button" class="btn small" data-add-image>' + icon('clip') + '이미지</button>' +
+                '<span class="hint">이미지는 자료(첨부)에 저장되고 본문에 [이미지:번호]로 들어갑니다.</span></div></div>';
         }
 
         // 동시 수정 뒤 '다른 사용자가 바꾼 값' 표시용 이름
@@ -1730,6 +1823,7 @@
                 var addComment = form.querySelector('[data-add-comment]');
                 if (addComment) {
                     var workMentions = Collab.mentions(form.querySelector('[data-work-mentions]'), form.querySelector('[data-comment]'), people);
+                    bindImageInsert(form.querySelector('[data-comment]'), form.querySelector('[data-add-image]'), w.stageId, function (m) { sheet.setError(m); });
                     addComment.addEventListener('click', function () {
                         var box = form.querySelector('[data-comment]');
                         // 응답이 올 때까지 다시 눌리지 않게 잠근다 (같은 진행 내용이 두 번 등록되지 않게)
@@ -2098,6 +2192,7 @@
 
     // 진행 내용의 알릴 사람(멘션)
     var commentMentions = Collab.mentions($('comment-mentions'), $('comment-text'), people);
+    bindImageInsert($('comment-text'), $('comment-image'), null, function (m) { App.toast(m, 'error'); });
 
     $('comment-form').addEventListener('submit', function (e) {
         e.preventDefault();

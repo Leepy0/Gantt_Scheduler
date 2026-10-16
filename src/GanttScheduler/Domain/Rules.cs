@@ -17,6 +17,53 @@ public static class Rules
 
     public static IEnumerable<Stage> Ordered(Project p) => p.Stages.OrderBy(s => s.SortOrder).ThenBy(s => s.Id);
 
+    // ── 동시 진행 단계 (규칙 23) ─────────────────────────────────────────
+    // '앞 단계와 동시 진행'(Stage.Parallel) 표시가 있는 단계는 바로 앞 단계와 한 묶음이다 — 묶음 안의 단계는 서로 선후 관계가 없다.
+    // 초안·간격·템플릿 작업 시작·연쇄 이동·현재 단계 판정이 모두 이 묶음을 본다. 첫 단계의 표시는 뜻이 없다(앞 단계가 없다)
+
+    public static List<bool> ParallelFlags(IEnumerable<Stage> ordered) => ordered.Select(s => s.Parallel).ToList();
+
+    // 순서 위치 i 의 단계가 속한 묶음의 첫 단계 위치
+    public static int GroupStart(IReadOnlyList<bool> parallel, int i)
+    {
+        while (i > 0 && i < parallel.Count && parallel[i]) i--;
+        return Math.Max(0, i);
+    }
+
+    // 순서 위치 i 의 단계가 속한 묶음의 마지막 단계 위치
+    public static int GroupEnd(IReadOnlyList<bool> parallel, int i)
+    {
+        while (i + 1 < parallel.Count && parallel[i + 1]) i++;
+        return i;
+    }
+
+    // 이 단계보다 뒤에 오는 단계 — 같은 묶음(동시 진행)의 단계는 뒤가 아니다. 연쇄 이동·이후 단계 작업 이동의 범위
+    public static IEnumerable<Stage> LaterStages(Project p, Stage stage)
+    {
+        var ordered = Ordered(p).ToList();
+        var i = ordered.FindIndex(x => ReferenceEquals(x, stage) || (stage.Id != 0 && x.Id == stage.Id));
+        if (i < 0) return ordered.Where(x => x.SortOrder > stage.SortOrder);
+        return ordered.Skip(GroupEnd(ParallelFlags(ordered), i) + 1);
+    }
+
+    // 지금 진행 중인 단계들: 순서상 첫 미완료 단계와 같은 묶음의 미완료 단계 (동시 진행이 없으면 하나)
+    public static List<Stage> CurrentStages(Project p)
+    {
+        var ordered = Ordered(p).ToList();
+        var first = ordered.FindIndex(s => s.CompletedDate == null);
+        if (first < 0) return new List<Stage>();
+        var flags = ParallelFlags(ordered);
+        var start = GroupStart(flags, first);
+        var end = GroupEnd(flags, first);
+        return ordered.Skip(start).Take(end - start + 1).Where(s => s.CompletedDate == null).ToList();
+    }
+
+    // 목표일을 작업 일정에 맞추는 단계(Stage.AutoTarget)의 목표일: 작업들의 가장 늦은 목표 종료일. 작업이 없으면 null(그대로 둔다)
+    public static DateOnly? AutoTargetOf(Stage s) => s.AutoTarget && s.Works.Count > 0 ? s.Works.Max(w => w.PlanEnd) : null;
+
+    // 작업이 있는 단계의 작업 기준 시작(가장 이른 목표 시작일) — 목표일을 작업에 맞추는 단계의 목표 막대 시작
+    public static DateOnly? WorksStart(Stage s) => s.Works.Count > 0 ? s.Works.Min(w => w.PlanStart) : null;
+
     public static WorkStatus StatusOf(WorkItem w) =>
         w.ActualEnd != null ? WorkStatus.Done
         : w.ActualStart != null ? WorkStatus.InProgress
@@ -67,8 +114,8 @@ public static class Rules
     {
         if (s.CompletedDate != null) return StageStatus.Done;
         if (IsLate(s, today)) return StageStatus.Late;
-        // 순서상 첫 미완료 단계가 '진행 중'
-        return ReferenceEquals(CurrentStage(p), s) ? StageStatus.Current : StageStatus.Planned;
+        // 순서상 첫 미완료 단계(와 그 동시 진행 묶음의 미완료 단계)가 '진행 중'
+        return CurrentStages(p).Any(x => ReferenceEquals(x, s)) ? StageStatus.Current : StageStatus.Planned;
     }
 
     // 작업 일정에서 올려 계산한 단계 예상 종료일. 작업이 없거나 단계가 완료됐으면 null
@@ -347,9 +394,9 @@ public static class Rules
 
     // ── 일정 재계산(의존 밀기) ────────────────────────────────────────────
 
-    // 단계 목표일 연쇄 이동 때 함께 옮길 수 있는 작업: 이 단계보다 뒤에 있는 미완료 단계의 미착수 작업
+    // 단계 목표일 연쇄 이동 때 함께 옮길 수 있는 작업: 이 단계보다 뒤에 있는(동시 진행 묶음 밖) 미완료 단계의 미착수 작업
     public static IEnumerable<WorkItem> CascadeWorks(Project p, Stage stage) =>
-        Ordered(p).Where(x => x.SortOrder > stage.SortOrder && x.CompletedDate == null)
+        LaterStages(p, stage).Where(x => x.CompletedDate == null)
                   .SelectMany(x => x.Works.Where(w => IsMovable(w, x)).OrderBy(w => w.PlanStart).ThenBy(w => w.Id));
 
     // 재계산이 옮긴 작업 하나. Cause 는 가장 늦은 시작을 요구한 선행 작업
@@ -716,36 +763,73 @@ public static class Rules
     // 단계 목표일 초안 (단계 순서대로). 앞 단계 목표일(첫 단계는 착수일)에서 근무일 기본 기간만큼 뒤로 잡는다.
     // 기본 기간이 없는 단계는 비우고, 그다음 단계는 앞에서 정해진 마지막 목표일(없으면 착수일)부터 센다 — 간트의 목표 막대와 같은 기준.
     // fixedAt(순서 위치 → 날짜)에 있는 단계는 사람이 정한 값(빈 값 포함)을 그대로 두고 그 뒤 단계만 거기서 이어 센다.
+    // parallel(순서 위치별 동시 진행 표시, 규칙 23): 동시 진행 단계는 앞 단계가 아니라 그 묶음의 기준일(묶음 첫 단계가 센 기준일)에서 세고,
+    // 묶음 뒤의 단계는 묶음에서 가장 늦은 목표일부터 센다.
     // 초안은 제안일 뿐이다 — 저장은 사람이 확인하고 고친 뒤에 한다(규칙 1)
     public static List<DateOnly?> DraftTargets(DateOnly start, IReadOnlyList<int?> workDays, WorkCalendar cal,
-                                               IReadOnlyDictionary<int, DateOnly?>? fixedAt = null)
+                                               IReadOnlyDictionary<int, DateOnly?>? fixedAt = null, IReadOnlyList<bool>? parallel = null)
     {
         var result = new List<DateOnly?>(workDays.Count);
-        var anchor = start;
+        var anchors = new Anchors(start);
         for (var i = 0; i < workDays.Count; i++)
         {
+            var basis = anchors.Basis(parallel, i);
             DateOnly? target = fixedAt != null && fixedAt.TryGetValue(i, out var kept) ? kept
-                : workDays[i] is int days ? cal.AddWorkingDays(anchor, Math.Clamp(days, 0, MaxDefaultWorkDays))
+                : workDays[i] is int days ? cal.AddWorkingDays(basis, Math.Clamp(days, 0, MaxDefaultWorkDays))
                 : null;
             result.Add(target);
-            if (target != null) anchor = target.Value;
+            anchors.Advance(parallel, i, target);
         }
         return result;
     }
 
-    public static List<DateOnly?> DraftTargets(DateOnly start, IEnumerable<StageTemplate> templates, WorkCalendar cal) =>
-        DraftTargets(start, templates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).Select(t => t.DefaultWorkDays).ToList(), cal);
+    public static List<DateOnly?> DraftTargets(DateOnly start, IEnumerable<StageTemplate> templates, WorkCalendar cal)
+    {
+        var ordered = templates.OrderBy(t => t.SortOrder).ThenBy(t => t.Id).ToList();
+        return DraftTargets(start, ordered.Select(t => t.DefaultWorkDays).ToList(), cal, null, ordered.Select(t => t.Parallel).ToList());
+    }
+
+    // 단계 순서대로 기준일을 따라가는 도우미. 기준일 = 앞에서 정해진 마지막 목표일(첫 단계는 착수일).
+    // 동시 진행 단계는 묶음의 기준일(GroupBasis)을 쓰고, 묶음을 지나면 묶음에서 가장 늦은 목표일이 다음 기준일이 된다
+    private sealed class Anchors
+    {
+        private readonly DateOnly _start;
+        private DateOnly? _anchor;       // 다음 순차 단계의 기준이 되는 목표일 (없으면 착수일)
+        private DateOnly? _groupBasis;   // 지금 묶음의 기준이 되는 목표일 (없으면 착수일)
+
+        public Anchors(DateOnly start) => _start = start;
+
+        private static bool IsParallel(IReadOnlyList<bool>? parallel, int i) => parallel != null && i > 0 && i < parallel.Count && parallel[i];
+
+        // 순서 위치 i 의 기준일. 앞 단계 목표일에서 비롯했으면 FromTarget — 템플릿 작업의 단계 시작은 그 다음 근무일이다
+        public DateOnly Basis(IReadOnlyList<bool>? parallel, int i, out bool fromTarget)
+        {
+            if (!IsParallel(parallel, i)) _groupBasis = _anchor;
+            fromTarget = _groupBasis != null;
+            return _groupBasis ?? _start;
+        }
+
+        public DateOnly Basis(IReadOnlyList<bool>? parallel, int i) => Basis(parallel, i, out _);
+
+        public void Advance(IReadOnlyList<bool>? parallel, int i, DateOnly? target)
+        {
+            if (target == null) return;
+            // 순차 단계는 그 목표일이 다음 기준(앞 단계보다 이르게 잡혀도 그대로 — 간격을 음수로 보여 준다), 동시 진행 단계는 묶음에서 가장 늦은 날
+            _anchor = IsParallel(parallel, i) && _anchor is DateOnly a && target.Value < a ? a : target.Value;
+        }
+    }
 
     // 단계 목표일 사이의 근무일 간격 (단계 순서대로). 앞에서 정해진 마지막 목표일(첫 단계는 착수일)부터 이 단계 목표일까지.
-    // 목표일이 없으면 null, 앞 단계보다 이르면 음수(순서가 뒤바뀐 일정 — 화면이 경고한다)
-    public static List<int?> TargetGaps(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    // 동시 진행 단계는 묶음의 기준일부터(규칙 23). 목표일이 없으면 null, 앞 단계보다 이르면 음수(순서가 뒤바뀐 일정 — 화면이 경고한다)
+    public static List<int?> TargetGaps(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal, IReadOnlyList<bool>? parallel = null)
     {
         var result = new List<int?>(targets.Count);
-        var anchor = start;
-        foreach (var t in targets)
+        var anchors = new Anchors(start);
+        for (var i = 0; i < targets.Count; i++)
         {
-            result.Add(t == null ? null : cal.Distance(anchor, t.Value));
-            if (t != null) anchor = t.Value;
+            var basis = anchors.Basis(parallel, i);
+            result.Add(targets[i] == null ? null : cal.Distance(basis, targets[i]!.Value));
+            anchors.Advance(parallel, i, targets[i]);
         }
         return result;
     }
@@ -936,15 +1020,17 @@ public static class Rules
             throw new RuleException($"기간은 1~{MaxTemplateDuration} 근무일로 입력해 주세요.", "durationWorkDays");
     }
 
-    // 단계마다 시작 기준일(근무일). targets: 단계 순서대로의 목표일(등록할 때 정한 값, 없으면 초안 — 비어 있을 수 있다)
-    public static List<DateOnly> StageStarts(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal)
+    // 단계마다 시작 기준일(근무일). targets: 단계 순서대로의 목표일(등록할 때 정한 값, 없으면 초안 — 비어 있을 수 있다).
+    // parallel: 동시 진행 단계는 묶음의 첫 단계와 같은 날 시작하고, 묶음 뒤의 단계는 묶음에서 가장 늦은 목표일 다음 근무일에 시작한다(규칙 23)
+    public static List<DateOnly> StageStarts(DateOnly start, IReadOnlyList<DateOnly?> targets, WorkCalendar cal, IReadOnlyList<bool>? parallel = null)
     {
         var result = new List<DateOnly>(targets.Count);
-        var basis = cal.NextWorkingDay(start);
-        foreach (var t in targets)
+        var anchors = new Anchors(start);
+        for (var i = 0; i < targets.Count; i++)
         {
-            result.Add(basis);
-            if (t != null) basis = cal.EarliestStartAfter(t.Value, 0);
+            var basis = anchors.Basis(parallel, i, out var fromTarget);
+            result.Add(fromTarget ? cal.EarliestStartAfter(basis, 0) : cal.NextWorkingDay(basis));
+            anchors.Advance(parallel, i, targets[i]);
         }
         return result;
     }
@@ -1004,11 +1090,12 @@ public static class Rules
     public static DateOnly StageEntered(Project p, Stage current)
     {
         var entered = p.StartDate;
-        foreach (var s in Ordered(p))
-        {
-            if (ReferenceEquals(s, current)) break;
-            if (s.CompletedDate is DateOnly d && d > entered) entered = d;
-        }
+        var ordered = Ordered(p).ToList();
+        var at = ordered.FindIndex(s => ReferenceEquals(s, current));
+        // 동시 진행 묶음은 같은 날 들어온다 — 묶음 첫 단계 앞까지만 본다(규칙 23)
+        var stop = at < 0 ? ordered.Count : GroupStart(ParallelFlags(ordered), at);
+        for (var i = 0; i < stop; i++)
+            if (ordered[i].CompletedDate is DateOnly d && d > entered) entered = d;
         return entered;
     }
 

@@ -866,6 +866,9 @@ namespace GanttScheduler.Data.Migrations.Sqlite
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("AutoTarget")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateOnly?>("BaselineDate")
                         .HasColumnType("TEXT");
 
@@ -881,6 +884,9 @@ namespace GanttScheduler.Data.Migrations.Sqlite
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("Parallel")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("ProjectId")
                         .HasColumnType("INTEGER");
@@ -951,6 +957,9 @@ namespace GanttScheduler.Data.Migrations.Sqlite
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("Parallel")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("SortOrder")
                         .HasColumnType("INTEGER");

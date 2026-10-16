@@ -61,6 +61,7 @@ public class AttachmentService
 
     private string FolderOf(int projectId) => Path.Combine(_root, projectId.ToString());
 
+    // 돌려주는 값: 새 첨부의 Id (진행 내용에 '[이미지:Id]' 로 넣는다)
     public async Task<int> SaveAsync(int projectId, int? stageId, string? fileName, long length, Stream content)
     {
         fileName = Path.GetFileName((fileName ?? "").Trim());
@@ -91,11 +92,12 @@ public class AttachmentService
             await content.CopyToAsync(file);
 
         var now = _clock.UtcNow;
-        _db.Attachments.Add(new Attachment
+        var attachment = new Attachment
         {
             ProjectId = projectId, StageId = stage?.Id, FileName = fileName, StoredName = stored, ContentType = contentType,
             Size = length, UploadedById = _me.Id, UploadedAt = now,
-        });
+        };
+        _db.Attachments.Add(attachment);
         var added = _log.New(ActivityType.AttachmentAdded, (stage == null ? "" : $"[{stage.Name}] ") + $"첨부 추가: {fileName}", stageId: stage?.Id);
         added.ProjectId = projectId;
         _db.Activities.Add(added);
@@ -109,7 +111,7 @@ public class AttachmentService
             File.Delete(path);   // 기록에 실패하면 파일도 남기지 않는다
             throw;
         }
-        return projectId;
+        return attachment.Id;
     }
 
     private static string SizeText(long bytes) =>

@@ -30,9 +30,9 @@
         return checked ? +checked.value : 0;
     }
 
-    function gapHtml(gap) {
+    function gapHtml(gap, parallel) {
         if (gap == null) return '<span class="muted">—</span>';
-        if (gap < 0) return '<span class="warn" title="앞 단계 목표일보다 이릅니다">' + icon('alert') + gap + '근무일</span>';
+        if (gap < 0) return '<span class="warn" title="' + (parallel ? '묶음 기준일보다 이릅니다' : '앞 단계 목표일보다 이릅니다') + '">' + icon('alert') + gap + '근무일</span>';
         return '+' + gap + '근무일';
     }
 
@@ -54,12 +54,13 @@
         var label = esc(r.name);
         var sub = [];
         if (KIND[r.kind]) sub.push(KIND[r.kind]);
+        if (r.parallel) sub.push('앞 단계와 동시');
         sub.push(r.defaultWorkDays != null ? '기본 ' + r.defaultWorkDays + '근무일' : '기본 기간 없음');
         return '<div class="sched-row' + (r.kept ? ' changed' : '') + '" data-template="' + r.templateId + '">' +
             '<div class="sched-name"><span class="sched-title">' + label + '</span><span class="hint">' + esc(sub.join(' · ')) + '</span></div>' +
             '<label class="field" data-field="stageTargets.' + r.templateId + '"><span class="label">목표일</span>' +
             '<input type="date" data-target="' + r.templateId + '" value="' + esc(r.targetDate || '') + '" aria-label="' + label + ' 목표일" /></label>' +
-            '<div class="sched-gap" data-gap>' + gapHtml(r.gapWorkDays) + '</div>' +
+            '<div class="sched-gap" data-gap>' + gapHtml(r.gapWorkDays, r.parallel) + '</div>' +
             '<div class="sched-notes" data-notes>' + notesHtml(r) + '</div></div>';
     }
 
@@ -80,7 +81,7 @@
                 if (input !== document.activeElement && input.value !== (r.targetDate || '')) input.value = r.targetDate || '';
                 row.classList.toggle('changed', r.kept);
                 row.querySelector('[data-field]').classList.remove('invalid');   // 초안을 받았으면 고친 날짜가 범위 안이다
-                row.querySelector('[data-gap]').innerHTML = gapHtml(r.gapWorkDays);
+                row.querySelector('[data-gap]').innerHTML = gapHtml(r.gapWorkDays, r.parallel);
                 row.querySelector('[data-notes]').innerHTML = notesHtml(r);
             });
         }

@@ -489,8 +489,9 @@ public static partial class Reporting
     }
 
     // 활동 하나를 보고 줄로
+    // 댓글의 이미지 참조('[이미지:n]')는 보고서에 그릴 수 없어 '(이미지)'로 적는다
     private static WeeklyItem Item(Activity a, List<string>? more = null) =>
-        new(a.Text, a.Reason, a.User?.Name ?? "", KoreaClock.KstDate(a.At), more);
+        new(a.Type == ActivityType.Comment ? CommentText.Plain(a.Text) : a.Text, a.Reason, a.User?.Name ?? "", KoreaClock.KstDate(a.At), more);
 
     // 사람이 아니라 단계 완료·완료 취소에 따라 저절로 바뀐 과제 상태 (ProjectService.SyncState)
     public static bool IsAutoState(Activity a) =>

@@ -18,8 +18,9 @@ public record StagePlanRow(int StageId, DateOnly? TargetDate, DateOnly? Complete
 public record StagePlanView(int StageId, int? GapWorkDays, DateOnly? InboundHint, string? TargetNote = null);
 
 // 등록 화면의 목표일 초안 한 줄. Kept: 사람이 고친 값(초안이 아님), Gap: 앞 단계 목표일(첫 단계는 착수일)부터의 근무일
+// Parallel: 앞 단계와 동시 진행(규칙 23) — 간격을 묶음의 기준일부터 센다
 public record StageDraftRow(int TemplateId, string Name, string Kind, int? DefaultWorkDays, DateOnly? TargetDate, bool Kept,
-                            int? GapWorkDays, DateOnly? InboundHint);
+                            int? GapWorkDays, DateOnly? InboundHint, bool Parallel = false);
 
 // OceanLeadDays: 고른 법인의 해상 운송 소요일 (법인을 아직 고르지 않았으면 null — 추천 입고일을 보이지 않는다)
 public record StageDraft(DateOnly StartDate, int? OceanLeadDays, List<StageDraftRow> Rows);
@@ -66,14 +67,15 @@ public partial class ProjectService
                 fixedAt[i] = kept;
             }
 
-        var targets = Rules.DraftTargets(start, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt);
-        var gaps = Rules.TargetGaps(start, targets, cal);
-        var stages = templates.Select((t, i) => new Stage { Name = t.Name, Kind = t.Kind, SortOrder = i + 1, TargetDate = targets[i] }).ToList();
+        var flags = templates.Select((t, i) => i > 0 && t.Parallel).ToList();
+        var targets = Rules.DraftTargets(start, templates.Select(t => t.DefaultWorkDays).ToList(), cal, fixedAt, flags);
+        var gaps = Rules.TargetGaps(start, targets, cal, flags);
+        var stages = templates.Select((t, i) => new Stage { Name = t.Name, Kind = t.Kind, SortOrder = i + 1, TargetDate = targets[i], Parallel = flags[i] }).ToList();
         var inbound = lead == null ? null : Rules.InboundRecommendation(stages, lead.Value);
 
         return new StageDraft(start, lead, templates.Select((t, i) => new StageDraftRow(
             t.Id, t.Name, Views.Key(t.Kind), t.DefaultWorkDays, targets[i], fixedAt.ContainsKey(i), gaps[i],
-            t.Kind == StageKind.Inbound ? inbound : null)).ToList());
+            t.Kind == StageKind.Inbound ? inbound : null, flags[i])).ToList());
     }
 
     // ── 단계 일정 표 (상세) ─────────────────────────────────────────────
@@ -92,12 +94,12 @@ public partial class ProjectService
                 if (s.CompletedDate != e.CompletedDate) Rules.ValidateDate(e.CompletedDate, p.StartDate, $"'{s.Name}' 완료일", $"completedDate.{s.Id}");
             }
         var stages = Rules.Ordered(p).Select(s => edits.TryGetValue(s.Id, out var e)
-            ? new Stage { Id = s.Id, Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = e.TargetDate, CompletedDate = e.CompletedDate }
+            ? new Stage { Id = s.Id, Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder, TargetDate = e.TargetDate, CompletedDate = e.CompletedDate, Parallel = s.Parallel }
             : s).ToList();
 
         var cal = await CalendarAsync();
         var lead = (await LocationsAsync()).Get(p.CorporationId)?.OceanLeadDays ?? 0;
-        var gaps = Rules.TargetGaps(p.StartDate, stages.Select(s => s.TargetDate).ToList(), cal);
+        var gaps = Rules.TargetGaps(p.StartDate, stages.Select(s => s.TargetDate).ToList(), cal, Rules.ParallelFlags(stages));
         var inbound = Rules.InboundRecommendation(stages, lead);
         var result = new List<StagePlanView>();
         for (var i = 0; i < stages.Count; i++)
@@ -121,11 +123,14 @@ public partial class ProjectService
             throw new RuleException("같은 단계가 두 번 들어 있습니다. 화면을 새로고침해 주세요.");
 
         var changes = new List<(Stage Stage, StageScheduleRow Row)>();
-        foreach (var r in rows)
+        foreach (var sent in rows)
         {
+            var r = sent;
             // 화면을 연 뒤 다른 사람이 지운 단계 — 최신 내용으로 다시 맞춰 저장하게 한다
             var s = p.Stages.FirstOrDefault(x => x.Id == r.StageId) ?? throw new ConflictException(p.Id);
             CheckVersion(r.Version, s.Version, p.Id);
+            // 목표일을 작업 일정에 맞추는 단계(규칙 1 의 예외)는 표가 보낸 목표일을 쓰지 않는다 — 서버가 저장할 때 맞춘다(화면도 칸을 잠근다)
+            if (s.AutoTarget && r.TargetDate != s.TargetDate) r = r with { TargetDate = s.TargetDate };
             if (s.TargetDate == r.TargetDate && s.CompletedDate == r.CompletedDate) continue;
             // 바뀐 날짜만 범위를 본다 (SaveStageAsync 와 같다). 오류는 표의 그 칸을 가리킨다
             if (s.TargetDate != r.TargetDate) Rules.ValidateDate(r.TargetDate, p.StartDate, $"'{s.Name}' 목표일", $"targetDate.{s.Id}");

@@ -109,6 +109,8 @@ public class StageTemplate
     // 기본 기간(근무일): 앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지. 등록 화면의 목표일 초안에만 쓰고
     // 과제에는 복사하지 않는다(초안은 제안일 뿐 목표일은 사람이 정한다 — 규칙 1). 없으면 초안을 비운다
     public int? DefaultWorkDays { get; set; }
+    // 앞 단계와 동시 진행(선후 관계 없음 — 규칙 23). 과제를 등록할 때 Stage.Parallel 로 복사한다
+    public bool Parallel { get; set; }
     // 과제를 등록할 때 이 단계에 함께 만들 작업(템플릿 작업). 등록 시점에 복사한다 — 이후 템플릿을 고쳐도 기존 과제는 그대로(규칙 9)
     public List<TemplateWork> Works { get; set; } = new();
 }
@@ -231,6 +233,12 @@ public class Stage
     public DateOnly? TargetDate { get; set; }
     public DateOnly? CompletedDate { get; set; }
     public DateOnly? BaselineDate { get; set; }     // 기준선 확정 당시의 목표일
+    // 앞 단계와 동시 진행(선후 관계 없음 — 규칙 23): 앞 단계 목표일을 기준으로 간격·초안·연쇄 이동을 계산하지 않고, 앞 단계와 같은 기준일에서 센다.
+    // 첫 단계의 표시는 뜻이 없다(앞 단계가 없다)
+    public bool Parallel { get; set; }
+    // 목표일을 작업 일정에 맞춘다(규칙 1 의 예외): 켜져 있으면 서버가 저장할 때마다 목표일 = 이 단계 작업들의 가장 늦은 목표 종료일로 맞춘다.
+    // 작업이 하나도 없으면 목표일을 그대로 둔다. CSV 붙여넣기로 작업과 함께 만든 단계가 기본으로 켠다
+    public bool AutoTarget { get; set; }
     public int Version { get; set; }
     public List<WorkItem> Works { get; set; } = new();
     public List<CheckItem> Checks { get; set; } = new();

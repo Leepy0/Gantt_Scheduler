@@ -2028,6 +2028,113 @@ function fillTemplate(template, sheets) {
         assert(!(await page.locator('.columns').innerText()).includes('e2e 임시 공휴일'), '지운 공휴일이 남음');
     });
 
+    await step('과제 등록 — 단계·작업 CSV 붙여넣기: 샘플 → 미리보기(동시 진행·작업 기준 목표일) → 등록', async () => {
+        await page.goto(BASE + '/Projects/Edit');
+        await page.fill('input[name="Form.Title"]', 'CSV 붙여넣기 과제');
+        await page.locator('.choice', { hasText: /^\s*물류\s*$/ }).click();     // '물류 자동화'가 아닌 '물류'(검토·보고·적용)
+        await page.locator('#cascade select[data-level="1"]').selectOption({ index: 1 });
+        await page.waitForSelector('#draft .sched-row');
+        // 샘플 CSV 를 서버에서 받아(복사 단추가 받는 것과 같은 글) 붙여 넣는다 — 클립보드는 자동 점검에서 쓸 수 없다
+        const sample = await page.evaluate(async () => {
+            const cat = document.querySelector('input[name="Form.CategoryId"]:checked').value;
+            const start = document.getElementById('Form_StartDate').value;
+            const r = await fetch('/Projects/Edit?handler=PasteSample&categoryId=' + cat + '&start=' + start, { headers: { Accept: 'application/json' } });
+            return (await r.json()).text;
+        });
+        assert(sample.startsWith('단계,작업명,담당,목표 시작,목표 종료,선행 작업명,동시\n'), '샘플 CSV 머리글이 다름: ' + sample.slice(0, 60));
+        const lines = sample.trim().split('\n');
+        const lastTarget = lines[lines.length - 1].split(',')[4] || lines[1].split(',')[4];
+        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,동시\n');
+        await page.waitForSelector('#paste-preview table[data-paste-stages]');
+        // 붙여 넣은 글이 있으면 기본 단계 초안·템플릿 작업은 숨긴다
+        assert(await page.locator('#draft-field').isHidden(), '초안 표가 숨겨지지 않음');
+        const stagesText = await page.locator('#paste-preview table[data-paste-stages]').innerText();
+        assert(stagesText.includes('앞 단계와 동시'), '동시 진행 표시가 미리보기에 없음');
+        assert((await page.locator('#paste-preview table[data-paste-works] tbody tr:not(.row-bad-detail)').count()) === 2, '샘플의 작업 두 줄이 보이지 않음');
+        assert((await page.locator('#paste-preview [data-paste-summary]').innerText()).includes('붙여 넣은 단계 4개'), '요약이 다름');
+        await shot(page, 'd60-edit-paste-preview');
+        // 틀린 줄은 그 줄 아래에 문제를 적고 등록을 막는다
+        await page.fill('#paste-text', sample + '교육,,,,2099-13-01,,동시\n');
+        await page.waitForSelector('#paste-preview .row-bad');
+        await page.click('#edit-form button[type=submit]');
+        assert(page.url().includes('/Projects/Edit'), '문제가 있는데 등록됨');
+        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,동시\n');
+        await page.waitForSelector('#paste-preview table[data-paste-stages]');
+        await page.waitForFunction(() => !document.querySelector('#paste-preview .row-bad'));
+        await page.click('#edit-form button[type=submit]');
+        await page.waitForSelector('#summary .summary-meta');
+        assert((await page.locator('#stepper .step').count()) === 4, '붙여 넣은 단계 4개로 등록되지 않음');
+        const gantt = await page.locator('#schedule-gantt').innerText();
+        assert(gantt.includes('앞 단계와 동시'), '간트에 동시 진행 표시가 없음');
+        await page.click('.tabs [data-tab=activity]');
+        assert((await page.locator('#feed').innerText()).includes('CSV 붙여넣기'), '등록 활동에 출처가 없음');
+        await page.click('.tabs [data-tab=schedule]');
+        await shot(page, 'd61-paste-project');
+    });
+
+    await step('단계 시트 — 목표일을 작업 일정에 맞춤(자동): 작업의 가장 늦은 종료일이 목표일, 간트 줄에 작업 기준 표시', async () => {
+        // 앞 단계(검토)에는 샘플 CSV 의 작업 두 줄이 있다
+        await stageRow(page, '검토').click();
+        await page.waitForSelector(SHEET + ' input[name=autoTarget]');
+        assert(!(await page.isChecked(SHEET + ' input[name=autoTarget]')), '처음부터 자동으로 켜져 있음');
+        await page.check(SHEET + ' input[name=autoTarget]');
+        assert(await page.isDisabled(SHEET + ' input[name=targetDate]'), '자동인데 목표일 칸이 열려 있음');
+        const hint = await page.locator(SHEET + ' [data-auto-hint]').innerText();
+        assert(hint.includes('작업 2개'), '작업 기준 안내가 없음: ' + hint);
+        const expected = await page.inputValue(SHEET + ' input[name=targetDate]');
+        await shot(page, 'd62-stage-auto-target', false);
+        await submitSheet(page);
+        await page.waitForFunction((d) => document.querySelector('#stepper .step').innerText.includes('목표 ' + d.slice(5)), expected);
+        assert((await page.locator('#schedule-gantt').innerText()).includes('작업 기준'), '간트 줄에 작업 기준 표시가 없음');
+        // 작업을 늦추면 목표일이 따라간다 (사유 없이, 이력에 '작업 일정에 맞춤')
+        await workRow(page, '사양 검토').locator('.g-name').click();
+        await page.waitForSelector(SHEET + ' input[name=planEnd]');
+        const end = await page.inputValue(SHEET + ' input[name=planEnd]');
+        const later = new Date(end + 'T00:00:00Z'); later.setUTCDate(later.getUTCDate() + 7);
+        const laterText = later.toISOString().slice(0, 10);
+        await page.fill(SHEET + ' input[name=planEnd]', laterText);
+        await page.fill(SHEET + ' textarea[name=reason]', '자동 목표일 확인');
+        await submitSheet(page);
+        await page.waitForFunction(() => document.querySelector('#stepper .step').innerText.includes('목표'));
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForFunction(() => document.getElementById('feed').innerText.includes('작업 일정에 맞춤'));
+        await page.click('.tabs [data-tab=schedule]');
+    });
+
+    await step('진행 내용 이미지 — 올리면 첨부로 저장되고 본문의 참조 자리에 그림을 그림', async () => {
+        await page.click('.tabs [data-tab=activity]');
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+        await page.fill('#comment-text', '현장 사진 ');
+        await page.setInputFiles('#comment-form input[type=file]', { name: '현장.png', mimeType: 'image/png', buffer: png });
+        await page.waitForFunction(() => /\[이미지:\d+\]/.test(document.getElementById('comment-text').value));
+        await page.click('#comment-btn');
+        await page.waitForSelector('#feed .feed-image img');
+        assert((await page.locator('#feed .feed-text').first().innerText()).includes('현장 사진'), '글이 함께 남지 않음');
+        await page.click('.tabs [data-tab=files]');
+        assert((await page.locator('#files').innerText()).includes('현장.png'), '자료 탭에 이미지 첨부가 없음');
+        await page.click('.tabs [data-tab=activity]');
+        await shot(page, 'd63-comment-image', false);
+        await page.click('.tabs [data-tab=schedule]');
+    });
+
+    await step('관리 — CSV 붙여넣기: 미리보기(추가·이미 있음·문제) 뒤 문제가 없을 때만 한 번에 추가', async () => {
+        await page.goto(BASE + '/Admin#vendor');
+        await page.waitForSelector('[data-csv]');
+        await page.click('[data-csv]');
+        await page.waitForSelector(SHEET + ' textarea[name=text]');
+        await page.fill(SHEET + ' textarea[name=text]', '협력사\nCSV 협력사\nA로보틱스\n' + 'x'.repeat(101));
+        await page.waitForSelector(SHEET + ' [data-csv-table]');
+        const actions = await page.locator(SHEET + ' [data-csv-table] tbody tr:not(.row-bad-detail) .chip').allInnerTexts();
+        assert(actions.join(',') === '추가,이미 있음,문제', '미리보기 판정이 다름: ' + actions.join(','));
+        await page.locator(SHEET + ' button[type=submit]').click();
+        assert((await sheetError(page)).includes('문제 있는 줄'), '문제가 있는데 추가하려 함');
+        await page.fill(SHEET + ' textarea[name=text]', '협력사\nCSV 협력사\nA로보틱스');
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] button[type=submit]').textContent.includes('1건 추가'));
+        await shot(page, 'd64-admin-csv', false);
+        await submitSheet(page);
+        await page.waitForFunction(() => document.querySelector('.columns').innerText.includes('CSV 협력사'));
+    });
+
     await step('업데이트 — 버전·상태 표시, 설정 저장, 로컬 빌드는 적용 불가 안내', async () => {
         await page.goto(BASE + '/Admin');
         await page.click('a[href$="/Admin/Update"]');

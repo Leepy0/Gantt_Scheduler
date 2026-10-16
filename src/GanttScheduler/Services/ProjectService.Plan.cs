@@ -186,7 +186,7 @@ public partial class ProjectService
             s.TargetDate = date;
             if (old != null && cascade && delta != 0)
             {
-                foreach (var later in p.Stages.Where(x => x.SortOrder > s.SortOrder && x.CompletedDate == null && x.TargetDate != null))
+                foreach (var later in Rules.LaterStages(p, s).Where(x => x.CompletedDate == null && x.TargetDate != null))
                 {
                     var to = cal.AddWorkingDays(later.TargetDate!.Value, delta);
                     if (to == later.TargetDate) continue;
@@ -312,6 +312,7 @@ public partial class ProjectService
             {
                 Id = s.Id, ProjectId = s.ProjectId, Name = s.Name, Kind = s.Kind, SortOrder = s.SortOrder,
                 TargetDate = s.TargetDate, CompletedDate = s.CompletedDate, BaselineDate = s.BaselineDate, Version = s.Version,
+                Parallel = s.Parallel, AutoTarget = s.AutoTarget,
             };
             foreach (var w in s.Works)
             {

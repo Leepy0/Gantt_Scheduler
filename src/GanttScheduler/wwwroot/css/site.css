@@ -255,6 +255,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); min-height: 32px; 
 input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
 
 .check { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap); cursor: pointer; }
+/* 단계 시트의 선후 관계·목표일 방식 체크(동시 진행·작업 기준) — 한 줄씩 세워 보인다 */
+.stage-flags { display: flex; flex-direction: column; gap: 2px; }
+.stage-flags .check { min-height: 36px; }
 .form-error, .form-warn {
     display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-radius: var(--r-sm);
     background: var(--alarm-weak); color: var(--alarm); font-weight: 600;
@@ -396,6 +399,9 @@ input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-colo
 .feed-ic.target { background: var(--warn-weak); color: var(--warn); }
 .feed-ic.done { background: var(--ok-weak); color: var(--ok); }
 .feed-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+/* 진행 내용 본문의 이미지(App.richText) — 글 흐름 안에 작게, 누르면 원본 */
+.feed-image { display: block; margin: 4px 0; max-width: 100%; }
+.feed-image img { display: block; max-width: min(100%, 480px); max-height: 240px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
 .feed-reason { margin-top: 4px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); overflow-wrap: anywhere; }
 .feed-meta { color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .feed-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: var(--fs-xs); }
@@ -1067,6 +1073,8 @@ a.bar-row:hover { text-decoration: none; background: var(--surface-2); }
 .filter-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 /* 관리 > 공휴일: 연도 칩·여러 줄 붙여넣기 */
 .year-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+/* 관리 탭 위의 도구 줄(CSV 붙여넣기) */
+.admin-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 12px; }
 .year-chips { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
 .year-chip {
     display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong);

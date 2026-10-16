@@ -70,6 +70,10 @@ public record StageView
     public ChipView? DueChip { get; init; }             // 목표일 임박 칩 (미완료·미지연이고 Rules.SoonDays 안일 때만)
     public int? GapWorkDays { get; init; }              // 앞 단계 목표일(첫 단계는 착수일)부터의 근무일 간격 (Rules.TargetGaps — 단계 일정 표)
     public List<CrossLinkView> CrossLinks { get; init; } = new(); // 다른 과제 단계와의 연결 (상세에서만 채운다)
+    public bool Parallel { get; init; }                 // 앞 단계와 동시 진행 (규칙 23)
+    public bool AutoTarget { get; init; }               // 목표일을 작업 일정에 맞춤 (서버가 저장할 때마다 맞춘다)
+    public DateOnly? WorksFrom { get; init; }           // 작업들의 가장 이른 목표 시작 (작업이 있을 때)
+    public DateOnly? WorksTo { get; init; }             // 작업들의 가장 늦은 목표 종료 (작업이 있을 때)
 }
 
 // 과제 간 단계 연결 하나를 이 단계에서 본 것. Role: 'pred' = 상대 단계가 이 단계의 선행, 'succ' = 상대 단계가 이 단계의 후행.
@@ -298,6 +302,8 @@ public static class Views
         var list = new List<StageView>();
         DateOnly? prevTarget = p.StartDate;       // 목표 막대의 시작: 직전 단계 목표일(없으면 착수일)
         DateOnly? prevCompleted = p.StartDate;    // 실행 막대의 시작: 직전 단계 완료일(첫 단계는 착수일)
+        // 동시 진행 묶음(규칙 23): 묶음의 단계는 모두 묶음 첫 단계와 같은 시작을 쓰고, 묶음 뒤의 단계는 묶음에서 가장 늦은 목표일·완료일(하나라도 미완료면 없음)부터
+        DateOnly? groupTarget = prevTarget, groupCompleted = prevCompleted;
         var inbound = Rules.InboundRecommendation(p, oceanLeadDays);
 
         // 의존 관계에서 나오는 값은 작업을 내보낼 때만 계산한다
@@ -323,17 +329,26 @@ public static class Views
 
         // 단계 일정 표의 근무일 간격 (목표일 초안·기본 기간과 같은 기준)
         var orderedStages = Rules.Ordered(p).ToList();
-        var gaps = Rules.TargetGaps(p.StartDate, orderedStages.Select(x => x.TargetDate).ToList(), cal);
+        var flags = Rules.ParallelFlags(orderedStages);
+        var gaps = Rules.TargetGaps(p.StartDate, orderedStages.Select(x => x.TargetDate).ToList(), cal, flags);
 
         foreach (var (s, index) in orderedStages.Select((x, i) => (x, i)))
         {
             var status = Rules.StatusOf(s, p, today);
+            var parallel = index > 0 && s.Parallel;
+            if (!parallel)
+            {
+                groupTarget = prevTarget;
+                groupCompleted = prevCompleted;
+            }
 
-            DateOnly? planFrom = s.TargetDate == null ? null : prevTarget;
+            DateOnly? planFrom = s.TargetDate == null ? null : groupTarget;
+            // 목표일을 작업에 맞추는 단계의 목표 막대는 작업 일정 그대로(가장 이른 목표 시작부터)
+            if (s.AutoTarget && s.TargetDate != null && Rules.WorksStart(s) is { } worksStart && worksStart <= s.TargetDate.Value) planFrom = worksStart;
             if (planFrom != null && planFrom.Value > s.TargetDate!.Value) planFrom = s.TargetDate;
 
             // 실행 막대: 직전 단계가 끝났으면 그 완료일부터, 본 단계 완료일(진행 중이면 오늘)까지
-            DateOnly? actualFrom = prevCompleted;
+            DateOnly? actualFrom = groupCompleted;
             DateOnly? actualTo = s.CompletedDate ?? (actualFrom != null && p.State == ProjectState.Active ? today : null);
             if (s.CompletedDate != null && actualFrom == null) actualFrom = planFrom ?? s.CompletedDate;
             if (actualTo == null) actualFrom = null;
@@ -371,10 +386,24 @@ public static class Views
                     ? DueChip(Rules.DaysLeft(s.TargetDate.Value, today), late: false) : null,
                 GapWorkDays = gaps[index],
                 CrossLinks = CrossLinks(s, crossLinks, cal),
+                Parallel = parallel,
+                AutoTarget = s.AutoTarget,
+                WorksFrom = Rules.WorksStart(s),
+                WorksTo = s.Works.Count > 0 ? s.Works.Max(w => w.PlanEnd) : null,
             });
 
-            if (s.TargetDate != null) prevTarget = s.TargetDate;
-            prevCompleted = s.CompletedDate;   // 미완료면 null → 다음 단계 실행 막대 없음
+            if (parallel)
+            {
+                // 묶음 안: 다음 순차 단계는 묶음에서 가장 늦은 목표일 뒤, 묶음이 모두 끝났을 때의 가장 늦은 완료일 뒤에 온다
+                if (s.TargetDate != null && (prevTarget == null || s.TargetDate.Value > prevTarget.Value)) prevTarget = s.TargetDate;
+                prevCompleted = prevCompleted == null || s.CompletedDate == null ? null
+                    : s.CompletedDate.Value > prevCompleted.Value ? s.CompletedDate : prevCompleted;
+            }
+            else
+            {
+                if (s.TargetDate != null) prevTarget = s.TargetDate;
+                prevCompleted = s.CompletedDate;   // 미완료면 null → 다음 단계 실행 막대 없음
+            }
         }
         return list;
     }
@@ -388,6 +417,7 @@ public static class Views
         var corp = locations.Get(p.CorporationId);
         var lead = corp?.OceanLeadDays ?? 0;
         var current = Rules.CurrentStage(p);
+        var currents = Rules.CurrentStages(p);
         var delayed = Rules.MostDelayedStage(p, today);
         var delayDays = Rules.DelayDays(p, today);
         var cal = calendar ?? WorkCalendar.WeekendsOnly;
@@ -408,7 +438,9 @@ public static class Views
             OwnerId = p.OwnerId, Owner = p.Owner?.Name ?? "", OwnerOrg = OrgName(p.Owner?.OrgUnit),
             StartDate = p.StartDate, EndTarget = endTarget,
             Progress = Rules.ProjectProgress(p), DelayDays = delayDays, DelayedStage = delayDays > 0 ? delayed?.Name : null,
-            CurrentStage = current?.Name, CurrentTarget = current?.TargetDate,
+            // 동시 진행 묶음(규칙 23)이면 진행 중인 단계 이름을 함께 적고, 목표일은 그중 가장 늦은 날
+            CurrentStage = current == null ? null : string.Join(" · ", currents.Select(x => x.Name)),
+            CurrentTarget = currents.Count > 1 ? currents.Where(x => x.TargetDate != null).Select(x => x.TargetDate).DefaultIfEmpty(null).Max() : current?.TargetDate,
             WorkCount = p.Stages.Sum(s => s.Works.Count), OceanLeadDays = lead,
             BaselineAt = p.BaselineAt, BaselineEnd = baselineEnd,
             SlipDays = Rules.SlipDays(endTarget, baselineEnd),

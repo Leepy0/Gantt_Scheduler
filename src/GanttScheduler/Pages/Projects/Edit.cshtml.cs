@@ -53,6 +53,7 @@ public class EditModel : PageModel
         public List<ItemRow> Items { get; set; } = new();
         public List<StageTargetRow> StageTargets { get; set; } = new();   // 등록할 때만 (수정은 상세의 단계 일정 표)
         public bool TemplateWorks { get; set; } = true;                   // 등록할 때 유형 템플릿 작업도 만든다(기본 켬)
+        public string? PasteText { get; set; }                            // 등록할 때만: 단계·작업 CSV 붙여넣기 (있으면 기본 단계 대신)
     }
 
     [BindProperty(SupportsGet = true)] public int? Id { get; set; }
@@ -119,7 +120,8 @@ public class EditModel : PageModel
         var input = new ProjectInput(Form.Title, Form.CategoryId, Form.LocationId, Form.Owner, Form.StartDate,
             Form.Vendor, Form.Description, items, items, Form.Version,
             IsNew ? Form.StageTargets.Select(t => new StageTargetInput(t.TemplateId, t.TargetDate)).ToList() : null,
-            IsNew ? Form.TemplateWorks : null);
+            IsNew ? Form.TemplateWorks : null,
+            IsNew ? Form.PasteText : null);
         try
         {
             var id = Id;
@@ -162,6 +164,35 @@ public class EditModel : PageModel
         try
         {
             return new JsonResult(new { ok = true, draft = await _projects.DraftAsync(categoryId, start, locationId, kept) });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
+    // 단계·작업 CSV 붙여넣기 미리보기 — 줄마다 해석 결과와 문제 (저장하지 않는다)
+    public async Task<IActionResult> OnPostPastePreviewAsync([FromBody] ProjectPasteInput input)
+    {
+        try
+        {
+            return new JsonResult(new { ok = true, preview = await _projects.PreviewProjectPasteAsync(input) });
+        }
+        catch (RuleException ex)
+        {
+            return new JsonResult(new { ok = false, error = ex.Message, field = ex.Field }) { StatusCode = StatusCodes.Status400BadRequest };
+        }
+    }
+
+    // 샘플 CSV: 고른 유형의 기본 단계로 만든 견본. download 면 파일(UTF-8 BOM — Excel 이 한글을 바로 읽게), 아니면 JSON(복사용)
+    public async Task<IActionResult> OnGetPasteSampleAsync(int categoryId, DateOnly? start, bool download = false)
+    {
+        try
+        {
+            var text = await _projects.PasteSampleAsync(categoryId, start);
+            if (!download) return new JsonResult(new { ok = true, text });
+            var bytes = System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(text)).ToArray();
+            return File(bytes, "text/csv; charset=utf-8", "과제_단계작업_샘플.csv");
         }
         catch (RuleException ex)
         {

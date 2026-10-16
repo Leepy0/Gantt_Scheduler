@@ -194,7 +194,8 @@ public sealed class ActivityLog : ISaveHook
     // 알림 한 줄: 대표 활동의 글(댓글은 '댓글: …'). 같은 저장에서 함께 남은 활동은 '외 n건'으로 센다
     public static string Summary(Activity lead, int count)
     {
-        var text = lead.Type == ActivityType.Comment ? "댓글: " + lead.Text : lead.Text;
+        // 댓글의 이미지 참조는 한 줄 글에 그릴 수 없어 '(이미지)'로 적는다
+        var text = lead.Type == ActivityType.Comment ? "댓글: " + CommentText.Plain(lead.Text) : lead.Text;
         if (text.Length > 300) text = text[..300] + "…";
         return count > 1 ? $"{text} 외 {count - 1}건" : text;
     }

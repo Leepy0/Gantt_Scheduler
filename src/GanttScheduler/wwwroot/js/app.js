@@ -173,6 +173,37 @@
         });
     };
 
+    // 댓글(진행 내용) 본문: 글자는 그대로(escape), '[이미지:첨부Id]'(서버 CommentText) 자리에는 첨부 이미지를 그린다.
+    // 누르면 원본을 새 탭에서 연다. 이미지는 첨부 내려받기(inline)라 지운 첨부는 깨진 그림으로 보인다
+    App.richText = function (text) {
+        return App.esc(text || '').replace(/\[이미지:(\d+)\]/g, function (_, id) {
+            var src = App.url('/Projects/Files?handler=Download&id=' + id + '&inline=true');
+            return '<a class="feed-image" href="' + src + '" target="_blank" rel="noopener"><img src="' + src + '" alt="첨부 이미지 ' + id + '" loading="lazy" /></a>';
+        });
+    };
+
+    // 글을 클립보드에 넣는다. 사내망(http)에서는 navigator.clipboard 가 없으므로 임시 textarea 와 execCommand 로 대신한다.
+    // 복사가 막혔으면 false 를 돌려준다(부른 쪽이 글을 보여 직접 복사하게)
+    App.copyText = async function (text) {
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (e) { /* 아래 방법으로 */ }
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        ta.remove();
+        return ok;
+    };
+
     App.size = function (bytes) {
         if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
         if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';

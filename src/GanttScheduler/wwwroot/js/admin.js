@@ -111,7 +111,7 @@
         if (kind === 'location' && n.level === 1) return [n.country, '해상 ' + (n.oceanLeadDays || 0) + '일', usesText(n)].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 1) return [n.kind === 'automation' ? '기기 내역' : n.kind === 'container' ? '용기 내역' : '', usesText(n)].filter(Boolean).join(' · ');
         if (kind === 'category' && n.level === 2) {
-            return [n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '',
+            return [n.kind === 'inspection' ? '검수' : n.kind === 'inbound' ? '입고' : '', n.parallel ? '앞 단계와 동시' : '',
                 n.defaultWorkDays != null ? '기본 ' + n.defaultWorkDays + '근무일' : ''].filter(Boolean).join(' · ');
         }
         if (kind === 'user') return [n.org, n.isAdmin ? '관리자' : '', AdminPeople.loadText(n),
@@ -121,9 +121,124 @@
         return usesText(n);
     }
 
+    // ── CSV 붙여넣기 (관리자, 열 탐색 탭 공통) ──
+    // 서버가 줄마다 추가·이미 있음·문제를 판정한 미리보기를 보이고(Admin?handler=Paste, apply=false), 문제가 없을 때만 적용한다
+    function csvRowHtml(r) {
+        var label = r.action === 'add' ? '<span class="chip ok">추가</span>' : r.action === 'exists' ? '<span class="chip">이미 있음</span>' : '<span class="chip alarm">문제</span>';
+        return '<tr class="' + (r.action === 'error' ? 'row-bad' : '') + '" data-line="' + r.line + '">' +
+            '<td class="num" data-label="줄">' + r.line + '</td><td data-label="항목"><span class="preview-title">' + esc(r.text) + '</span></td>' +
+            '<td data-label="결과">' + label + '</td></tr>' +
+            (r.message ? '<tr class="row-bad-detail"><td colspan="3"><p class="' + (r.action === 'error' ? 'form-error' : 'form-note') + ' row-issue">' + icon(r.action === 'error' ? 'alert' : 'check') + '<span>' + esc(r.message) + '</span></p></td></tr>' : '');
+    }
+
+    function csvPreviewHtml(r) {
+        var head = r.errors
+            ? '<p class="form-error" data-csv-summary>' + icon('alert') + '<span>' + r.rows.length + '줄 중 ' + r.errors + '줄에 문제가 있습니다. 고친 뒤 다시 확인해 주세요. 문제가 남아 있으면 아무것도 추가하지 않습니다.</span></p>'
+            : '<p class="form-note" data-csv-summary>' + icon('check') + '<span>' + r.added + '건을 추가합니다' + (r.skipped ? ' (이미 있는 ' + r.skipped + '건은 건너뜀)' : '') + '.</span></p>';
+        return head + '<div class="table-scroll"><table class="simple-table rows-table" data-csv-table><thead><tr><th class="num">줄</th><th>항목</th><th>결과</th></tr></thead><tbody>' +
+            r.rows.map(csvRowHtml).join('') + '</tbody></table></div>';
+    }
+
+    function openCsv() {
+        var k = kind;
+        var preview = null, previewedText = null, timer = null, seq = 0, columns = null;
+        var html = '<div class="field" data-field="text"><span class="label">CSV 붙여넣기</span>' +
+            '<textarea name="text" rows="8" spellcheck="false" placeholder="첫 줄에 머리글을 두어도 됩니다. 샘플을 복사해 고쳐 쓰세요." aria-describedby="csv-hint"></textarea>' +
+            '<span class="hint" id="csv-hint" data-csv-hint>칸은 쉼표나 TAB 으로 나누고 한 줄에 하나씩입니다. 이미 있는 이름은 건너뛰고 고치지 않습니다.</span></div>' +
+            '<div class="inline-btns"><button type="button" class="btn small" data-csv-check>' + icon('search') + '확인</button>' +
+            '<button type="button" class="btn small" data-csv-sample>' + icon('copy') + '샘플 CSV 복사</button>' +
+            '<a class="btn small" data-csv-download href="' + url('PasteSample') + '&kind=' + k + '&download=true" download>' + icon('download') + '샘플 CSV 파일</a></div>' +
+            '<div data-csv-preview class="paste-preview"></div>';
+        App.sheet({
+            title: 'CSV 붙여넣기 · ' + (document.querySelector('#admin-tabs [data-kind="' + k + '"]') || {}).textContent,
+            html: html,
+            wide: true,
+            primary: '추가',
+            draftKey: 'admin.csv.' + k,
+            onOpen: function (form, sheet) {
+                var box = form.querySelector('[data-csv-preview]');
+                var submit = sheet.el.querySelector('button[type=submit]');
+                var hint = form.querySelector('[data-csv-hint]');
+                // 칸 이름은 서버가 정한다(종류별) — 샘플 요청으로 함께 받아 안내에 쓴다
+                App.get(url('PasteSample') + '&kind=' + k).then(function (r) {
+                    columns = r.columns;
+                    hint.textContent = '칸 순서: ' + r.columns.join(' · ') + '. 쉼표나 TAB 으로 나누고 한 줄에 하나씩입니다. 이미 있는 이름은 건너뛰고 고치지 않습니다.';
+                }, function () { /* 안내만 없다 */ });
+                function setSubmit() {
+                    var n = preview && previewedText === form.elements.text.value && !preview.errors ? preview.added : 0;
+                    submit.textContent = n ? n + '건 추가' : '추가';
+                }
+                async function check() {
+                    var text = form.elements.text.value;
+                    if (!text.trim()) { box.innerHTML = ''; preview = null; previewedText = null; setSubmit(); return; }
+                    var my = ++seq;
+                    box.setAttribute('aria-busy', 'true');
+                    try {
+                        var r = await App.post(url('Paste'), { kind: k, text: text, apply: false });
+                        if (my !== seq) return;
+                        preview = r.result;
+                        previewedText = text;
+                        box.innerHTML = csvPreviewHtml(preview);
+                        sheet.setError(null);
+                    } catch (err) {
+                        if (my !== seq) return;
+                        preview = null;
+                        previewedText = null;
+                        box.innerHTML = '';
+                        sheet.setError(err.message, err.field);
+                    } finally {
+                        if (my === seq) box.removeAttribute('aria-busy');
+                        setSubmit();
+                    }
+                }
+                sheet.checkCsv = check;
+                form.querySelector('[data-csv-check]').addEventListener('click', function (e) { App.busy(e.currentTarget, check); });
+                form.querySelector('[data-csv-sample]').addEventListener('click', function (e) {
+                    App.busy(e.currentTarget, async function () {
+                        try {
+                            var r = await App.get(url('PasteSample') + '&kind=' + k);
+                            if (await App.copyText(r.text)) App.toast('샘플 CSV 를 복사했습니다. 붙여넣기 칸이나 Excel 에 붙여 넣어 고쳐 쓰세요.');
+                            else {
+                                // 복사가 막힌 환경(http 등): 칸에 바로 넣어 보여 준다
+                                form.elements.text.value = r.text;
+                                form.elements.text.dispatchEvent(new Event('input', { bubbles: true }));
+                                App.toast('클립보드를 쓸 수 없어 샘플을 입력칸에 넣었습니다.');
+                            }
+                        } catch (err) { sheet.setError(err.message, err.field); }
+                    });
+                });
+                form.elements.text.addEventListener('input', function () {
+                    clearTimeout(timer);
+                    setSubmit();
+                    timer = setTimeout(check, 500);
+                });
+                if (!App.isMobile()) form.elements.text.focus();
+            },
+            onClose: function () { clearTimeout(timer); },
+            onSubmit: async function (form, sheet) {
+                clearTimeout(timer);
+                if (!preview || previewedText !== form.elements.text.value) { await sheet.checkCsv(); return false; }
+                if (preview.errors) {
+                    var bad = new Error('문제 있는 줄 ' + preview.errors + '개를 고친 뒤 다시 확인해 주세요.');
+                    bad.field = 'text';
+                    throw bad;
+                }
+                if (!preview.added) { App.toast('추가할 항목이 없습니다(모두 이미 있음).'); return; }
+                var r = await App.post(url('Paste'), { kind: k, text: form.elements.text.value, apply: true });
+                if (r.nodes) nodes = r.nodes;
+                holidayNotice = k === 'holiday' ? (r.notice || null) : null;
+                render();
+                App.toast(r.notice || (r.result.added + '건을 추가했습니다.'));
+            }
+        });
+    }
+
     function render() {
         var c = conf();
         var html = kind === 'holiday' ? holidayBarHtml() : '';
+        // 관리자: 종류별 CSV 일괄 입력 (공휴일 탭은 연도 띠에 '여러 날 붙여넣기'가 따로 있다)
+        if (isAdmin && kind !== 'holiday') html += '<div class="admin-tools"><button type="button" class="btn small" data-csv>' + icon('upload') + 'CSV 붙여넣기</button>' +
+            '<span class="hint">여러 항목을 한 번에 넣습니다. 샘플을 복사해 Excel 에서 채운 뒤 붙여 넣으세요.</span></div>';
         html += '<div class="columns">';
         var parentId = null;
         for (var level = 1; level <= c.levels.length; level++) {
@@ -335,6 +450,7 @@
                     '<input name="defaultWorkDays" type="number" min="0" max="999" step="1" inputmode="numeric" value="' + (n.defaultWorkDays != null ? n.defaultWorkDays : '') + '"' +
                     (isAdmin ? '' : ' disabled') + ' />') +
                 '<span class="hint">앞 단계 목표일(첫 단계는 착수일)부터 이 단계 목표일까지의 근무일. 과제 등록 화면의 목표일 초안에 씁니다. 비워 두면 초안을 비웁니다.</span>' +
+                '<label class="check"><input type="checkbox" name="parallel"' + (n.parallel ? ' checked' : '') + (isAdmin ? '' : ' disabled') + ' />앞 단계와 동시 진행 (선후 관계 없음 — 초안·간격을 앞 단계와 같은 기준일에서 셉니다)</label>' +
                 // 참고값: 같은 유형·같은 이름 단계의 과거 리드타임(완료 과제, 서버가 표본이 충분할 때만 준다)
                 (n.lead
                     ? '<div class="form-note" data-lead-hint>' + icon('chart') + '<span>완료 과제 ' + n.lead.count + '건의 평균 <b>' + n.lead.avgWorkDays + '근무일</b>' +
@@ -434,7 +550,8 @@
                     isAdmin: f.isAdmin ? f.isAdmin.checked : null,
                     date: f.date ? f.date.value : null,
                     defaultWorkDays: days === '' ? null : +days,
-                    email: f.email ? f.email.value : null
+                    email: f.email ? f.email.value : null,
+                    parallel: f.parallel ? f.parallel.checked : null
                 });
                 if (!saved.notice) App.toast('저장했습니다.');
             }
@@ -503,6 +620,7 @@
             return;
         }
         if (e.target.closest('[data-paste]')) { openPaste(); return; }
+        if (e.target.closest('[data-csv]')) { openCsv(); return; }
         if ((t = e.target.closest('[data-tw-add]'))) { openTemplateWork(+t.dataset.twAdd, null); return; }
         if ((t = e.target.closest('[data-tw-edit]'))) { openTemplateWork(null, +t.dataset.twEdit); return; }
         if ((t = e.target.closest('[data-move]'))) {

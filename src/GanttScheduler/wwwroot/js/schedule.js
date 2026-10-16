@@ -6,10 +6,10 @@
     var esc = App.esc, icon = App.icon;
     var KIND = { inspection: '검수', inbound: '입고' };
 
-    // 근무일 간격 글자: 앞 단계 목표일(첫 단계는 착수일)부터. 음수면 앞 단계보다 이른 일정이라 경고한다
-    function gapHtml(gap) {
+    // 근무일 간격 글자: 앞 단계 목표일(첫 단계는 착수일, 동시 진행 단계는 묶음의 기준일)부터. 음수면 앞 단계보다 이른 일정이라 경고한다
+    function gapHtml(gap, parallel) {
         if (gap == null) return '<span class="muted">—</span>';
-        if (gap < 0) return '<span class="warn" title="앞 단계 목표일보다 이릅니다">' + icon('alert') + gap + '근무일</span>';
+        if (gap < 0) return '<span class="warn" title="' + (parallel ? '묶음 기준일보다 이릅니다' : '앞 단계 목표일보다 이릅니다') + '">' + icon('alert') + gap + '근무일</span>';
         return '+' + gap + '근무일';
     }
 
@@ -43,13 +43,17 @@
             var label = esc(s.name);
             var meta = [];
             if (KIND[s.kind]) meta.push(KIND[s.kind]);
+            if (s.parallel) meta.push('앞 단계와 동시');
             if (s.checkTotal) meta.push('체크 ' + s.checkDone + '/' + s.checkTotal);
             if (s.works.length) meta.push('작업 ' + s.works.length);
+            // 목표일을 작업 일정에 맞추는 단계는 서버가 정하므로 칸을 잠근다(단계 창에서 풀 수 있다)
+            var auto = s.autoTarget ? ' disabled title="작업 일정에 맞추는 단계입니다. 단계 창에서 \'목표일을 작업 일정에 맞춤\'을 끄면 직접 정할 수 있습니다."' : '';
+            if (s.autoTarget) meta.push('목표일은 작업 기준(자동)');
             return '<div class="sched-row" data-stage="' + s.id + '">' +
                 '<div class="sched-name"><span class="sched-title">' + label + '</span>' +
                 '<span class="sched-meta">' + App.chip(s.chip) + (meta.length ? '<span class="hint">' + esc(meta.join(' · ')) + '</span>' : '') + '</span></div>' +
                 '<label class="field" data-field="targetDate.' + s.id + '"><span class="label">목표일</span>' +
-                '<input type="date" name="target.' + s.id + '" value="' + esc(value.target) + '" aria-label="' + label + ' 목표일" /></label>' +
+                '<input type="date" name="target.' + s.id + '" value="' + esc(value.target) + '" aria-label="' + label + ' 목표일"' + auto + ' /></label>' +
                 '<div class="sched-gap" data-gap></div>' +
                 '<label class="field" data-field="completedDate.' + s.id + '"><span class="label">완료일</span>' +
                 '<input type="date" name="completed.' + s.id + '" value="' + esc(value.completed) + '" aria-label="' + label + ' 완료일" /></label>' +
@@ -65,7 +69,7 @@
         }
 
         var html =
-            '<p class="hint">모든 단계의 날짜를 한 번에 고칩니다. 간격은 앞 단계 목표일(첫 단계는 착수일 ' + esc(P.startDate) + ')부터의 근무일입니다. ' +
+            '<p class="hint">모든 단계의 날짜를 한 번에 고칩니다. 간격은 앞 단계 목표일(첫 단계는 착수일 ' + esc(P.startDate) + ', 동시 진행 단계는 묶음의 기준일)부터의 근무일입니다. ' +
             '처음 정하는 목표일은 사유 없이 기록되고, 이미 정한 목표일을 바꾸면 사유를 한 번 받습니다.</p>' +
             '<div class="sched" data-rows>' + rowsHtml({}) + '</div>' +
             '<div data-reason hidden class="form">' +
@@ -114,7 +118,7 @@
                 if (b.target && cur.target !== b.target) targetMoves.push(s.name);
 
                 var gap = row.querySelector('[data-gap]');
-                gap.innerHTML = '<span class="sched-gap-label">간격</span>' + gapHtml(calc.gap);
+                gap.innerHTML = '<span class="sched-gap-label">간격</span>' + gapHtml(calc.gap, s.parallel);
 
                 var notes = [];
                 if (cur.target && calc.targetNote) {

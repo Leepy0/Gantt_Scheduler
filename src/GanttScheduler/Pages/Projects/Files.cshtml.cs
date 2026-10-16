@@ -70,9 +70,10 @@ public class FilesModel : PageModel
         {
             if (file == null) throw new RuleException("파일을 선택해 주세요.", "file");
             await using var stream = file.OpenReadStream();
-            await _files.SaveAsync(projectId, stageId, file.FileName, file.Length, stream);
-            // today: 상세 화면의 다른 변경 응답(Detail 의 Run)과 같게 한국 날짜를 실어 오래 열어 둔 화면의 '오늘'을 맞춘다
-            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId, compare: compare), today = _clock.Today });
+            var attachmentId = await _files.SaveAsync(projectId, stageId, file.FileName, file.Length, stream);
+            // today: 상세 화면의 다른 변경 응답(Detail 의 Run)과 같게 한국 날짜를 실어 오래 열어 둔 화면의 '오늘'을 맞춘다.
+            // attachmentId: 진행 내용에 이미지를 넣을 때 본문에 적을 참조
+            return new JsonResult(new { ok = true, project = await _projects.ViewAsync(projectId, compare: compare), today = _clock.Today, attachmentId });
         }
         catch (RuleException ex)
         {

@@ -920,6 +920,9 @@ namespace GanttScheduler.Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<bool>("AutoTarget")
+                        .HasColumnType("bit");
+
                     b.Property<DateOnly?>("BaselineDate")
                         .HasColumnType("date");
 
@@ -935,6 +938,9 @@ namespace GanttScheduler.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<bool>("Parallel")
+                        .HasColumnType("bit");
 
                     b.Property<int>("ProjectId")
                         .HasColumnType("int");
@@ -1009,6 +1015,9 @@ namespace GanttScheduler.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<bool>("Parallel")
+                        .HasColumnType("bit");
 
                     b.Property<int>("SortOrder")
                         .HasColumnType("int");
