@@ -67,7 +67,6 @@ public class UpdateService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<UpdateService> _log;
     private readonly bool _sqlite;
-    private readonly bool _blockSqliteSchemaChanges;
     private readonly int _verifySeconds;
     // 구조가 바뀌는 업데이트를 적용하기 전에 DB 를 백업한다 (Backup:BeforeSchemaUpdate). 없으면(시험) 백업하지 않는다
     private readonly BackupService? _backup;
@@ -96,7 +95,6 @@ public class UpdateService
         _lifetime = lifetime;
         _log = log;
         _sqlite = !string.Equals(cfg["Database:Provider"], "SqlServer", StringComparison.OrdinalIgnoreCase);
-        _blockSqliteSchemaChanges = cfg.GetValue("Database:BlockSqliteSchemaChanges", false);
         // 교체 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 도우미가 이전 버전으로 되돌린다 (0 이면 확인하지 않는다)
         _verifySeconds = Math.Clamp(cfg.GetValue("Update:VerifySeconds", 120), 0, 1800);
         CheckEvery = TimeSpan.FromHours(Math.Clamp(cfg.GetValue("Update:CheckHours", 6.0), 0.01, 168));
@@ -151,7 +149,7 @@ public class UpdateService
     {
         lock (_gate)
         {
-            var (ok, reason, fix) = ApplyBlock(_state.Staged == null ? null : _state.Staged.Schema ?? "");
+            var (ok, reason, fix) = ApplyBlock();
             var s = _state;
             var newer = s.Latest != null && IsNewer(s.Latest.Version);
             PreviousView? prev = null;
@@ -205,11 +203,8 @@ public class UpdateService
     private bool SchemaChanged(string? schema) =>
         string.IsNullOrEmpty(schema) || string.IsNullOrEmpty(_build.Schema) || schema != _build.Schema;
 
-    private (bool Ok, string? Reason, string? Fix) ApplyBlock(string? targetSchema = null)
+    private (bool Ok, string? Reason, string? Fix) ApplyBlock()
     {
-        if (_sqlite && _blockSqliteSchemaChanges && targetSchema != null && SchemaChanged(targetSchema))
-            return (false, "운영 SQLite DB의 구조를 바꾸는 업데이트는 현재 차단되어 있습니다.",
-                "데이터 손실을 막기 위한 보호 설정입니다. SQLite 스키마 마이그레이션을 지원하는 버전이 준비되기 전에는 같은 DB 구조의 업데이트만 적용하세요.");
         if (!_build.SelfUpdating)
             return (false, "로컬 빌드는 스스로 교체하지 않습니다.", "배포 패키지(zip)로 설치한 서버에서만 자동으로 적용됩니다.");
         if (!CanWrite(_paths.AppDir))
@@ -467,21 +462,12 @@ public class UpdateService
                 Save();
                 throw new UpdateException($"받아 둔 업데이트 파일이 없어졌습니다({missing}).", "새 버전을 다시 받아 주세요.");
             }
-            // 운영 SQLite에서 스키마 변경을 차단하도록 설정했다면, 백업 기능의 활성화 여부와 무관하게 적용을 막는다.
-            // 아래 백업 분기 안에서만 검사하면 BackupService가 없거나 BeforeSchemaUpdate가 꺼진 경우 보호 설정이 무력화된다.
-            if (_sqlite && _blockSqliteSchemaChanges && SchemaChanged(staged.Schema))
-            {
-                var (_, reason, fix) = ApplyBlock(staged.Schema ?? "");
-                throw new UpdateException(reason ?? "운영 SQLite DB의 구조를 바꾸는 업데이트는 현재 차단되어 있습니다.",
-                    fix ?? "SQLite 스키마 변경을 지원하는 버전이 준비되기 전에는 같은 DB 구조의 업데이트만 적용하세요.");
-            }
-
             // DB 구조가 바뀌는 업데이트는 적용 뒤 프로그램만 되돌릴 수 없다 — 먼저 DB 를 백업하고, 실패하면 적용하지 않는다.
             // 백업은 몇 분 걸릴 수 있어 요청과 떼어 돌리고(단계 backing-up), 끝나면 이어서 교체를 시작한다
             if (_backup != null && _backup.Options.BeforeSchemaUpdate && SchemaChanged(staged.Schema))
             {
                 if (_phase != "idle") throw new UpdateException("이미 다른 작업을 하고 있습니다.", "끝난 뒤 다시 시도하세요.");
-                var (ok, reason, fix) = ApplyBlock(staged.Schema ?? "");
+                var (ok, reason, fix) = ApplyBlock();
                 if (!ok) throw new UpdateException(reason!, fix!);
                 _phase = "backing-up";
                 _progress = 0;

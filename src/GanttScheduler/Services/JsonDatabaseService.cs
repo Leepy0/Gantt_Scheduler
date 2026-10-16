@@ -9,8 +9,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GanttScheduler.Services;
 
-// SQLite 데이터의 이식 가능한 JSON 스냅샷. DB 파일 자체의 VACUUM 백업과 별개로 테이블별 JSON을 제공한다.
-// 복원은 현재 스키마가 정확히 일치할 때만 허용하고, 단일 SQLite 트랜잭션 안에서 전체 테이블을 교체한다.
+// SQLite 데이터의 이식 가능한 JSON 스냅샷. DB 파일 자체의 VACUUM 백업과 별개로 테이블별 JSON 을 제공한다(내용 확인·이관용).
+// 복원은 현재 구조(표·열·형식)가 정확히 같을 때만 받고, 단일 SQLite 트랜잭션 안에서 전체 표를 바꾼다.
+// 구조가 다른 버전으로 옮기는 도구가 아니다 — 버전을 올리는 일은 마이그레이션(Data/Migrations/Sqlite)이 한다.
 public sealed class JsonDatabaseService
 {
     private const int FormatVersion = 1;
@@ -36,7 +37,9 @@ public sealed class JsonDatabaseService
         if (!wasOpen) await db.Database.OpenConnectionAsync(ct);
         try
         {
-            var tables = await ReadTablesAsync(connection, null, ct);
+            // 표를 하나씩 읽는 동안 다른 요청이 저장하면 표 사이가 어긋난다 — 읽기 트랜잭션 하나로 묶어 한 시점의 내용을 쓴다
+            await using var transaction = await connection.BeginTransactionAsync(ct);
+            var tables = await ReadTablesAsync(connection, transaction, ct);
             using var output = new MemoryStream();
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
             {
@@ -49,7 +52,7 @@ public sealed class JsonDatabaseService
                     long rows;
                     await using (var stream = entry.Open())
                     {
-                        rows = await WriteTableAsync(connection, null, table, stream, ct);
+                        rows = await WriteTableAsync(connection, transaction, table, stream, ct);
                     }
                     metadata.Add(new JsonTableInfo(table.Name, file, table.Columns.Select(c => c.Name).ToArray(),
                         table.Columns.Select(c => c.Type).ToArray(), rows));

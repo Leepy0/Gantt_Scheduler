@@ -8,8 +8,9 @@ public class AppDb : DbContext
 {
     public const string Schema = "pm";
 
-    // version: 상황판의 데이터 버전(싱글턴). 없으면(시험·admin 명령) 세지 않는다
-    public AppDb(DbContextOptions<AppDb> options, GanttScheduler.Services.DataVersion? version = null) : base(options) => _version = version;
+    // version: 상황판의 데이터 버전(싱글턴). 없으면(시험·admin 명령) 세지 않는다.
+    // 옵션은 제네릭이 아닌 형을 받는다 — SQLite 는 파생 컨텍스트(SqliteAppDb)가 자기 옵션(DbContextOptions<SqliteAppDb>)을 넘긴다
+    public AppDb(DbContextOptions options, GanttScheduler.Services.DataVersion? version = null) : base(options) => _version = version;
 
     private readonly GanttScheduler.Services.DataVersion? _version;
 

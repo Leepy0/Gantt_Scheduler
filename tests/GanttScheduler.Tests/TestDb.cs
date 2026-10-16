@@ -11,7 +11,7 @@ public class FixedClock : IClock
     public DateOnly Today { get; set; } = new(2026, 10, 9);
 }
 
-// 테스트용 DB. 기본은 임시 SQLite 파일, TEST_DB=SqlServer 이면 SQL Server 에 마이그레이션을 적용해 같은 테스트를 돌린다
+// 테스트용 DB. 기본은 임시 SQLite 파일, TEST_DB=SqlServer 이면 SQL Server 로 같은 테스트를 돌린다. 둘 다 운영처럼 마이그레이션으로 만든다
 public sealed class TestDb : IDisposable
 {
     public static bool UseSqlServer => string.Equals(Environment.GetEnvironmentVariable("TEST_DB"), "SqlServer", StringComparison.OrdinalIgnoreCase);
@@ -32,8 +32,7 @@ public sealed class TestDb : IDisposable
     {
         _sqlitePath = Path.Combine(Path.GetTempPath(), _name + ".db");
         using var db = Open();
-        if (UseSqlServer) db.Database.Migrate();
-        else db.Database.EnsureCreated();
+        db.Database.Migrate();
 
         Seeder.SeedMastersAsync(db).GetAwaiter().GetResult();
         Seeder.SeedDemoAsync(db, Clock).GetAwaiter().GetResult();
@@ -46,13 +45,15 @@ public sealed class TestDb : IDisposable
     // version: 데이터 버전 카운터(상황판)를 함께 넘겨 저장이 버전을 올리는지 볼 때
     public AppDb Open(DataVersion? version = null)
     {
-        var builder = new DbContextOptionsBuilder<AppDb>();
-        // 운영(DbSetup.Configure)과 같은 실행 전략(재시도)으로 연다 — 서비스가 트랜잭션을 직접 열면 운영에서는
+        // 운영(DbSetup)과 같은 형·같은 실행 전략(재시도)으로 연다 — 서비스가 트랜잭션을 직접 열면 운영에서는
         // 'does not support user-initiated transactions' 로 실패하므로, 서비스 테스트도 같은 조건에서 걸리게 한다
         if (UseSqlServer)
+        {
+            var builder = new DbContextOptionsBuilder<AppDb>();
             builder.UseSqlServer(SqlServerConnection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", AppDb.Schema).EnableRetryOnFailure());
-        else builder.UseSqlite($"Data Source={_sqlitePath}");
-        return new AppDb(builder.Options, version);
+            return new AppDb(builder.Options, version);
+        }
+        return new SqliteAppDb(new DbContextOptionsBuilder<SqliteAppDb>().UseSqlite($"Data Source={_sqlitePath}").Options, version);
     }
 
     // 요청 하나에 해당하는 서비스 묶음 (새 DbContext).

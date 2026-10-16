@@ -157,12 +157,12 @@ public static class AdminCommand
             Console.WriteLine();
 
             var services = new ServiceCollection();
-            services.AddDbContext<AppDb>(o => DbSetup.Configure(o, config, root));
+            services.AddAppDb(config, root);
             await using var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDb>();
 
-            var problem = await SchemaProblemAsync(db, config, root, sqlServer);
+            var problem = await SchemaProblemAsync(db);
             if (problem != null)
             {
                 Console.WriteLine(problem);
@@ -201,27 +201,18 @@ public static class AdminCommand
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
 
-    // DB 구조가 이 프로그램과 맞는지. 맞지 않으면 안내 문구, 맞으면 null
-    private static async Task<string?> SchemaProblemAsync(AppDb db, IConfiguration config, string root, bool sqlServer)
+    // DB 구조가 이 프로그램과 맞는지(SQL Server·SQLite 모두 마이그레이션 이력으로 본다). 맞지 않으면 안내 문구, 맞으면 null
+    private static async Task<string?> SchemaProblemAsync(AppDb db)
     {
         if (!await db.Database.CanConnectAsync())
             return "DB 에 연결하지 못했습니다. 연결 문자열과, 이 명령을 실행한 Windows 계정의 DB 권한을 확인해 주세요.";
 
-        if (sqlServer)
-        {
-            var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
-            if (pending.Count > 0)
-                return $"DB 구조가 이 프로그램 버전보다 오래되었습니다(적용되지 않은 변경 {pending.Count}개). 서비스를 한 번 시작해 DB 를 올린 뒤 다시 실행해 주세요.";
-            var known = db.Database.GetMigrations().ToHashSet();
-            if ((await db.Database.GetAppliedMigrationsAsync()).Any(m => !known.Contains(m)))
-                return "DB 가 이 프로그램보다 새 버전입니다. 서버에 설치된 프로그램(서비스 폴더의 GanttScheduler.exe)으로 실행해 주세요.";
-            return null;
-        }
-
-        // SQLite 는 시작할 때 남기는 구조 표식으로 확인한다 (Data/Seeder.cs DbInitializer)
-        var marker = AppPaths.Sqlite(config, root) + ".schema";
-        if (!File.Exists(marker) || await File.ReadAllTextAsync(marker) != DbInitializer.SchemaHash(db.Database.GenerateCreateScript()))
-            return "DB 구조가 이 프로그램 버전과 맞지 않습니다. 서버를 한 번 시작해 DB 를 맞춘 뒤 다시 실행해 주세요.";
+        var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+        if (pending.Count > 0)
+            return $"DB 구조가 이 프로그램 버전보다 오래되었습니다(적용되지 않은 변경 {pending.Count}개). 서비스를 한 번 시작해 DB 를 올린 뒤 다시 실행해 주세요.";
+        var known = db.Database.GetMigrations().ToHashSet();
+        if ((await db.Database.GetAppliedMigrationsAsync()).Any(m => !known.Contains(m)))
+            return "DB 가 이 프로그램보다 새 버전입니다. 서버에 설치된 프로그램(서비스 폴더의 GanttScheduler.exe)으로 실행해 주세요.";
         return null;
     }
 }

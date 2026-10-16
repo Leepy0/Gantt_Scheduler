@@ -67,7 +67,9 @@ public sealed class CountingApp : IDisposable
         App = Inner.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
         {
             services.AddHttpContextAccessor();
-            services.ConfigureDbContext<AppDb>(o => o.AddInterceptors(Counter));
+            // 옵션은 등록된 구현 형에 붙는다 (SQLite 는 SqliteAppDb — DbSetup.AddAppDb)
+            if (TestDb.UseSqlServer) services.ConfigureDbContext<AppDb>(o => o.AddInterceptors(Counter));
+            else services.ConfigureDbContext<SqliteAppDb>(o => o.AddInterceptors(Counter));
         }));
         _ = App.Server;
     }

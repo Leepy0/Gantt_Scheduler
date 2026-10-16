@@ -56,10 +56,16 @@ namespace Microsoft.EntityFrameworkCore
         public static IEnumerable<string> GetMigrations(this DatabaseFacade db) => Array.Empty<string>();
         public static Task<IEnumerable<string>> GetPendingMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
         public static Task<IEnumerable<string>> GetAppliedMigrationsAsync(this DatabaseFacade db, CancellationToken ct = default) => Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        // 저수준 연결은 섀도에 없다 (JSON 백업은 실제 SQLite 에서만 돈다)
+        public static System.Data.Common.DbConnection GetDbConnection(this DatabaseFacade db) => throw new NotSupportedException("섀도 빌드에는 DB 연결이 없습니다.");
+        public static Task OpenConnectionAsync(this DatabaseFacade db, CancellationToken ct = default) => throw new NotSupportedException("섀도 빌드에는 DB 연결이 없습니다.");
+        public static Task CloseConnectionAsync(this DatabaseFacade db) => Task.CompletedTask;
         public static void SetCommandTimeout(this DatabaseFacade db, TimeSpan? timeout) { }
 
         // 백업(BackupService)이 쓰는 SQL. 메모리 DB 라 실제 사본은 없고, VACUUM INTO 는 그 자리에 표시 파일만 만든다 —
         // 화면 점검이 백업 목록·크기 표시까지 따라갈 수 있게 하기 위해서다
+        public static Task<int> ExecuteSqlRawAsync(this DatabaseFacade db, string sql, params object[] parameters) =>
+            ExecuteSqlRawAsync(db, sql, (IEnumerable<object>)parameters, default);
         public static Task<int> ExecuteSqlRawAsync(this DatabaseFacade db, string sql, IEnumerable<object> parameters, CancellationToken ct = default)
         {
             if (sql.TrimStart().StartsWith("VACUUM INTO", StringComparison.OrdinalIgnoreCase) && parameters.FirstOrDefault() is string path)
@@ -390,6 +396,36 @@ namespace Microsoft.EntityFrameworkCore
     }
 }
 
+namespace Microsoft.Data.Sqlite
+{
+    // 연결 풀 비우기만 흉내 낸다 (DbInitializer 가 옛 DB 파일을 옮기기 전에 부른다)
+    public class SqliteConnection
+    {
+        public static void ClearAllPools() { }
+    }
+}
+
+namespace Microsoft.EntityFrameworkCore.Infrastructure
+{
+    // 마이그레이션 클래스의 특성 (섀도에는 마이그레이션이 없지만 MigrationInfo 가 형을 참조한다)
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class DbContextAttribute : Attribute
+    {
+        public DbContextAttribute(Type contextType) => ContextType = contextType;
+        public Type ContextType { get; }
+    }
+}
+
+namespace Microsoft.EntityFrameworkCore.Migrations
+{
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class MigrationAttribute : Attribute
+    {
+        public MigrationAttribute(string id) => Id = id;
+        public string Id { get; }
+    }
+}
+
 namespace Microsoft.EntityFrameworkCore.ChangeTracking
 {
     public class ChangeTracker
@@ -427,6 +463,15 @@ namespace Microsoft.Extensions.DependencyInjection
 {
     public static class FakeEfServiceExtensions
     {
+        // 서비스 형과 구현 형이 다른 등록 (SQLite: AppDb → SqliteAppDb)
+        public static IServiceCollection AddDbContext<TService, TImpl>(this IServiceCollection services, Action<DbContextOptionsBuilder> configure)
+            where TService : DbContext where TImpl : TService
+        {
+            configure(new DbContextOptionsBuilder());
+            services.AddScoped(sp => (TService)Activator.CreateInstance(typeof(TImpl), new DbContextOptions<TImpl>())!);
+            return services;
+        }
+
         public static IServiceCollection AddDbContext<T>(this IServiceCollection services, Action<DbContextOptionsBuilder> configure)
             where T : DbContext
         {

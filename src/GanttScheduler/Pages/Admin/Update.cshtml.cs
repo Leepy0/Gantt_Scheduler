@@ -97,7 +97,8 @@ public class UpdateModel : PageModel
         }
         catch (RuleException ex)
         {
-            return new JsonResult(new { ok = false, error = ex.Message }) { StatusCode = StatusCodes.Status400BadRequest };
+            // 링크(<a>)로 받는 응답이라 JSON 이 아니라 읽을 수 있는 글로 돌려준다
+            return new ContentResult { Content = ex.Message, ContentType = "text/plain; charset=utf-8", StatusCode = StatusCodes.Status400BadRequest };
         }
     }
 
