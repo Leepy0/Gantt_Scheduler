@@ -799,7 +799,7 @@ public class UpdateService
             {
                 $"지금 버전: v{_build.VersionText} (빌드 {_build.Id}, {_build.ChannelName}, DB 구조 {(_build.Schema.Length == 0 ? "-" : _build.Schema)})",
                 $"실행 방식: {(_paths.ServiceName != null ? $"Windows 서비스 ({_paths.ServiceName})" : UnderIis ? "IIS" : "직접 실행")} · 프로그램 폴더 {_paths.AppDir}",
-                $"받아 오는 곳: {_source.Describe} · 서명 검증 {(_source.Key != null ? "켜짐 " + _source.Key.Id : "꺼짐")}",
+                $"받아 오는 곳: {_source.Describe} · 프록시 {(_source.Proxy?.Describe ?? "시스템 설정")} · 서명 검증 {(_source.Key != null ? "켜짐 " + _source.Key.Id : "꺼짐")}",
                 $"지금 단계: {_phase}" + (_error == null ? "" : $" · 마지막 오류 {_error}"),
                 $"마지막 확인: {T(s.CheckedAt)}" + (s.CheckedAt == null ? "" : s.CheckError == null ? " (성공)" : $" (실패: {s.CheckError})")
                     + $" · 마지막 성공 {T(s.LastCheckOkAt)}" + (s.CheckFailedSince == null ? "" : $" · 실패 시작 {T(s.CheckFailedSince)}"),

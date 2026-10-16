@@ -207,6 +207,8 @@ main 에 push 해 CI 가 통과할 때마다 만들어지는 `dev` 릴리스는 
 | `Pdf:Font`, `Pdf:FontBold` | 맑은 고딕 / 나눔고딕 자동 탐색 | PDF 에 쓸 한글 TTF 글꼴 파일 경로 |
 | `Storage:KeyPath` | `App_Data/keys` | 위조 방지 토큰의 암호화 키. 지우지 않으면 서버가 다시 시작돼도 열려 있던 화면의 저장이 그대로 된다 |
 | `Update:Source` | `github:Leepy0/Gantt_Scheduler_Release` | 새 버전을 받아 올 곳 (위 "업데이트" 참고). 비우면 파일로 올리는 방식만 쓴다 |
+| `Update:Proxy:Address` | 없음 | 새 버전을 확인할 때 거칠 프록시(예: `http://proxy.corp:8080`). 비우면 Windows 인터넷 설정의 시스템 프록시를 쓴다 — 서비스 계정(`NT SERVICE\GanttScheduler`)에는 사용자 프록시 설정이 없으므로 사내망에서는 여기에 적는다 |
+| `Update:Proxy:User`, `Update:Proxy:Password` | 없음 | 프록시 계정. 비우면 Windows 로그인(서비스 계정)으로 인증한다 |
 | `Update:Path` | `App_Data/updates` | 받아 둔 새 버전, 되돌리기용 이전 버전, 상태·기록 |
 | `Update:CheckHours` | `6` | 새 버전 확인 주기(시간) |
 | `Update:VerifySeconds` | `120` | 업데이트 뒤 새 버전이 이 시간 안에 요청을 받기 시작하지 않으면 이전 버전으로 되돌린다. `0` 이면 확인하지 않는다 |
