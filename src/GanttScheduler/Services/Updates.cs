@@ -108,6 +108,32 @@ public class UpdateState
 //   https://…               그 주소 아래의 GanttScheduler.json 과 패키지 (사내 서버)
 //   폴더 경로               그 폴더의 GanttScheduler.json 과 패키지 (공유 폴더, 인터넷이 없는 서버)
 // 빌드에 공개키(update-key.pub)가 들어 있으면 매니페스트 옆의 GanttScheduler.json.sig 로 서명을 확인하고, 맞지 않으면 받지 않는다
+// ── 업데이트 확인에 쓰는 프록시 (Update:Proxy) ──────────────────────────────
+//   Address 가 비어 있으면 시스템 프록시(Windows 인터넷 설정)를 쓴다. 서비스 계정(NT SERVICE\…)에는 사용자 프록시 설정이
+//   없어 사내망에서는 주소를 직접 적어야 하는 경우가 많다. User 가 비어 있으면 Windows 로그인(서비스 계정)으로 인증한다
+public sealed record UpdateProxy(Uri Address, string? User, string? Password)
+{
+    public static UpdateProxy? From(IConfiguration config)
+    {
+        var address = (config["Update:Proxy:Address"] ?? "").Trim();
+        if (address.Length == 0) return null;
+        if (!address.Contains("://")) address = "http://" + address;   // "proxy.corp:8080" 처럼 적어도 받는다
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.Port <= 0)
+            throw new InvalidOperationException($"설정 Update:Proxy:Address 가 올바른 프록시 주소가 아닙니다: \"{address}\" (예: http://proxy.corp:8080)");
+        var user = (config["Update:Proxy:User"] ?? "").Trim();
+        return new UpdateProxy(uri, user.Length == 0 ? null : user, user.Length == 0 ? null : config["Update:Proxy:Password"] ?? "");
+    }
+
+    // 화면·진단에 보이는 글. 비밀번호는 넣지 않는다
+    public string Describe => $"{Address.Scheme}://{Address.Host}:{Address.Port}" + (User == null ? " (Windows 로그인 인증)" : $" (계정 {User})");
+
+    public IWebProxy ToWebProxy() => new WebProxy(Address)
+    {
+        BypassProxyOnLocal = true,
+        Credentials = User == null ? CredentialCache.DefaultCredentials : new NetworkCredential(User, Password),
+    };
+}
+
 public class UpdateSource
 {
     public const string ManifestName = "GanttScheduler.json";
@@ -117,23 +143,28 @@ public class UpdateSource
     private readonly string _source;
     private readonly HttpClient _http;
 
-    public UpdateSource(string? source, AppBuild build) : this(source, build, UpdateKey.FromAssembly(), null) { }
+    public UpdateSource(string? source, AppBuild build, UpdateProxy? proxy = null) : this(source, build, UpdateKey.FromAssembly(), null, proxy) { }
 
     // 시험용: 공개키와 HTTP 처리기를 바꿔 끼운다 (네트워크 없이 GitHub 응답을 흉내 낸다)
-    internal UpdateSource(string? source, AppBuild build, UpdateKey? key, HttpMessageHandler? handler)
+    internal UpdateSource(string? source, AppBuild build, UpdateKey? key, HttpMessageHandler? handler, UpdateProxy? proxy = null)
     {
         _source = (source ?? "").Trim();
         Key = key;
-        // 시스템 프록시를 쓰고, 사내 프록시가 Windows 로그인 인증을 요구해도 통과하게 한다
+        Proxy = proxy;
+        // 프록시: 설정(Update:Proxy)이 있으면 그 주소, 없으면 시스템 프록시. 사내 프록시가 Windows 로그인 인증을 요구해도 통과하게 한다
         handler ??= new HttpClientHandler
         {
             UseProxy = true,
+            Proxy = proxy?.ToWebProxy(),
             DefaultProxyCredentials = CredentialCache.DefaultCredentials,
             AutomaticDecompression = DecompressionMethods.All,
         };
         _http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };   // 시간 제한은 호출마다 토큰으로
         _http.DefaultRequestHeaders.UserAgent.ParseAdd($"GanttScheduler/{build.VersionText}");
     }
+
+    // 설정으로 지정한 프록시. null 이면 시스템 프록시
+    public UpdateProxy? Proxy { get; }
 
     // 서명 확인에 쓰는 공개키. null 이면 이 빌드는 서명을 확인하지 않는다(키를 만들기 전 빌드)
     public UpdateKey? Key { get; }

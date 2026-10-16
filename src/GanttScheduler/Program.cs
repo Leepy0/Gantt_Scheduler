@@ -79,7 +79,8 @@ builder.Services.AddSingleton(new UpdatePaths
     DataDir = AppPaths.Updates(config, builder.Environment.ContentRootPath),
     ServiceName = serviceName,
 });
-builder.Services.AddSingleton(new UpdateSource(config["Update:Source"], build));
+// Update:Proxy 가 있으면 그 프록시로 새 버전을 확인한다 (없으면 시스템 프록시)
+builder.Services.AddSingleton(new UpdateSource(config["Update:Source"], build, UpdateProxy.From(config)));
 builder.Services.AddSingleton<ActivityTracker>();
 builder.Services.AddSingleton<UpdateService>();
 // 시작 작업(DB 준비 → 직전 교체 결과 정리)을 먼저 등록한다. 등록 순서대로 실행되고, 끝나야 요청을 받기 시작한다
