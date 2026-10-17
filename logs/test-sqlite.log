@@ -1,0 +1,1218 @@
+Test run for /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/tests/GanttScheduler.Tests/bin/Release/net10.0/GanttScheduler.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v4.0.1+0f7d528729 (64-bit .NET 10.0.13)
+[xUnit.net 00:00:00.14]   Discovering: GanttScheduler.Tests
+[xUnit.net 00:00:00.29]   Discovered:  GanttScheduler.Tests
+[xUnit.net 00:00:00.43]   Starting:    GanttScheduler.Tests
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.동시_진행_단계는_묶음_기준일에서_세고_묶음_뒤_단계는_가장_늦은_목표일부터_센다 [28 ms]
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.작업에_맞춘_목표일은_가장_늦은_목표_종료일이고_작업이_없으면_없다 [3 ms]
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.댓글_본문의_이미지_참조를_읽고_평문으로_바꾼다 [7 ms]
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.화면_모델은_묶음의_시작을_같이_쓰고_현재_단계_이름을_이어_적는다 [38 ms]
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.첫_단계의_동시_표시는_뜻이_없고_템플릿의_표시는_순서대로_읽는다 [5 ms]
+  Passed GanttScheduler.Tests.ParallelStageRulesTests.묶음의_미완료_단계는_모두_진행_중이고_연쇄_이동_범위에서_빠진다 [9 ms]
+  Passed GanttScheduler.Tests.ClosedOnRulesTests.중단은_적힌_중단일을_지키고_없으면_오늘이다 [< 1 ms]
+  Passed GanttScheduler.Tests.ClosedOnRulesTests.연도_범위는_1월_1일부터_12월_31일까지다 [4 ms]
+  Passed GanttScheduler.Tests.ClosedOnRulesTests.상황판_확인값은_버전과_날짜를_함께_본다 [2 ms]
+  Passed GanttScheduler.Tests.ClosedOnRulesTests.완료는_마지막_단계_완료일이고_진행_보류는_없다 [1 ms]
+  Passed GanttScheduler.Tests.ClosedOnRulesTests.데이터_버전은_상황판에_보이는_값에_닿는_엔티티만_센다 [1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.선행이_모이는_작업은_가장_늦은_선행에_맞춰_한_번만_밀린다 [37 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.무작위_의존_그래프에서도_일정_불변식이_지켜진다 [114 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.근무일_계산은_하루씩_세던_결과와_같다 [181 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.순환이_있어도_멈추고_순환_밖의_작업은_계산한다 [< 1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.근무일_거리_옮기기는_기준일_사이의_근무일_간격을_지킨다 [< 1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.날짜는_절대_범위와_착수일_기준_범위_안에서만_받는다 [18 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.저장_전_작업과_연결도_탐색_속성으로_찾는다 [1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.주말과_공휴일을_건너_다음_근무일로_밀고_근무일_기간을_지킨다 [< 1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.시작했거나_완료된_단계의_작업은_밀지_않고_당기지도_않는다 [3 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.근무일_계산은_날짜_끝에서_넘치지_않는다 [< 1 ms]
+  Passed GanttScheduler.Tests.ScheduleRulesTests.완료된_단계의_작업은_지연과_임계에서_빠진다 [7 ms]
+  Passed GanttScheduler.Tests.ServiceTests.샘플_데이터_대시보드_집계 [151 ms]
+  Passed GanttScheduler.Tests.DashboardLinkTests.대시보드_숫자를_누른_목록은_그_숫자와_같은_과제를_보인다 [160 ms]
+  Passed GanttScheduler.Tests.AttachmentIntegrityTests.기록을_지운_뒤_파일을_지우지_못해도_성공으로_답하고_파일은_남긴다 [366 ms]
+  Passed GanttScheduler.Tests.AttachmentIntegrityTests.첨부_상한은_설정_하나로_정하고_문구도_그_값을_쓴다 [19 ms]
+  Passed GanttScheduler.Tests.ServiceTests.관리_계층_추가와_순서_이동_사용_중지 [247 ms]
+  Passed GanttScheduler.Tests.RulesTests.보류_과제는_지연으로_세지_않는다 [1 ms]
+  Passed GanttScheduler.Tests.RulesTests.단계_진행률은_완료면_100_작업이_있으면_평균_없으면_0 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.과제_진행률은_단계_진행률의_평균 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.입고_추천일은_검수일에_해상_운송_소요일을_더한다 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.진행률은_0에서_100까지_5단위만_허용(value: 42) [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.진행률은_0에서_100까지_5단위만_허용(value: -5) [1 ms]
+  Passed GanttScheduler.Tests.RulesTests.진행률은_0에서_100까지_5단위만_허용(value: 105) [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.근무일_달력은_주말과_공휴일을_뺀다 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.단계_상태는_완료_지연_진행중_예정_순으로_판정 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.여유_일수는_단계_목표일과_후행_작업에서_거슬러_계산한다 [18 ms]
+  Passed GanttScheduler.Tests.RulesTests.예상_종료는_작업의_가장_늦은_종료이고_밀린_미완료_작업은_최소_오늘 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.단계_막대_구간은_직전_단계_일자에서_이어진다 [< 1 ms]
+  Passed GanttScheduler.Tests.RulesTests.작업_상태는_실적_일자로_판정 [3 ms]
+  Passed GanttScheduler.Tests.ServiceTests.모든_단계를_완료하면_완료_상태가_되고_취소하면_다시_진행 [230 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.같이_끝_연결은_후행_종료를_선행_종료_뒤로_검사하고_선행이_늦어지면_민다 [818 ms]
+  Passed GanttScheduler.Tests.ServiceTests.작업_저장_규칙과_진행률_롤업 [333 ms]
+  Passed GanttScheduler.Tests.ServiceTests.이름_등록은_같은_이름이면_IP만_연결한다 [73 ms]
+  Passed GanttScheduler.Tests.ServiceTests.목표일_변경은_사유가_필요하고_이후_단계를_근무일_기준으로_함께_옮긴다 [83 ms]
+  Passed GanttScheduler.Tests.UsabilityServiceTests.서버가_칩_초과_완료_기준선_대비_지연_일수를_채운다 [193 ms]
+  Passed GanttScheduler.Tests.ServiceTests.보류와_중단은_사유가_필요하다 [51 ms]
+  Passed GanttScheduler.Tests.UsabilityServiceTests.삭제_단추_표시는_지금_사용자의_권한을_따른다 [63 ms]
+  Passed GanttScheduler.Tests.ServiceTests.단계_추가_순서_이동_삭제 [90 ms]
+  Passed GanttScheduler.Tests.UsabilityServiceTests.대시보드_임박_건수와_다가오는_일정의_임박_표시가_같은_규칙이다 [168 ms]
+  Passed GanttScheduler.Tests.UsabilityServiceTests.과제를_바꾸는_모든_경로가_변경_시각을_갱신한다 [217 ms]
+  Passed GanttScheduler.Tests.ServiceTests.과제_수정과_기기_내역_교체_그리고_삭제 [315 ms]
+  Passed GanttScheduler.Tests.UsabilityServiceTests.진행률만_올리면_실적_시작은_접속자의_오늘이고_범위_밖이면_한국_날짜 [46 ms]
+  Passed GanttScheduler.Tests.ServiceTests.연쇄_이동은_주말과_공휴일을_건너뛴다 [43 ms]
+  Passed GanttScheduler.Tests.ServiceTests.과제를_만들면_유형의_단계가_복사된다 [29 ms]
+  Passed GanttScheduler.Tests.MigrationTests.SQLite_마이그레이션은_모델과_같다 [173 ms]
+  Passed GanttScheduler.Tests.IntegrityTests.단계_순서를_바꾸면_활동을_남기고_두_단계의_버전을_확인하고_올린다 [95 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.Excel_일정표의_선행_작업에_유형과_간격을_적는다 [1 s]
+  Passed GanttScheduler.Tests.DashboardLinkTests.Excel_기준선_대비는_숫자에_부호_표시_형식이다 [1 s]
+  Passed GanttScheduler.Tests.DashboardLinkTests.이름이_같은_유형도_막대를_따로_센다 [10 ms]
+  Passed GanttScheduler.Tests.IntegrityTests.체크_항목_문구를_고치면_옛_새_문구를_남기고_완료한_단계는_거절한다 [160 ms]
+  Passed GanttScheduler.Tests.IntegrityTests.삭제_계열은_화면이_본_버전을_확인한다 [143 ms]
+  Passed GanttScheduler.Tests.MigrationTests.빌드의_DB_구조_이름은_SQL_Server_마지막_마이그레이션이다 [550 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.단계_목표일_미리보기는_연쇄_이동과_작업_포함을_저장과_같게_계산한다 [416 ms]
+  Passed GanttScheduler.Tests.IntegrityTests.기준선_다시_확정은_담당자_관리자만_사유와_함께_하고_직전_새_종료일을_남긴다 [228 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.범위_밖_연도도_예외_없이_날짜_범위가_된다(year: 10000) [< 1 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.범위_밖_연도도_예외_없이_날짜_범위가_된다(year: -1) [< 1 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.범위_밖_연도도_예외_없이_날짜_범위가_된다(year: 0) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.접속_설정은_JSON_배열과_한_줄_목록을_모두_받는다 [24 ms]
+  Passed GanttScheduler.Tests.MigrationTests.SQL_Server_마이그레이션은_모델과_같다 [286 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.작업_미리보기는_저장이_거절할_내용을_막는_문제로_알리고_연결을_바꿔_볼_수_있다 [160 ms]
+  Passed GanttScheduler.Tests.AccessTests.사용_중지된_이름은_새로_담당자로_지정할_수_없지만_그대로_두는_것은_된다 [161 ms]
+  Passed GanttScheduler.Tests.AccessTests.과제_삭제는_담당자_등록자_관리자만_할_수_있다 [52 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자가_아니면_기준_정보와_사용자를_바꿀_수_없다 [21 ms]
+  Passed GanttScheduler.Tests.HolidayTests.기본_공휴일은_그_해가_비어_있을_때만_채운다 [91 ms]
+  Passed GanttScheduler.Tests.HolidayTests.공휴일_영향은_일정에_걸린_과제와_새로_생기는_선행_위반을_센다 [7 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.과제_간_단계_연결은_밀지_않고_두_과제에_위반을_보이며_순환과_중복을_거절한다 [530 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자_계정의_재확인은_서버_자신에서만_받는다 [532 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.목록의_완료_탭은_종료_연도로_거른다 [790 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.작업_시트_미리보기는_고친_실적으로_밀기_대상을_정해_저장_결과와_같다 [187 ms]
+  Passed GanttScheduler.Tests.HolidayTests.공휴일을_저장_삭제하면_영향을_안내하고_붙여넣기는_날짜_이름을_줄마다_읽는다 [241 ms]
+  Passed GanttScheduler.Tests.AccessTests.첨부_삭제는_올린_사람_과제_담당자_관리자만_할_수_있다 [62 ms]
+  Passed GanttScheduler.Tests.AccessTests.사용자_바꾸기는_IP_연결을_다른_사람으로_옮긴다 [63 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.선행_연결의_간격과_유형을_입력하고_바꿀_때마다_연결_변경_이력을_남긴다 [245 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.데이터_버전은_과제를_바꾸는_저장에서만_오른다 [445 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자에_연결된_기기를_다른_이름으로_바꾸려면_확인을_받는다 [431 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "255.255.255.255", expected: "255.255.255.255") [36 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.재계획은_예측과_다른_미착수_작업을_한_묶음으로_옮기고_화면이_본_목록과_다르면_충돌로_알린다 [335 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "fe80::1", expected: "fe80::1") [19 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "::ffff:10.1.2.3", expected: "::ffff:10.1.2.3") [1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "10", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "10.010.1.5", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "::1", expected: "::1") [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: " 0.0.0.0 ", expected: "0.0.0.0") [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "0x0A.1.2.3", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "１０.1.2.3", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "192.168.001.010", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "10.0.0.1", expected: "10.0.0.1") [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "::ffff:010.1.1.1", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "1.2.3.256", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_주소는_앞자리_0_없는_십진수만_받는다(text: "10.1.2", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.사람별_마지막_접속은_관리자에게만_준다 [96 ms]
+  Passed GanttScheduler.Tests.AccessTests.새_담당자_이름은_저장과_함께_만들어져_연결된다 [231 ms]
+  Passed GanttScheduler.Tests.AccessTests.IP_재확인에_맞다고_하면_마지막_접속을_갱신한다 [37 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.기존_데이터의_종료일은_한_번_채우고_다시_불러도_같다 [535 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.과제_간_연결은_해제_단계_삭제_과제_삭제에서_정리되고_복제하지_않는다 [482 ms]
+  Passed GanttScheduler.Tests.EngineServiceTests.작업_일정_미리보기는_저장_결과와_같고_아무것도_저장하지_않는다 [225 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.작업_실적_규칙은_종료가_있으면_100_진행률만이면_접속자의_오늘_시작 [5 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.전진_계산을_주면_선행_지연이_후행_단계의_예상_초과로_전파된다 [1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.과제_간_연결_위반은_센_경로에서만_이유가_되고_진행이_아닌_과제는_이유가_없다 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.지연_과제는_이유가_있어도_지연_위험이_아니다 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.정체는_진행_과제의_마지막_변경이_StaleDays_일을_넘었을_때 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.기준선_대비_밀림은_RiskSlipDays_이상부터_이유다 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.기한_지난_미완료_작업만_세고_완료_작업과_완료_단계의_작업은_빼다 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningRulesTests.예상_종료가_목표일을_하루라도_넘으면_위험_이유이고_같으면_아니다 [< 1 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자가_없으면_서버_자신에서_등록한_사람만_관리자가_된다 [512 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자_이름에는_등록_화면에서_새_IP를_연결하지_못한다 [35 ms]
+  Passed GanttScheduler.Tests.AccessTests.관리자가_사용자에_IP를_연결하고_해제한다 [86 ms]
+  Passed GanttScheduler.Tests.AccessTests.허용_대역은_CIDR_과_주소를_받고_루프백은_항상_허용한다 [1 ms]
+  Passed GanttScheduler.Tests.AccessTests.대역의_주소_부분도_십진수만_받는다 [4 ms]
+  Passed GanttScheduler.Tests.AccessTests.허용_대역을_잘못_쓰면_시작할_때_알린다 [< 1 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.리드타임에_진행_과제의_지금_단계_체류를_싣는다 [446 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.리드타임_연도는_그_해_완료_과제만_보고_연도_목록은_중단을_뺀다 [814 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.담당_이름은_대소문자만_다르면_기존_사용자로_보고_미리보기와_저장이_같다 [1 s]
+  Passed GanttScheduler.Tests.InputServiceTests.붙여넣기_미리보기는_형식을_해석하고_줄마다_문제를_알리며_저장하지_않는다 [74 ms]
+  Passed GanttScheduler.Tests.AccessTests.첫_관리자_제한을_끄면_처음_등록한_사람이_관리자가_된다 [417 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.단계_템플릿을_지우면_그_아래_작업_템플릿도_지운다 [167 ms]
+  Passed GanttScheduler.Tests.AccessTests.저장에_실패하면_새_담당자_이름이_남지_않는다 [120 ms]
+  Passed GanttScheduler.Tests.AccessTests.자기_관리자_권한은_해제할_수_없고_자기_자신은_사용_중지할_수_없다 [37 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기_파일은_먼_칸이_채워져_있어도_열과_줄을_상한까지만_읽는다 [64 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기는_줄_상한을_넘으면_읽은_줄_수와_함께_나눠_올리라고_알린다 [8 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.부하_배정은_진행_과제의_열린_작업만_예상_일정으로_오늘부터 [6 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.스냅샷_시각_판정은_오늘_기록이_없으면_바로_있으면_정한_시각_뒤_한_번 [2 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.기간_미달은_목표가_기간_안이고_기준일까지_지났는데_끝나지_않은_것만 [< 1 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기는_과제_시트와_필수_열이_없으면_알린다 [14 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.부하는_담당_1_부담당_0_5로_주마다_근무일을_나누고_공휴일은_가용일에서_뺀다 [11 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.스냅샷_조직_범위는_하위_파트까지_포함한다 [3 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.중단하면_오늘이_종료일이고_재개하면_지운다 [434 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.법인_기기_수량은_진행과_완료를_나누고_중단은_뺀다 [41 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.추세는_날짜마다_진행_지연_위험_평균_진행률을_세고_1년은_주마다_마지막_기록으로_줄인다 [9 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.보고_기간은_주_월_직접_지정이고_직접_지정은_상한으로_줄인다 [10 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.일정_변경은_결정_단위로_묶고_밀린_일수는_새값_빼기_이전값의_최댓값 [35 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.진척_증감은_작업_진행률_변경을_과제_진행률_비중으로_환산한다 [14 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.대시보드_막대는_진행_보류와_올해_완료만_센다 [11 ms]
+  Passed GanttScheduler.Tests.AnalyticsRulesTests.변경_분석은_월별_결정과_누적_밀림_상위_과제를_센다 [20 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.사유_분류는_일정_변경_활동에_남고_사용_중지된_분류는_거절한다 [692 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기_양식은_과제_작업_목록_안내_시트를_싣는다 [548 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.모든_단계를_완료하면_종료일이_생기고_완료일을_고치면_따라간다 [643 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.붙여넣기_저장은_하나라도_틀리면_아무것도_남기지_않고_맞으면_한_묶음으로_저장한다 [132 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.끌어_놓은_순서를_저장하고_자리가_바뀐_단계의_버전만_올린다 [148 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.단계_정보에_작업_시작과_실적_시작이_실려_막대가_작업보다_늦게_시작하지_않게_한다 [88 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.등록_CSV_는_선행_단계와_선행_작업을_나눠_읽고_단계를_비우면_같은_단계로_본다 [77 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.정렬은_종료일순과_시작일순으로_날짜가_없는_단계를_뒤로_보낸다 [139 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.새_단계는_기본으로_작업_일정에_맞추고_작업이_없으면_직접_정한_목표일을_받는다 [96 ms]
+  Passed GanttScheduler.Tests.StageOrderTests.옛_머리글의_선행_작업명_한_칸_CSV_도_읽는다 [16 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.부하_화면은_조직_트리_순서로_사람을_묶고_이름만_있는_담당자도_포함한다 [904 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.한_달_보고의_다음_기간은_다음_달_1일부터_말일까지다(y: 2026, m: 2, ny: 2026, nm: 3, nd: 31) [18 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.한_달_보고의_다음_기간은_다음_달_1일부터_말일까지다(y: 2026, m: 12, ny: 2027, nm: 1, nd: 31) [< 1 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.한_달_보고의_다음_기간은_다음_달_1일부터_말일까지다(y: 2026, m: 10, ny: 2026, nm: 11, nd: 30) [< 1 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.이번_주_보고는_오늘_기준이고_무변동_과제는_표로_접힌다 [18 ms]
+  Passed GanttScheduler.Tests.ClosedOnServiceTests.완료한_과제를_중단하면_중단한_날이_종료일이다 [547 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.지난_주_보고는_그_주_마지막_날_기준으로_지연과_밀린_항목을_센다 [20 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.일정_변경은_결정_단위로_세고_묶음_안_대상은_접는다 [2 ms]
+  Passed GanttScheduler.Tests.WeeklyReportTests.결정_수는_묶음을_하나로_센다 [1 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "", local: False) [499 ms]
+  Passed GanttScheduler.Tests.NotifyTests.사용자별로_읽지_않은_알림과_내_작업의_지연_임박을_한_통에_묶고_다시_보내지_않는다 [276 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.기간_보고는_조직_범위와_다음_기간_길이를_따르고_스냅샷이_있으면_전주_대비를_싣는다 [839 ms]
+  Passed GanttScheduler.Tests.NotifyTests.보낸_뒤_보낸_표시를_저장하지_못해도_보낸_것으로_세고_다음_사람의_표시는_남는다 [241 ms]
+  Passed GanttScheduler.Tests.NotifyTests.설정은_기본이_꺼짐이고_메일_서버가_없으면_보낼_수_없다 [2 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "(local)", local: True) [504 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기_미리보기는_행과_열마다_문제를_알리고_아무것도_저장하지_않는다 [1 s]
+  Passed GanttScheduler.Tests.NotifyTests.보내지_못하면_기록을_남기고_알림은_다음_요약에_다시_싣는다 [129 ms]
+  Passed GanttScheduler.Tests.NotifyTests.정한_시각부터_네_시간_안_근무일에_하루_한_번만 [< 1 ms]
+  Passed GanttScheduler.Tests.NotifyTests.꺼져_있으면_보내지_않고_시험_메일은_설정만_있으면_보낸다 [4 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: ".\\SQLEXPRESS", local: True) [473 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.작업_없이_단계를_완료하면_보고의_진척이_오르고_완료를_취소하면_돌아간다 [781 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.다른_사람이_먼저_고친_단계가_있으면_충돌로_거절하고_아무것도_바꾸지_않는다 [162 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "127.0.0.1,1433", local: True) [413 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.관리_화면에서_기본_기간을_저장하고_완료_과제가_3건이면_과거_평균을_힌트로_준다 [424 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.미리보기는_저장하지_않은_날짜로_간격과_추천_입고일을_다시_계산한다 [105 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: ".", local: True) [457 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.등록할_때_정한_목표일은_사유_없이_목표일_설정으로_기록된다 [57 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.가져오기는_새_담당자를_확인받고_모든_과제를_한_번에_등록한다 [1 s]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.완료를_취소하면_그_단계의_미착수_작업을_늦어진_선행에_맞춰_같은_묶음으로_민다 [146 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.범위를_벗어난_날짜는_표의_그_칸을_가리켜_거절한다 [36 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.단계_일정_표는_처음_정하는_목표일을_사유_없이_한_묶음으로_저장하고_간격을_준다 [43 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.등록에서_정한_목표일이_템플릿_작업의_단계_시작이_되고_끄면_만들지_않는다 [100 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.보고_Excel_첫_장은_요약이다 [1 s]
+  Passed GanttScheduler.Tests.InputServiceTests.등록하면_유형_템플릿_작업을_근무일로_만들고_선행을_잇는다 [63 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.이미_정한_목표일을_바꾸면_사유가_필요하고_바꾼_단계만_한_묶음으로_올린다 [79 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "db-server01", local: False) [359 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.초안은_기본_기간으로_계산하고_고친_줄_뒤만_다시_세며_법인을_고르면_추천_입고일을_준다 [73 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.관리에서_작업_템플릿을_편집하고_어긋난_선행은_등록할_때_밀어_만든다 [163 ms]
+  Passed GanttScheduler.Tests.StagePlanServiceTests.완료는_체크리스트_규칙을_거치고_모든_단계를_끝내면_과제가_완료되고_취소하면_다시_진행된다 [101 ms]
+  Passed GanttScheduler.Tests.LeadTimeTests.순서를_거슬러_완료한_단계_뒤는_가장_늦은_완료일부터_센다 [5 ms]
+  Passed GanttScheduler.Tests.LeadTimeTests.리드타임은_근무일과_처음_목표_기준선_대비를_함께_내고_0일_표본을_따로_센다 [13 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.복제는_위치와_담당을_정할_수_있고_기본은_원본_위치와_나다 [118 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.진척_증감은_단계_완료와_완료_취소도_단계_비중으로_센다 [359 ms]
+  Passed GanttScheduler.Tests.InputServiceTests.붙여넣기_선행은_과제에_이미_있는_작업도_이름으로_찾는다 [65 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "tcp:localhost,1433", local: True) [375 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.대시보드는_위험_카드_KPI_최근_사유와_간트_범위를_같은_판정으로_채운다 [132 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "localhost", local: True) [374 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.진행률_변경은_이전_새_값을_남기고_보고에_과제별_진척으로_오른다 [473 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.화면을_연_뒤_다른_사람이_먼저_고쳤으면_저장을_거절한다 [156 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.빠른_갱신은_작업_저장과_같은_규칙으로_진행률과_실적을_저장하고_버전과_활동을_남긴다 [151 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.체크_항목_템플릿을_고치면_새_과제에_반영된다 [70 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.목록의_위험_탭은_지연_전_위험_과제만_정체_탭은_오래_안_바뀐_과제만 [172 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "10.1.2.3\\SQL2019", local: False) [333 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.검색은_협력사와_작업_담당_이름까지_찾는다 [116 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.주간_보고와_변경_이력은_그_주의_활동을_모은다 [243 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.선행보다_이른_일정과_순환하는_의존_관계는_거절한다 [105 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.체크리스트가_남아_있으면_단계를_완료할_수_없다 [106 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.스냅샷은_같은_날_다시_돌면_덮어쓰고_휴지통_중단_과제는_남기지_않는다 [590 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.주간_보고는_이번_주에만_예상_지연_칩을_싣고_그런_과제를_카드로_보인다 [292 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.이미_시작한_후행_작업은_밀지_않는다 [99 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_컴퓨터의_SQL_Server_인지_연결_문자열의_서버로_판단한다(server: "(localdb)\\MSSQLLocalDB", local: True) [375 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.기준선을_확정하면_이후_변경이_기준선_대비_일수로_보인다 [129 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.내_할_일_한_행은_저장_뒤_다시_나눈_묶음을_돌려준다 [174 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.과제를_복제하면_일정이_새_착수일에_맞춰_옮겨지고_실적은_비워진다 [160 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.리드타임_통계는_완료한_단계의_소요일을_유형별로_낸다 [11 ms]
+  Passed GanttScheduler.Tests.AnalyticsServiceTests.변경_이력_Excel_은_지금_조건_그대로_모든_행을_싣는다 [407 ms]
+  Passed GanttScheduler.Tests.UpdateProxyTests.주소만_적으면_Windows_로그인으로_인증한다 [6 ms]
+  Passed GanttScheduler.Tests.UpdateProxyTests.계정을_적으면_그_계정으로_인증하고_비밀번호는_보이지_않는다 [2 ms]
+  Passed GanttScheduler.Tests.UpdateProxyTests.잘못된_주소는_시작할_때_거절한다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateProxyTests.설정한_프록시가_HTTP_처리기에_들어간다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateProxyTests.주소가_비어_있으면_시스템_프록시다 [< 1 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.목록_정렬은_머리글_키와_방향을_따르고_Excel_도_같은_순서다 [219 ms]
+  Passed GanttScheduler.Tests.EarlyWarningServiceTests.빠른_갱신은_실적_순서와_날짜_범위를_작업_저장처럼_검사한다 [57 ms]
+  Passed GanttScheduler.Tests.BackupTests.백업에_실패하면_예외_대신_실패_기록을_남기고_반쪽_파일을_지운다 [435 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.의존_관계가_있는_단계와_과제를_지울_수_있다 [195 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.내_할_일은_내가_담당인_미완료_작업을_마감순으로_나눈다 [75 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.읽고_저장하는_사이에_끼어든_저장은_DB_가_막는다 [83 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.조직은_그룹_아래_파트까지만_두고_사용자_소속으로_쓴다 [44 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.단계_시트로_동시_진행을_켜면_연쇄_이동이_그_단계를_건너뛴다 [98 ms]
+  Passed GanttScheduler.Tests.AdvancedTests.선행_작업이_밀리면_시작_전인_후행_작업이_근무일을_유지한_채_따라_밀린다 [97 ms]
+  Passed GanttScheduler.Tests.BackupTests.취소된_백업도_목록과_로그에_실패로_남는다 [399 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.관리_CSV_붙여넣기는_미리보기에서_추가_이미_있음_문제를_나누고_적용은_한_번에_한다 [108 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.작업_일정에_맞춘_목표일은_작업이_바뀔_때마다_따라간다 [152 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.등록_화면_CSV_붙여넣기는_문제가_있으면_줄마다_알리고_등록을_거절한다 [14 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.댓글의_이미지_참조는_이_과제의_이미지_첨부만_받는다 [84 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.샘플_CSV_는_고른_유형의_기본_단계와_템플릿_작업으로_만든다 [27 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.등록_화면_CSV_붙여넣기는_단계와_작업을_한_번에_만들고_기본_단계를_이어받는다 [12 ms]
+  Passed GanttScheduler.Tests.BackupTests.원격_DB_의_로컬_경로는_이_서버에서_건드리지_않고_UNC_를_안내한다 [424 ms]
+  Passed GanttScheduler.Tests.TrashTests.휴지통에_보낸_과제는_모든_조회에서_빠지고_복원하면_돌아온다 [526 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.단계를_완료하면서_남은_작업을_완료일로_닫을_수_있다 [170 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.관리_CSV_붙여넣기는_유형의_단계_체크_작업_템플릿과_조직_사용자를_만든다 [196 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.복제로_옮긴_날짜가_범위를_넘으면_착수일로_거절한다 [54 ms]
+  Passed GanttScheduler.Tests.TrashTests.영구_삭제는_관리자만_휴지통의_과제를_지우고_기록을_남긴다 [103 ms]
+  Passed GanttScheduler.Tests.ParallelPasteServiceTests.등록_화면_CSV_붙여넣기로_과제를_만들면_기본_단계_대신_붙여_넣은_단계가_된다 [38 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.접속자의_오늘은_한국_날짜_하루_안일_때만_받는다(offset: 2, expected: "2026-10-09") [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.접속자의_오늘은_한국_날짜_하루_안일_때만_받는다(offset: 0, expected: "2026-10-09") [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.접속자의_오늘은_한국_날짜_하루_안일_때만_받는다(offset: -1, expected: "2026-10-08") [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.접속자의_오늘은_한국_날짜_하루_안일_때만_받는다(offset: -30, expected: "2026-10-09") [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.접속자의_오늘은_한국_날짜_하루_안일_때만_받는다(offset: 1, expected: "2026-10-10") [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.상태_칩과_표_글자는_같은_말을_쓴다 [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.임박은_오늘부터_SoonDays_일까지(daysLeft: 7, soon: True) [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.임박은_오늘부터_SoonDays_일까지(daysLeft: 0, soon: True) [1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.임박은_오늘부터_SoonDays_일까지(daysLeft: 8, soon: False) [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.임박은_오늘부터_SoonDays_일까지(daysLeft: -1, soon: False) [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.남은_날_칩은_지연_임박_보통을_한_곳에서_정한다 [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.삭제_권한은_담당자_등록자_관리자_첨부는_올린_사람_과제_담당자_관리자 [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.화면이_오늘을_보내지_않으면_한국_날짜 [< 1 ms]
+  Passed GanttScheduler.Tests.UsabilityRulesTests.단계_초과_완료와_작업_기준선_대비_지연_일수 [< 1 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.연쇄_이동으로_작업이_범위를_넘으면_거절하고_아무것도_바꾸지_않는다 [109 ms]
+  Passed GanttScheduler.Tests.BackupTests.자정을_넘기는_야간_백업_시각도_한_회차에_한_번 [363 ms]
+  Passed GanttScheduler.Tests.TrashTests.기준선은_확정할_때마다_새_차수가_되고_고른_차수_대비로_센다 [325 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.연쇄_이동에_이후_단계의_미착수_작업을_포함할_수_있다 [241 ms]
+  Passed GanttScheduler.Tests.TrashTests.보관_기간이_지난_과제만_정리_대상이다 [82 ms]
+  Passed GanttScheduler.Tests.TrashTests.휴지통에_있는_과제와의_단계_연결은_남기되_위반으로_세지_않는다 [148 ms]
+  Passed GanttScheduler.Tests.BackupTests.SQL_Server_백업_이름에는_DB_이름이_들어가_같은_서버의_다른_DB_와_겹치지_않는다 [399 ms]
+  Passed GanttScheduler.Tests.TrashTests.기존_기준선은_시작할_때_한_번만_1차로_옮긴다 [165 ms]
+  Passed GanttScheduler.Tests.TrashTests.기준선_대비는_고른_기준값으로_센다 [1 ms]
+  Passed GanttScheduler.Tests.BackupTests.SQL_Server_는_COPY_ONLY_로_백업하고_경로가_없으면_서버의_기본_폴더에_둔다 [353 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.무작위로_일정을_바꿔도_서비스가_불변식을_지킨다 [649 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.실적_시작을_지워_밀기_대상이_되면_선행을_다시_검사한다 [106 ms]
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {db857f4c-55cc-4c58-b5f6-d86b2a4cd14f} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+  Passed GanttScheduler.Tests.ScheduleServiceTests.선행이_모이는_다이아몬드에서_끝까지_밀고_작업당_이력은_1건 [200 ms]
+  Passed GanttScheduler.Tests.BackupTests.성공한_백업은_Keep_개만_남기고_오래된_파일을_지운다 [426 ms]
+  Passed GanttScheduler.Tests.OpsTests.마이그레이션_도입_전_SQLite_DB_는_구조가_같으면_그대로_이어_쓴다 [1 s]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.완료된_단계의_작업은_밀지도_검사하지도_않고_완료를_취소하면_선행에_맞춰_민다 [210 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.위반이_남은_작업도_일정과_무관한_수정은_저장된다 [143 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.범위를_벗어난_날짜는_필드와_함께_거절한다 [82 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.OpsTests.개발_환경에서는_구조를_모르는_옛_DB_를_새로_만든다 [607 ms]
+  Passed GanttScheduler.Tests.ScheduleServiceTests.복제는_근무일_거리로_옮겨_위반이_없고_근무일_기간을_지킨다 [326 ms]
+  Passed GanttScheduler.Tests.BackupTests.SQLite_백업은_DB_사본과_첨부_키_설정_묶음을_같은_이름으로_남긴다 [747 ms]
+  Passed GanttScheduler.Tests.WeeklyServiceTests.연쇄_이동과_선행_연동은_주간_보고와_상세에서_결정_1건이다 [69 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.DB_를_쓸_수_없으면_준비_상태는_503이고_원인_문구는_내보내지_않는다 [539 ms]
+  Passed GanttScheduler.Tests.BackupTests.진단_로그에서_연결_문자열의_계정과_비밀번호를_가린다 [387 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+info: GanttScheduler.Services.BackupService[0]
+      백업 완료 gantt-20261017-135643 (manual, 운영테스터, 0초)
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.OpsTests.운영에서_마이그레이션_도입_전_SQLite_DB_의_구조를_모르면_지우지_않고_옆에_남긴다 [676 ms]
+  Passed GanttScheduler.Tests.OpsTests.옮길_때_WAL_보조_파일도_같이_옮긴다 [1 ms]
+  Passed GanttScheduler.Tests.OpsTests.서비스가_키를_DPAPI_로_암호화해도_예전에_평문으로_저장한_키를_읽는다 [5 ms]
+  Passed GanttScheduler.Tests.OpsTests.SQL_Server_는_일시적인_연결_오류를_다시_시도한다 [92 ms]
+  Passed GanttScheduler.Tests.JsonDatabaseTests.SQLite_JSON_백업은_테이블별_JSON과_manifest를_포함한다 [417 ms]
+  Passed GanttScheduler.Tests.BackupTests.같은_초에_다시_백업해도_이름이_겹치지_않는다 [417 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.업데이트_화면에서_지금_백업하면_목록에_남고_진단_정보는_관리자만_본다 [684 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.준비_상태는_사용자_확인_없이_DB_와_디스크를_보고_200을_준다 [13 ms]
+  Passed GanttScheduler.Tests.OpsTests.SQLite_는_마이그레이션으로_만들고_다시_시작해도_데이터가_남는다 [430 ms]
+  Passed GanttScheduler.Tests.CollabRulesTests.내가_남긴_활동과_댓글_수정_기록은_새_활동이_아니다 [< 1 ms]
+  Passed GanttScheduler.Tests.CollabRulesTests.새_활동은_마지막으로_본_뒤부터_최근_7일까지만_센다 [< 1 ms]
+  Passed GanttScheduler.Tests.CollabRulesTests.메일_주소는_형식이_맞아야_받는다 [< 1 ms]
+  Passed GanttScheduler.Tests.CollabRulesTests.댓글은_작성자만_정한_시간_안에_지우지_않은_것만_고친다 [< 1 ms]
+  Passed GanttScheduler.Tests.CollabRulesTests.알림_한_줄은_대표_활동과_함께_묶인_수 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.템플릿은_순서대로_계산하고_초안을_그대로_두면_간격이_기본_기간과_같다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.기본_기간은_0에서_999_근무일만_받는다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.사람이_정한_줄은_그대로_두고_그_뒤_단계만_거기서_이어_센다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.기본_기간_힌트는_완료_과제의_같은_유형_같은_이름_단계를_근무일로_평균한다 [1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.초안은_앞_단계_목표일에서_근무일만큼_뒤로_주말과_공휴일을_건너뛴다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.착수일이_휴일이면_다음_근무일부터_센다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.추천_입고일은_저장_전_단계_순서로도_같은_규칙이다 [< 1 ms]
+  Passed GanttScheduler.Tests.StagePlanRulesTests.간격은_앞에서_정한_마지막_목표일부터_세고_순서가_뒤바뀌면_음수다 [< 1 ms]
+  Passed GanttScheduler.Tests.FileLogTests.크기_한도를_넘은_요청은_서버_오류가_아니라_그_상태_코드로_알린다 [22 ms]
+  Passed GanttScheduler.Tests.FileLogTests.화면_요청의_예외는_오류_화면이_처리하도록_넘긴다 [1 ms]
+  Passed GanttScheduler.Tests.FileLogTests.최근_경고는_200건만_새것부터_둔다 [4 ms]
+  Passed GanttScheduler.Tests.FileLogTests.보존_기간이_지난_로그_파일은_지운다 [2 ms]
+  Passed GanttScheduler.Tests.BackupTests.야간_백업은_켜져_있고_정한_시각이_지났고_오늘_하지_않았을_때만 [384 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: "fd00::/8", expected: "fd00::/8") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: " 10.0.0.0/8 , 192.168.1.10,localsubnet ", expected: "10.0.0.0/8,192.168.1.10,LocalSubnet") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: "10.0.0.0/8", expected: "10.0.0.0/8") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: "", expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: "10.1.2.3/8", expected: "10.0.0.0/8") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소_제한을_읽는다(value: null, expected: null) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["--port", "8080", "install"], expected: 8080) [1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install"], expected: 8081) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", "–port", "8080"], expected: 8080) [6 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", "—port", "8080"], expected: 8080) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", "--port", "8080"], expected: 8080) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", " --port ", " 8080 "], expected: 8080) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", "--pause", "--port=8080"], expected: 8080) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.포트를_읽는다(args: ["install", "－－port", "８０８０"], expected: 8080) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["--service", "install"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: [], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["uninstall", "--name", "X"], expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["--port", "8080", "install"], expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["install"], expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["--urls", "http://*:80"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["admin", "install"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_명령인지_가린다(args: ["--service", "GanttScheduler"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.sc_출력에서_서비스_상태를_읽는다(output: "        TYPE               : 10  WIN32_OWN_PROCESS"···, expected: "STOPPED") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.sc_출력에서_서비스_상태를_읽는다(output: "        상태               : 2  START_PENDING\r\n", expected: "START_PENDING") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.sc_출력에서_서비스_상태를_읽는다(output: "        STATE              : 3  STOP_PENDING\r\n", expected: "STOP_PENDING") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.sc_출력에서_서비스_상태를_읽는다(output: "        STATE              : 4  RUNNING \r\n", expected: "RUNNING") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "--port", "70000"], message: "1~65535") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "--port"], message: "값을 적어") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "-port", "8080"], message: "--port") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "--prot", "8080"], message: "알 수 없는") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "/port", "8080"], message: "--port") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "--port", "80a"], message: "1~65535") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "port", "8080"], message: "--port") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["uninstall", "--port", "8080"], message: "알 수 없는") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.잘못_적은_인자는_등록하기_전에_거절한다(args: ["install", "8080"], message: "--port 8080") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.서비스_실행_명령에는_이름과_포트가_들어가고_경로는_따옴표로_감싼다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.창이_닫히기_전에_기다릴지_정한다(flag: False, ownsConsole: True, redirected: False, expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.창이_닫히기_전에_기다릴지_정한다(flag: True, ownsConsole: False, redirected: False, expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.창이_닫히기_전에_기다릴지_정한다(flag: False, ownsConsole: False, redirected: False, expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.창이_닫히기_전에_기다릴지_정한다(flag: True, ownsConsole: True, redirected: True, expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.서비스가_없다는_출력에서는_상태를_읽지_못한다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "10.0.0.0/33") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "10") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "0x0A.0.0.0/8") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "192.168.001.010") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "사내망") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "10.0.0.0/8;192.168.0.0/16") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_원격_주소를_잘못_쓰면_등록하기_전에_거절한다(value: "010.0.0.0/8") [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.나머지_옵션도_읽는다 [22 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.설치_기록은_끝부분만_읽는다 [2 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+  Passed GanttScheduler.Tests.ServiceInstallerTests.서비스_시작_권한은_감사_설정_앞에_넣는다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.방화벽_규칙은_원격_주소를_줄_때만_제한한다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.서비스로_시작됐는지는_인자의_서비스_이름으로_안다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.예전_설치의_시작_권한은_중지_권한까지_있는_것으로_바꾼다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.LocalSubnet_을_쓰면_앱_설정에는_실제_대역을_적으라고_안내한다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.알_수_없는_보안_설명자는_건드리지_않고_거절한다 [< 1 ms]
+  Passed GanttScheduler.Tests.ServiceInstallerTests.서비스_시작_권한을_두_번_넣지_않는다 [< 1 ms]
+  Passed GanttScheduler.Tests.JsonDatabaseTests.SQLite_JSON_복원은_전체_테이블_데이터를_트랜잭션으로_되돌린다 [472 ms]
+  Passed GanttScheduler.Tests.FileLogTests.정한_시간을_넘긴_요청은_경로와_시간을_경고로_남긴다 [257 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.FileLogTests.한국_날짜의_파일에_쓰고_요청_번호를_함께_남긴다 [14 ms]
+  Passed GanttScheduler.Tests.FileLogTests.화면이_JSON_으로_물은_요청의_예외는_오류_번호가_든_JSON_500_으로_돌려준다 [1 ms]
+  Passed GanttScheduler.Tests.FileLogTests.설정의_로그_폴더와_보존_일수를_쓴다 [< 1 ms]
+  Passed GanttScheduler.Tests.JsonDatabaseTests.SQL_Server_설정에서는_JSON_내보내기와_복원을_거절한다 [351 ms]
+  Passed GanttScheduler.Tests.CollabTests.첨부_활동도_같은_경로로_알린다 [55 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.관리자_상단_칩은_서버_문제를_알리고_일반_사용자에게는_보이지_않는다 [573 ms]
+  Passed GanttScheduler.Tests.CollabTests.자동_밀기로_바뀐_작업_담당에게_알리고_한_저장은_사람마다_한_건으로_묶는다 [91 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+fail: GanttScheduler.Services.JsonErrorMiddleware[0]
+      처리하지 못한 오류 (오류 번호 0HNPC1C4S8KQE): GET /__boom
+      System.InvalidOperationException: 시험용 오류
+         at GanttScheduler.Tests.OpsHttpTests.Boom.<>c.<Configure>b__0_1(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/tests/GanttScheduler.Tests/OpsHttpTests.cs:line 197
+         at GanttScheduler.Services.UserGateMiddleware.InvokeAsync(HttpContext ctx, CurrentUser me, IClock clock, AccessOptions access) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/Identity.cs:line 131
+         at Program.<>c__DisplayClass0_0.<<<Main>$>b__16>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Program.cs:line 190
+      --- End of stack trace from previous location ---
+         at GanttScheduler.Services.JsonErrorMiddleware.InvokeAsync(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/RequestDiagnostics.cs:line 95
+fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      System.InvalidOperationException: 시험용 오류
+         at GanttScheduler.Tests.OpsHttpTests.Boom.<>c.<Configure>b__0_1(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/tests/GanttScheduler.Tests/OpsHttpTests.cs:line 197
+         at GanttScheduler.Services.UserGateMiddleware.InvokeAsync(HttpContext ctx, CurrentUser me, IClock clock, AccessOptions access) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/Identity.cs:line 131
+         at Program.<>c__DisplayClass0_0.<<<Main>$>b__16>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Program.cs:line 190
+      --- End of stack trace from previous location ---
+         at GanttScheduler.Services.JsonErrorMiddleware.InvokeAsync(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/RequestDiagnostics.cs:line 95
+         at Program.<>c.<<<Main>$>b__0_15>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Program.cs:line 174
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Diagnostics.StatusCodePagesMiddleware.Invoke(HttpContext context)
+         at GanttScheduler.Services.RequestTimingMiddleware.InvokeAsync(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/RequestDiagnostics.cs:line 57
+         at GanttScheduler.Services.SecurityHeaders.<>c.<<UseSecurityHeaders>b__0_0>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/Access.cs:line 129
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.DataAccessTests.과제_정보_수정은_내역만_읽어_바꾸고_같은_내역이면_변경으로_치지_않는다 [87 ms]
+  Passed GanttScheduler.Tests.CollabTests.댓글_수정은_작성자만_시간_안에_원문을_남기고_새로_고른_사람에게_한_번만_알린다 [237 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.예기치_않은_오류는_오류_번호를_보이고_같은_번호가_로그에_남는다 [391 ms]
+  Passed GanttScheduler.Tests.CollabTests.상세를_열면_방문_시각이_바뀌고_그_뒤에_남이_남긴_활동만_새_활동으로_센다 [92 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.과제_수정은_지금_성격_쪽_내역만_바꾸고_반대쪽은_건드리지_않는다 [95 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.지운_상위에는_하위를_더할_수_없고_500_대신_안내한다 [50 ms]
+warn: GanttScheduler.Services.OpsChecks[0]
+      고아 첨부 파일 정리: 1개, 13 B — 운영테스터
+  Passed GanttScheduler.Tests.CollabTests.읽지_않은_수와_읽음_처리는_내_알림만_다룬다 [100 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.수정_화면에서_비운_담당자_착수일과_다른_과제의_댓글_대상을_거절한다 [78 ms]
+  Passed GanttScheduler.Tests.OpsHttpTests.고아_파일_정리는_관리자만_하고_기록이_있는_파일은_남긴다 [171 ms]
+  Passed GanttScheduler.Tests.CollabTests.관심_과제에_남이_활동하면_알리고_빼면_알리지_않는다 [73 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.이름_길이는_DB_열_길이로_검사한다 [29 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.쓰는_유형의_성격은_바꿀_수_없고_성격_값이_없으면_그대로_둔다 [47 ms]
+  Passed GanttScheduler.Tests.MasterIntegrityTests.사용_중지는_요청한_상태로_맞추고_같으면_아무_일도_없다 [29 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+10.0.402
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {825040d5-7a51-4c05-990a-559adaa77e85} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+  Passed GanttScheduler.Tests.OpsHttpTests.서버_상태는_관리자만_보고_점검_결과와_최근_경고를_준다 [184 ms]
+  Passed GanttScheduler.Tests.CollabTests.새_소식은_내_작업_내_과제_관심_과제_멘션에_남이_남긴_활동이고_보면_사라진다 [249 ms]
+  Passed GanttScheduler.Tests.CollabTests.보류_과제에_지운_댓글과_댓글_수정_기록만_있으면_주간_보고에_오르지_않는다 [91 ms]
+  Passed GanttScheduler.Tests.CollabTests.멘션은_고른_사람에게_알리고_칩으로_보이며_없는_사람과_사용_중지된_사람은_거절한다 [52 ms]
+  Passed GanttScheduler.Tests.CollabTests.댓글을_지우면_본문을_자리_표시로_바꾸고_행과_기록은_남는다 [70 ms]
+  Passed GanttScheduler.Tests.CollabTests.지운_댓글은_목록_상세_새_소식_어디에도_새_활동이_아니다 [64 ms]
+  Passed GanttScheduler.Tests.CollabTests.이미_본_바쁜_과제의_활동이_많아도_다른_과제의_새_소식은_빠지지_않는다 [184 ms]
+  Passed GanttScheduler.Tests.CollabTests.사용_중지된_사람에게는_알리지_않는다 [27 ms]
+  Passed GanttScheduler.Tests.CollabTests.남이_내_작업을_바꾸면_담당에게_알리고_자기_활동은_알리지_않는다 [118 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/Weekly?day=2026-09-28&mine=true") [284 ms]
+  Passed GanttScheduler.Tests.CollabTests.활동_조건은_종류_단계_검색으로_거르고_조건대로_나눠_받는다 [86 ms]
+  Passed GanttScheduler.Tests.CollabTests.멘션한_사람이_사용_중지돼도_작성자는_글을_고칠_수_있고_새로_고르면_거절한다 [49 ms]
+  Passed GanttScheduler.Tests.CollabTests.새_과제를_남이_등록해_주면_담당에게_알린다 [13 ms]
+  Passed GanttScheduler.Tests.CollabTests.댓글을_고치면_그_댓글을_가리키는_알림_글도_바뀐다 [35 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.전진_계산은_진행_중_지연을_후행으로_전파하고_시작_지연을_표시하며_저장값은_바꾸지_않는다 [4 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.전진_계산은_같이_끝_선행이_늦어지면_진행_중_후행의_예상_종료를_늘린다 [< 1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.휴일에_시작하는_작업은_다음_근무일까지는_시작_지연이_아니다 [1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.같이_끝은_후행_종료를_선행_종료_뒤로_맞추고_기간은_지킨다 [< 1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.같이_끝은_선행이_휴일에_끝나도_간격_0_을_간격_1_처럼_보지_않는다 [1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.과제_간_단계_연결은_선행_완료일_또는_목표일_다음_근무일과_간격으로_판정한다 [< 1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.유형_입력과_간격_범위를_검사한다 [4 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.유형별_가장_이른_시작일은_EarliestStart_하나가_정한다 [< 1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.전진_계산은_순환이_있어도_멈추지_않고_모든_작업을_돌려준다 [< 1 ms]
+  Passed GanttScheduler.Tests.EngineRulesTests.같이_시작은_선행_시작에_맞춰_밀고_여유도_같은_기준으로_센다 [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026/1/5", y: 2026, m: 1, d: 5) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "10/12/2027", y: 2027, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026.10.12.", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026-10-12 (월)", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "20261012", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026년 10월 12일", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026.10.12", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "10.12", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026-10-12 0:00:00", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "10/12", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "2026-10-12", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.흔한_날짜_형식을_읽는다(text: "10월 12일", y: 2026, m: 10, d: 12) [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "13/45") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "2026-13-01") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "12345") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "내일") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.날짜가_아니면_읽지_않는다(text: "2026-02-30") [< 1 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.붙여넣은_줄은_TAB_없으면_쉼표로_나눈다 [4 ms]
+  Passed GanttScheduler.Tests.InputRulesTests.단계_시작_기준일은_첫_단계는_착수일_이후는_앞_단계_목표일_다음_근무일이다 [< 1 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects/Edit?id=1") [227 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Help") [42 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/History?kind=schedule&q=AGV&p=1") [53 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects") [51 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/History") [24 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.IP_연결은_보존_기간이_지나면_정리하고_이력을_남긴다 [26 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects?state=all&q=AGV") [108 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/LeadTime?year=2026") [85 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.사용_중인_사람을_사용_중지된_사용자로_합치지_않는다 [132 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Admin") [31 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.기준_정보_목록은_그_항목을_쓰는_과제_수를_싣는다 [44 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects?state=done&year=2025") [107 ms]
+  Passed GanttScheduler.Tests.UpdateTests.새_버전이_시작하다_멈추면_도우미가_이전_버전으로_되돌리고_다시_뜬_서버가_이력에_남긴다 [1 s]
+  Passed GanttScheduler.Tests.UpdateTests.버전이_아닌_문자열은_거절한다(text: "dev") [< 1 ms]
+System.TypeInitializationException: The type initializer for 'Microsoft.DotNet.Cli.Parser' threw an exception.
+ ---> System.IO.FileNotFoundException: Unable to find the specified file.
+   at Interop.Sys.GetCwdHelper(Byte* ptr, Int32 bufferSize)
+   at Interop.Sys.GetCwd()
+   at Microsoft.DotNet.Cli.Commands.Test.TestCommandDefinition.Create()
+   at Microsoft.DotNet.Cli.Commands.DotNetCommandDefinition..ctor()
+   at Microsoft.DotNet.Cli.Parser.CreateCommand()
+   at Microsoft.DotNet.Cli.Parser..cctor()
+   --- End of inner exception stack trace ---
+   at Microsoft.DotNet.Cli.Parser.Parse(String[] args)
+   at Microsoft.DotNet.Cli.Program.ProcessArgs(String[] args, TimeSpan startupTime)
+   at Microsoft.DotNet.Cli.Program.Main(String[] args)
+  Passed GanttScheduler.Tests.UpdateTests.버전이_아닌_문자열은_거절한다(text: "latest") [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.버전이_아닌_문자열은_거절한다(text: "") [< 1 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.활동_더_보기는_쪽_경계에서_빠지거나_겹치지_않는다(take: 37) [2 s]
+  Passed GanttScheduler.Tests.UserAdminTests.병합은_사용자를_가리키는_모든_행을_옮기고_유일_색인_충돌은_합친다 [336 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects/Detail?id=1") [327 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/Weekly") [79 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.사용_현황의_조직_진행_과제는_사람별_진행_과제의_합과_같다 [163 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.이름_등록과_담당_입력으로_생긴_사용자도_변경_이력에_남는다 [72 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/My") [117 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.사용_현황은_조직별_접속자_갱신_조용한_과제를_센다 [77 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.병합이_옮기는_참조_목록은_EF_모델의_사용자_참조와_같다 [2 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.맡은_일이_있으면_사용_중지_단추로_바로_끌_수_없다 [45 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/") [126 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects?state=delayed") [13 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects?state=dropped&year=0") [19 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/?mine=true") [16 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Insights/LeadTime") [29 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects/Detail?id=2") [15 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.관리_변경은_지점마다_변경_이력을_남기고_조건으로_찾는다 [157 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Projects/Edit") [20 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Board") [35 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.과제_첨부_합계가_상한을_넘으면_거절한다 [67 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.화면이_정상_응답한다(url: "/Admin/Update") [30 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.담당_이관은_진행_과제와_미완료_작업만_넘기고_사용_중지한다 [237 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.범위를_모두_끈_이관은_남은_일을_이력에_사실대로_적는다 [44 ms]
+  Passed GanttScheduler.Tests.UserAdminTests.admin_명령도_변경_이력에_서버로_남는다 [23 ms]
+  Passed GanttScheduler.Tests.HttpTests.첨부_파일을_올리고_내려받고_지운다 [381 ms]
+  Passed GanttScheduler.Tests.HttpTests.변경_이력의_시각은_UTC_로_싣고_화면이_현지_시각으로_바꾼다 [30 ms]
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_연도_주소도_오류_없이_열린다(url: "/Projects?handler=Excel&state=done&year=10000&done"···) [29 ms]
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_연도_주소도_오류_없이_열린다(url: "/Projects?doneYear=-1") [13 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_연도_주소도_오류_없이_열린다(url: "/Projects?state=all&doneYear=0") [88 ms]
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_연도_주소도_오류_없이_열린다(url: "/Projects?state=dropped&year=-5") [15 ms]
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_연도_주소도_오류_없이_열린다(url: "/Projects?state=done&year=10000") [54 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.첨부는_DB_와_디스크를_대조하고_고아_파일만_지운다 [324 ms]
+  Passed GanttScheduler.Tests.HttpTests.JSON_핸들러는_CSRF_토큰이_있어야_하고_규칙_위반은_400_으로_알린다 [81 ms]
+  Passed GanttScheduler.Tests.HttpTests.업데이트_상태는_누구나_보지만_바꾸는_것은_관리자만_한다 [72 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 1073741824, total: 2147483648000, level: "fail") [285 ms]
+  Passed GanttScheduler.Tests.HttpTests.Excel_내보내기 [339 ms]
+  Passed GanttScheduler.Tests.UpdateTests.서버가_요청을_받기_시작하면_시작_표시를_남기고_도우미가_그것을_읽는다 [2 s]
+  Passed GanttScheduler.Tests.UpdateTests.버전_문자열을_읽는다(text: "0.3.1-rc1", major: 0, minor: 3, patch: 1) [1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.버전_문자열을_읽는다(text: "1.4", major: 1, minor: 4, patch: 0) [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.버전_문자열을_읽는다(text: "0.3.1+abc1234", major: 0, minor: 3, patch: 1) [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.버전_문자열을_읽는다(text: "0.3.1", major: 0, minor: 3, patch: 1) [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.버전_문자열을_읽는다(text: "v1.2.3", major: 1, minor: 2, patch: 3) [< 1 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 21474836480, total: 268435456000, level: "ok") [284 ms]
+  Passed GanttScheduler.Tests.UpdateTests.주기_확인은_새_버전을_미리_받아_두지만_되돌렸거나_시작되지_않은_버전은_받지_않는다 [58 ms]
+  Passed GanttScheduler.Tests.UpdateTests.교체는_패키지_파일만_바꾸고_데이터와_서버_설정은_그대로_둔다 [7 ms]
+  Passed GanttScheduler.Tests.UpdateTests.새_버전이_요청을_받기_전에_죽어도_받아_둔_폴더가_남아_다시_시도할_수_있다 [6 ms]
+  Passed GanttScheduler.Tests.HttpTests.상세는_새_활동_기준과_알릴_사람을_싣고_활동_조건으로_나눠_받는다 [307 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.활동_더_보기는_쪽_경계에서_빠지거나_겹치지_않는다(take: 50) [2 s]
+  Passed GanttScheduler.Tests.HttpTests.목록과_대시보드는_새_활동_수를_보이고_내_할_일은_새_소식을_보인다 [103 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 1610612736, total: 42949672960, level: "warn") [342 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: GanttScheduler.Services.TrashService[0]
+      과제 영구 삭제: #10 HTTP 휴지통 과제 — 삭제 통합테스터 2026-10-17 04:56Z, 영구 삭제 통합테스터
+  Passed GanttScheduler.Tests.UpdateTests.구조가_바뀌는_업데이트는_먼저_백업하고_그_이름을_교체_기록과_이력에_남긴다 [405 ms]
+  Passed GanttScheduler.Tests.UpdateTests.매니페스트를_읽는다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.DB_구조가_바뀐_업데이트는_프로그램만_되돌릴_수_없다 [6 ms]
+  Passed GanttScheduler.Tests.UpdateTests.로컬_빌드는_스스로_교체하지_않는다 [15 ms]
+  Passed GanttScheduler.Tests.UpdateTests.서명이_없거나_맞지_않으면_받지_않고_이유를_알린다 [30 ms]
+  Passed GanttScheduler.Tests.UpdateTests.일부만_남은_받아_둔_폴더는_적용하지_않고_다시_받게_한다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateTests.공개키가_없는_빌드는_서명_없이_예전처럼_받고_화면에_꺼짐을_알린다 [15 ms]
+  Passed GanttScheduler.Tests.HttpTests.과제_삭제는_휴지통으로_보내고_관리자가_복원하거나_영구_삭제한다 [354 ms]
+10.0.402
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {eb4e269f-56af-4c31-8c78-3f3097835991} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 8589934592, total: 107374182400, level: "warn") [343 ms]
+  Passed GanttScheduler.Tests.UpdateTests.첫_단계가_연결_실패면_그것을_원인으로_알린다 [315 ms]
+  Passed GanttScheduler.Tests.UpdateTests.공개키가_없는_서버도_배포_정보를_같이_올리면_zip_이_같은_파일인지_본다 [18 ms]
+  Passed GanttScheduler.Tests.UpdateTests.시작에_성공한_버전은_시작_실패_기록을_지운다 [1 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 314572800, total: 1073741824000, level: "fail") [284 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 107374182400, total: 2147483648000, level: "ok") [332 ms]
+  Passed GanttScheduler.Tests.HttpTests.상황판은_이름_등록_없이_열리고_사용자를_만들지_않는다 [733 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.디스크는_작으면_비율로_크면_남은_양으로_본다(free: 3221225472, total: 214748364800, level: "fail") [322 ms]
+  Passed GanttScheduler.Tests.HttpTests.과제_수정_화면은_동시_수정_뒤_바뀐_값을_보여_주고_같은_화면에서_다시_저장한다 [260 ms]
+  Passed GanttScheduler.Tests.HttpTests.복제_시트는_위치_목록을_받고_위치와_담당을_정해_복제한다 [110 ms]
+  Passed GanttScheduler.Tests.HttpTests.상세_데이터는_과제_첨부_상한을_싣는다 [37 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.PDF_글꼴은_설정한_파일을_먼저_찾는다 [260 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.백업_경로는_SQL_Server_일_때만_따로_지정해야_한다 [322 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.과제_삭제는_그래프를_읽지_않고_DB_cascade_로_모두_지운다 [1 s]
+  Passed GanttScheduler.Tests.HttpTests.분석_새_탭과_기간_보고_조건이_열리고_이력_Excel_을_내려받는다 [463 ms]
+  Passed GanttScheduler.Tests.UpdateTests.DB_구조가_바뀌는_버전은_시작되지_않아도_되돌리지_않고_복구_방법을_남긴다 [1 s]
+  Passed GanttScheduler.Tests.UpdateTests.교체가_실패했으면_원인을_이력에_남기고_받아_둔_파일은_그대로_둔다 [4 ms]
+  Passed GanttScheduler.Tests.UpdateTests.저장소에_공개키가_없으면_빌드는_서명을_확인하지_않는다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.확인이_계속_실패하면_실패_시작_시각을_남기고_성공하면_지운다 [16 ms]
+  Passed GanttScheduler.Tests.UpdateTests.관리자가_아니면_업데이트를_다룰_수_없다 [3 ms]
+  Passed GanttScheduler.Tests.UpdateTests.같은_버전이나_옛_버전은_새_버전으로_보지_않는다 [14 ms]
+  Passed GanttScheduler.Tests.UpdateTests.DB_구조가_바뀌거나_되돌렸던_버전은_자동으로_적용하지_않는다 [1 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.DB_구조는_마이그레이션_이력과_빌드_정보로_본다 [346 ms]
+  Passed GanttScheduler.Tests.HttpTests.내_할_일_빠른_갱신은_다시_나눈_행을_돌려주고_어긋난_버전은_409_와_최신_행을_준다 [304 ms]
+  Passed GanttScheduler.Tests.UpdateTests.매니페스트가_404_면_API_시간_초과가_원인을_가리지_않는다 [311 ms]
+  Passed GanttScheduler.Tests.HttpTests.대시보드_숫자와_막대는_같은_조건의_목록으로_잇고_목록_Excel_제목에_유형_법인을_적는다 [177 ms]
+  Passed GanttScheduler.Tests.UpdateTests.목록_없이_설치된_폴더는_새_버전과_겹치는_파일만_바꾼다 [4 ms]
+  Passed GanttScheduler.Tests.UpdateTests.서명을_확인하지_않은_배포_정보로는_받지_않는다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateTests.자동_적용은_설정한_시간대에_한동안_사용이_없을_때만_한다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.정리는_받아_둔_버전만_남기고_쓰고_남은_폴더와_받다_만_파일을_지운다 [10 ms]
+  Passed GanttScheduler.Tests.UpdateTests.자동_적용_시간대는_자정을_넘길_수_있고_시작과_끝이_같으면_종일이다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.폴더_소스가_없으면_폴더를_열_수_없다고_알린다 [3 ms]
+  Passed GanttScheduler.Tests.UpdateTests.구조가_같은_업데이트나_적용_전_백업을_끈_서버는_백업하지_않고_바로_교체한다 [6 ms]
+  Passed GanttScheduler.Tests.UpdateTests.되돌린_뒤에는_그_버전을_자동으로_다시_적용하지_않는다 [3 ms]
+  Passed GanttScheduler.Tests.UpdateTests.진단_정보는_교체_기록_끝부분과_시작_오류와_상태_요약을_주고_비밀번호는_가린다 [3 ms]
+  Passed GanttScheduler.Tests.UpdateTests.받아_둔_것이_없으면_적용할_수_없다 [< 1 ms]
+  Passed GanttScheduler.Tests.UpdateTests.교체_도중_실패하면_원래_파일로_되돌린다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateTests.시작_오류_기록은_이번에_다시_띄운_뒤의_것만_읽는다 [9 ms]
+  Passed GanttScheduler.Tests.UpdateTests.사내_서버_주소는_그_아래의_매니페스트와_서명을_읽는다 [6 ms]
+  Passed GanttScheduler.Tests.UpdateTests.빌드_식별값은_버전과_커밋으로_만든다 [< 1 ms]
+  Passed GanttScheduler.Tests.HttpTests.부하에서_연_다른_사람의_할_일은_읽기_전용이고_없는_사람은_404 [77 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.보고서는_DB_왕복_구조_디스크_폴더_글꼴_공휴일_백업_기준_정보를_모두_점검한다 [316 ms]
+  Passed GanttScheduler.Tests.UpdateTests.공개키가_든_빌드는_서명이_맞는_배포_정보만_받는다 [70 ms]
+  Passed GanttScheduler.Tests.UpdateTests.실행_파일이_없는_폴더로는_교체하지_않는다 [3 ms]
+  Passed GanttScheduler.Tests.UpdateTests.매니페스트가_없는_릴리스는_서명을_확인하는_빌드에서_받지_않는다 [4 ms]
+  Passed GanttScheduler.Tests.UpdateTests.적용_전_백업이_실패하면_교체하지_않고_이유를_보인다 [11 ms]
+  Passed GanttScheduler.Tests.UpdateTests.교체가_끝나고_다시_뜨면_결과를_기록하고_이전_버전을_되돌리기용으로_남긴다 [30 ms]
+  Passed GanttScheduler.Tests.UpdateTests.업데이트_위치에_정보가_없으면_원인과_해결_방법을_알린다 [6 ms]
+  Passed GanttScheduler.Tests.UpdateTests.서명을_확인하는_서버는_올린_파일도_배포_정보와_서명이_맞아야_받는다 [27 ms]
+  Passed GanttScheduler.Tests.UpdateTests.DB_구조가_다른_새_버전은_표시해_둔다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateTests.업데이트_화면은_zip_과_배포_정보_서명을_함께_받는다 [24 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_화면은_이름_길이_상한을_싣고_사용_중지는_원하는_상태로_공휴일_붙여넣기는_안내를_돌려준다 [182 ms]
+  Passed GanttScheduler.Tests.UpdateTests.GitHub_소스는_github_com_의_최신_릴리스_주소에서_매니페스트와_패키지를_받는다 [20 ms]
+  Passed GanttScheduler.Tests.HttpTests.없는_과제는_안내_화면을_보이고_화면의_JSON_요청에는_JSON_404 [24 ms]
+  Passed GanttScheduler.Tests.UpdateTests.올린_파일이_새_버전이_아니거나_배포_파일이_아니면_거절한다 [22 ms]
+  Passed GanttScheduler.Tests.UpdateTests.설정은_범위를_확인하고_저장한다 [6 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "org") [15 ms]
+  Passed GanttScheduler.Tests.UpdateTests.해시가_다르면_받은_파일을_버린다 [9 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "container") [9 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "holiday") [13 ms]
+  Passed GanttScheduler.Tests.UpdateTests.폴더에서_새_버전을_확인하고_받아_검증한_뒤_풀어_둔다 [16 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "location") [16 ms]
+  Passed GanttScheduler.Tests.UpdateTests.올린_배포_파일을_확인해_받아_둔다 [11 ms]
+  Passed GanttScheduler.Tests.UpdateTests.공개키_파일에_키가_여럿이면_하나라도_맞으면_받는다 [5 ms]
+  Passed GanttScheduler.Tests.UpdateTests.시작되지_않은_버전은_자동으로_적용하지_않는다 [< 1 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "user") [68 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.준비_점검은_DB_와_디스크만_본다 [352 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "category") [85 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "vendor") [15 ms]
+warn: Microsoft.EntityFrameworkCore.Query[10103]
+      The query uses the 'First'/'FirstOrDefault' operator without 'OrderBy' and filter operators. This may lead to unpredictable results.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.관리_데이터를_JSON_으로_돌려준다(kind: "equipment") [11 ms]
+  Passed GanttScheduler.Tests.HttpTests.미리보기는_GET_으로_밀리는_작업과_막는_이유를_돌려주고_저장하지_않는다 [190 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.업데이트_확인_실패_칩은_자동_확인이_돌며_계속_실패할_때만_뜬다 [301 ms]
+  Passed GanttScheduler.Tests.HttpTests.상황판_확인값은_과제가_바뀔_때만_달라진다 [38 ms]
+  Passed GanttScheduler.Tests.HttpTests.다른_사람이_먼저_고친_단계를_저장하면_409_로_알린다 [114 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.첫_설정_점검표는_법인_조직이_없으면_덜_된_것으로_보고_관리_화면으로_보낸다 [330 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_화면에서_사용자를_합치고_이관하며_변경_이력과_사용_현황을_본다 [421 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.시작_실패_안내를_닫으면_같은_실패를_다른_칩으로_다시_알리지_않는다 [335 ms]
+  Passed GanttScheduler.Tests.HttpTests.도움말과_도움말_링크가_있다 [200 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.복제는_체크리스트_의존_관계_내역까지_복사한다 [2 s]
+  Passed GanttScheduler.Tests.OpsChecksTests.관리자_알림은_시작_실패와_새_버전을_칩으로_알린다 [308 ms]
+  Passed GanttScheduler.Tests.HttpTests.PDF_내보내기 [373 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.DB_종류는_SQLite_도_운영에서_정상이다 [266 ms]
+  Passed GanttScheduler.Tests.HttpTests.연쇄_이동의_cascadeWorks_가_JSON_에서_묶여_이후_단계_작업을_옮긴다 [116 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.쓸_수_없는_폴더가_있으면_실패와_권한_부여_방법을_알린다 [262 ms]
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {43923f37-1d41-47ce-8ff9-bf657e193f7c} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.과제_간_단계_연결을_검색해_잇고_두_과제_화면에_보이며_해제한다 [301 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리자는_사용자_메일_주소를_정하고_메일_서버가_없으면_시험_메일은_이유를_알린다 [129 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.공휴일은_올해와_10월부터는_내년까지_확인한다 [330 ms]
+  Passed GanttScheduler.Tests.OpsChecksTests.관리자_알림은_교체_실패_확인_연속_실패_백업_실패_오래된_백업을_알린다 [361 ms]
+  Passed GanttScheduler.Tests.HttpTests.서버_버전은_등록하지_않아도_물어볼_수_있다 [518 ms]
+  Passed GanttScheduler.Tests.HttpTests.진행_내용에_이미지_첨부를_넣으면_참조가_본문에_남고_다른_과제의_첨부는_거절한다 [93 ms]
+  Passed GanttScheduler.Tests.HttpTests.초안과_미리보기는_범위_밖_날짜를_그_줄을_가리켜_400_으로_알린다 [130 ms]
+  Passed GanttScheduler.Tests.HttpTests.없는_과제는_404 [10 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {a0ef17df-5d00-46bf-9c00-d8100ebceef4} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.OpsChecksTests.드라이브_여유는_데이터_첨부_백업_경로를_보고_같은_드라이브는_한_번만_센다 [284 ms]
+  Passed GanttScheduler.Tests.HttpTests.첨부_내려받기는_ETag_범위_요청_private_캐시를_쓰고_상한_문구는_설정값이다 [91 ms]
+  Passed GanttScheduler.Tests.HttpTests.완료_탭은_올해가_기본이고_연도를_고를_수_있다 [40 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.작업_시트의_진행_내용은_그_작업의_활동만_나눠_받는다 [1 s]
+  Passed GanttScheduler.Tests.OpsChecksTests.마지막_백업은_없거나_실패했거나_오래되면_알린다 [274 ms]
+  Passed GanttScheduler.Tests.HttpTests.등록하지_않은_접속은_이름_등록_화면으로_보낸다 [489 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_화면의_단계_템플릿에는_기본_기간이_실린다 [10 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_저절로_보내는_변경_확인은_사용으로_치지_않는다 [52 ms]
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+warn: GanttScheduler.Services.TrashService[0]
+      과제 영구 삭제: #24 HTTP 자동 정리 오래됨 — 삭제 통합테스터 2026-09-07 04:56Z, 영구 삭제 자동 정리(보관 기간 경과)
+  Passed GanttScheduler.Tests.HttpTests.변경_시각은_변경마다_바뀌고_응답과_서버_버전에_한국_날짜를_싣는다 [46 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.댓글과_체크는_읽지_않은_활동_컬렉션에_더해도_저장된다 [1 s]
+  Passed GanttScheduler.Tests.DataAccessTests.여러_과제의_이력은_1년까지만_보고_과제_하나는_기간_상한이_없다 [36 ms]
+  Passed GanttScheduler.Tests.HttpTests.가져오기_화면은_양식을_주고_올린_파일을_미리본_뒤_가져온다 [1 s]
+  Passed GanttScheduler.Tests.HttpTests.기준선_비교_차수는_조회와_저장_응답에_같이_쓰인다 [102 ms]
+  Passed GanttScheduler.Tests.HttpTests.자동_정리는_보관_기간이_지난_과제를_지운_사람_이름으로_영구_삭제한다 [94 ms]
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {d8794e57-a64e-4498-988f-89a996249f7a} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {736814fd-4ce3-4b09-83aa-e2338accfac4} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+warn: Microsoft.AspNetCore.Routing.EndpointRoutingMiddleware[9]
+      A request body size limit could not be applied. This server does not support the IHttpMaxRequestBodySizeFeature.
+warn: Microsoft.AspNetCore.Mvc.Filters.RequestSizeLimitFilter[1]
+      A request body size limit could not be applied. This server does not support the IHttpRequestBodySizeFeature.
+  Passed GanttScheduler.Tests.HttpTests.멘션하면_읽지_않은_수가_늘고_알림을_누르면_읽음으로_바꾸고_그_활동으로_간다 [575 ms]
+  Passed GanttScheduler.Tests.HttpTests.범위_밖_날짜는_400_과_필드로_알리고_단계_완료와_함께_남은_작업을_닫는다 [79 ms]
+  Passed GanttScheduler.Tests.HttpTests.화면이_보낸_오늘로_진행률만_올린_작업의_실적_시작을_넣는다 [65 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.상세_뷰는_최근_활동만_싣고_전체_건수와_목표일_변경_횟수는_따로_센다 [1 s]
+  Passed GanttScheduler.Tests.HttpTests.과제가_없고_법인도_없으면_첫_설정을_안내한다 [652 ms]
+  Passed GanttScheduler.Tests.HttpTests.관리_CSV_붙여넣기는_관리자만_미리보기와_적용을_할_수_있다 [49 ms]
+  Passed GanttScheduler.Tests.HttpTests.등록_화면의_CSV_붙여넣기는_미리보기와_샘플을_주고_폼_제출로_단계_작업을_만든다 [77 ms]
+  Passed GanttScheduler.Tests.HttpTests.삭제_단추는_권한이_있는_사람에게만_표시한다 [54 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {68f41573-94b7-4d27-a4bd-b44dd441df6b} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+  Passed GanttScheduler.Tests.HttpTests.재계획은_미리본_목록과_사유로_저장하고_선행_연결은_유형과_간격을_JSON_으로_받는다 [126 ms]
+  Passed GanttScheduler.Tests.HttpTests.등록_화면은_목표일_초안을_주고_고친_값으로_등록하면_목표일로_정해진다 [112 ms]
+  Passed GanttScheduler.Tests.HttpTests.목록은_위험_정체_탭과_머리글_정렬_링크_aria_sort_를_그린다 [103 ms]
+  Passed GanttScheduler.Tests.HttpTests.주간_보고와_리드타임_화면은_새_구획과_열을_그린다 [45 ms]
+  Passed GanttScheduler.Tests.HttpTests.작업_여러_개_추가는_미리보기로_해석하고_저장은_한_번에_한다 [96 ms]
+  Passed GanttScheduler.Tests.HttpTests.과제_수정_화면은_오류로_다시_그려도_저장된_담당자를_지금_담당으로_알린다 [23 ms]
+  Passed GanttScheduler.Tests.HttpTests.단계_일정_표는_JSON_으로_한_번에_저장하고_사유가_없거나_버전이_다르면_거절한다 [91 ms]
+  Passed GanttScheduler.Tests.DataAccessHttpTests.페이지에_심는_JSON_은_한글을_그대로_두고_HTML_특수문자는_계속_이스케이프한다 [145 ms]
+  Passed GanttScheduler.Tests.DataAccessTests.변경_이력은_DB_에서_쪽을_나누고_과제_사람_종류로_거른다 [1 s]
+  Passed GanttScheduler.Tests.DataAccessTests.대시보드_간트는_쓰는_값만_실어_과제당_크기가_크게_줄어든다 [101 ms]
+  Passed GanttScheduler.Tests.DataAccessHttpTests.상세_GET_변경_대시보드의_DB_명령_수에_상한이_있다 [1 s]
+  Passed GanttScheduler.Tests.DataAccessTests.목록_상태_탭과_보고는_DB_에서_거른_과제로도_결과가_같다 [2 s]
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.DataAccessHttpTests.대형_과제_상세는_최근_활동만_싣고_응답을_압축한다 [1 s]
+  Passed GanttScheduler.Tests.DataAccessHttpTests.활동은_핸들러로_나눠_받고_변경_이력은_과제로_거른다 [1 s]
+  Passed GanttScheduler.Tests.AdminCommandTests.사용자를_관리자로_만들고_IP를_연결한다 [248 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.명령을_끝까지_실행하면_서버와_같은_설정으로_DB를_연다 [259 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--ip|0x0A.1.2.3") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|  ") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--ip|192.168.001.010") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--ip|10") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍|길동") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--ip|서버") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--port|80") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.잘못된_인자는_이유를_알린다(joined: "admin|홍길동|--ip") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.이름과_IP를_읽는다(args: ["admin", "홍 길동", "--ip", "fd00::12"], name: "홍 길동", ip: "fd00::12") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.이름과_IP를_읽는다(args: ["admin", "홍길동"], name: "홍길동", ip: null) [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.이름과_IP를_읽는다(args: ["admin", "--ip", "::ffff:10.1.2.3", "홍길동"], name: "홍길동", ip: "10.1.2.3") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.이름과_IP를_읽는다(args: ["admin", "홍길동", "--IP", "::1"], name: "홍길동", ip: "127.0.0.1") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.이름과_IP를_읽는다(args: ["admin", " 홍길동 ", "--ip", "10.1.2.3"], name: "홍길동", ip: "10.1.2.3") [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.관리자_명령인지_가린다(args: ["--urls", "http://*:80"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.관리자_명령인지_가린다(args: [], expected: False) [< 1 ms]
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {d185d6b4-0269-4f61-91e1-d9c5f417bf99} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {a8e65d5c-12ae-4060-9d53-d8890cf6e626} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {f04b5556-bccb-47be-82f4-2d61eb3b4c5c} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+  Passed GanttScheduler.Tests.AdminCommandTests.관리자_명령인지_가린다(args: ["admin", "홍길동"], expected: True) [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.관리자_명령인지_가린다(args: ["install"], expected: False) [< 1 ms]
+  Passed GanttScheduler.Tests.AdminCommandTests.DB_파일이_없으면_새로_만들지_않고_끝낸다 [2 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.관리자_이름으로는_새_기기를_연결하지_못한다 [451 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.오래_쓰지_않은_IP_연결은_사용자를_다시_확인한다 [495 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.관리자가_없으면_서버에서_등록한_사람만_관리자가_되고_다른_PC_에는_안내한다 [482 ms]
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {13400407-3bfe-4d7a-b73f-8bc23bf17ec4} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {50b4a2ac-cc04-444a-9a5c-1bd10f51d854} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {d385600e-feef-4d86-8ba2-91d3fb7f35dd} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {c13b18e4-35d1-4781-84d8-f8f4ec2f8361} may be persisted to storage in unencrypted form.
+  Passed GanttScheduler.Tests.AccessHttpTests.프록시를_믿으면_X_Forwarded_For_의_주소로_사용자를_찾는다 [450 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.모든_응답에_보안_헤더를_붙인다 [397 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.허용_대역_밖의_접속은_403으로_거절하고_루프백은_항상_받는다 [406 ms]
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {c48e824e-2172-443d-b6e2-6e7e41e3f691} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {9bd9ea32-7bea-4b76-9429-b4313f21bb4f} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+fail: Microsoft.EntityFrameworkCore.Database.Command[20102]
+      Failed executing DbCommand (0ms) [Parameters=[@me_Ip='?' (Size = 8)], CommandType='Text', CommandTimeout='30']
+      SELECT "u"."Id", "u"."Ip", "u"."LastSeenAt", "u"."UserId", "u0"."Id", "u0"."CreatedAt", "u0"."Email", "u0"."IsActive", "u0"."IsAdmin", "u0"."Name", "u0"."OrgUnitId", "o"."Id", "o"."IsActive", "o"."Level", "o"."Name", "o"."ParentId", "o"."SortOrder", "o0"."Id", "o0"."IsActive", "o0"."Level", "o0"."Name", "o0"."ParentId", "o0"."SortOrder"
+      FROM "UserAddresses" AS "u"
+      INNER JOIN "Users" AS "u0" ON "u"."UserId" = "u0"."Id"
+      LEFT JOIN "OrgUnits" AS "o" ON "u0"."OrgUnitId" = "o"."Id"
+      LEFT JOIN "OrgUnits" AS "o0" ON "o"."ParentId" = "o0"."Id"
+      WHERE "u"."Ip" = @me_Ip
+      LIMIT 1
+fail: Microsoft.EntityFrameworkCore.Query[10100]
+      An exception occurred while iterating over the results of a query for context type 'GanttScheduler.Data.SqliteAppDb'.
+      Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: UserAddresses'.
+         at Microsoft.Data.Sqlite.SqliteException.ThrowExceptionForRC(Int32 rc, sqlite3 db)
+         at Microsoft.Data.Sqlite.SqliteCommand.PrepareAndEnumerateStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteCommand.GetStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReader(CommandBehavior behavior)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+      Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: UserAddresses'.
+         at Microsoft.Data.Sqlite.SqliteException.ThrowExceptionForRC(Int32 rc, sqlite3 db)
+         at Microsoft.Data.Sqlite.SqliteCommand.PrepareAndEnumerateStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteCommand.GetStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReader(CommandBehavior behavior)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: UserAddresses'.
+         at Microsoft.Data.Sqlite.SqliteException.ThrowExceptionForRC(Int32 rc, sqlite3 db)
+         at Microsoft.Data.Sqlite.SqliteCommand.PrepareAndEnumerateStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteCommand.GetStatements()+MoveNext()
+         at Microsoft.Data.Sqlite.SqliteDataReader.NextResult()
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReader(CommandBehavior behavior)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.Data.Sqlite.SqliteCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+         at Microsoft.EntityFrameworkCore.Query.ShapedQueryCompilingExpressionVisitor.SingleOrDefaultAsync[TSource](IAsyncEnumerable`1 asyncEnumerable, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.ShapedQueryCompilingExpressionVisitor.SingleOrDefaultAsync[TSource](IAsyncEnumerable`1 asyncEnumerable, CancellationToken cancellationToken)
+         at GanttScheduler.Services.UserGateMiddleware.InvokeAsync(HttpContext ctx, CurrentUser me, IClock clock, AccessOptions access) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/Identity.cs:line 86
+         at Program.<>c__DisplayClass0_0.<<<Main>$>b__16>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Program.cs:line 190
+      --- End of stack trace from previous location ---
+         at GanttScheduler.Services.JsonErrorMiddleware.InvokeAsync(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/RequestDiagnostics.cs:line 95
+         at Program.<>c.<<<Main>$>b__0_15>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Program.cs:line 174
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Diagnostics.StatusCodePagesMiddleware.Invoke(HttpContext context)
+         at GanttScheduler.Services.RequestTimingMiddleware.InvokeAsync(HttpContext ctx) in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/RequestDiagnostics.cs:line 57
+         at GanttScheduler.Services.SecurityHeaders.<>c.<<UseSecurityHeaders>b__0_0>d.MoveNext() in /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler/Services/Access.cs:line 129
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+         at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+info: Microsoft.Hosting.Lifetime[0]
+      Application is shutting down...
+[xUnit.net 00:00:44.10]   Finished:    GanttScheduler.Tests
+  Passed GanttScheduler.Tests.AccessHttpTests.아는_기기의_등록은_사용자_바꾸기로만_받는다 [426 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.관리자_계정은_재확인을_클릭으로_받지_않고_기기를_옮길_때는_확인을_받는다 [465 ms]
+  Passed GanttScheduler.Tests.AccessHttpTests.상태_확인과_버전은_사용자_DB를_읽지_않는다 [362 ms]
+
+Test Run Successful.
+Total tests: 669
+     Passed: 669
+ Total time: 44.6070 Seconds
