@@ -135,7 +135,7 @@
     </section>
 
     <section class="card" id="risk-card">
-        <header class="card-head"><h2>지연 위험</h2><span class="count">@risk.Count</span><span class="muted">목표일 전이지만 늦어질 신호가 있는 과제</span><partial name="_HelpQ" model='"risk"' /></header>
+        <header class="card-head"><h2>지연 위험</h2><span class="count">@risk.Count</span><span class="muted">지연 징후 과제</span><partial name="_HelpQ" model='"risk"' /></header>
         @if (risk.Count == 0)
         {
             <p class="empty"><svg class="ic"><use href="#i-check" /></svg>지연 위험 신호가 있는 과제가 없습니다.</p>

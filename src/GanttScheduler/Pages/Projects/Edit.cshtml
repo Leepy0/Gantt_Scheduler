@@ -45,7 +45,7 @@
                     </label>
                 }
             </div>
-            <span class="hint">유형에 따라 기본 단계가 만들어집니다. 등록 후에는 바꿀 수 없습니다.</span>
+            <span class="hint">유형별 기본 단계 생성. 등록 후 변경 불가.</span>
         }
         else
         {
@@ -105,18 +105,18 @@
             <span class="label">단계 목표일 <span class="opt">선택</span></span>
             <div id="draft"></div>
             <div id="draft-fields" hidden></div>
-            <span class="hint">유형의 단계별 기본 기간(근무일)으로 계산한 초안입니다. 날짜를 고치면 그 뒤 단계는 고친 날짜부터 다시 계산합니다. 비우면 목표일 미정으로 등록됩니다.</span>
+            <span class="hint">기본 기간(근무일) 초안. 고친 날짜 뒤 단계는 다시 계산. 비우면 미정.</span>
         </div>
         @* 유형 템플릿 작업: 고른 유형에 작업 템플릿이 있을 때만 edit.js 가 보인다(개수 표시) *@
         <div class="field" id="template-works-field" data-field="templateWorks" hidden>
             <label class="check"><input type="checkbox" asp-for="Form.TemplateWorks" id="template-works" /><span id="template-works-label">템플릿 작업 함께 만들기</span></label>
-            <span class="hint">단계마다 유형에 정해 둔 작업을 단계 시작일(첫 단계는 착수일, 이후는 앞 단계 목표일 다음 근무일)부터 근무일로 잡아 만듭니다. 담당은 과제 담당입니다.</span>
+            <span class="hint">유형의 기본 작업을 단계 시작일부터 근무일로 만듭니다. 담당은 과제 담당.</span>
         </div>
         @* 단계·작업 CSV 붙여넣기: 글이 있으면 기본 단계·템플릿 작업 대신 붙여 넣은 단계·작업으로 등록한다. 해석·검증은 서버(project-paste.js 가 미리보기를 받는다) *@
         <div class="field" id="paste-field" data-field="pasteText">
             <span class="label">단계·작업 붙여넣기 <span class="opt">선택</span> <partial name="_HelpQ" model="@("paste")" /></span>
             <textarea asp-for="Form.PasteText" id="paste-text" rows="6" spellcheck="false"
-                      placeholder="단계,작업명,담당,목표 시작,목표 종료,선행 작업명,동시&#10;설계,,,,2026-10-30,,&#10;설계,현장 실사,김물류,2026-10-12,2026-10-14,,&#10;설계,사양 검토,김물류,2026-10-15,2026-10-21,현장 실사,&#10;제작,,,,,,&#10;제작,시제품 제작,,2026-10-22,2026-11-05,사양 검토,&#10;교육,,,,2026-11-05,,동시"></textarea>
+                      placeholder="단계,작업명,담당,목표 시작,목표 종료,선행 단계,선행 작업,동시&#10;설계,,,,2026-10-30,,,&#10;설계,현장 실사,김물류,2026-10-12,2026-10-14,,,&#10;설계,사양 검토,김물류,2026-10-15,2026-10-21,,현장 실사,&#10;제작,,,,,,,&#10;제작,시제품 제작,,2026-10-22,2026-11-05,설계,사양 검토,&#10;교육,,,,2026-11-05,,,동시"></textarea>
             <div class="inline-btns">
                 <button type="button" class="btn small" id="paste-check"><svg class="ic"><use href="#i-search" /></svg>확인</button>
                 <button type="button" class="btn small" id="paste-sample"><svg class="ic"><use href="#i-copy" /></svg>샘플 CSV 복사</button>
@@ -124,9 +124,9 @@
                 <button type="button" class="btn small ghost" id="paste-clear" hidden><svg class="ic"><use href="#i-x" /></svg>비우기</button>
             </div>
             <div id="paste-preview" class="paste-preview"></div>
-            <span class="hint">Excel 이나 CSV 파일의 내용을 붙여 넣습니다. 칸은 쉼표나 TAB 으로 나누고 한 줄에 하나씩: 단계 · 작업명 · 담당 · 목표 시작 · 목표 종료 · 선행 작업명 · 동시.
-                작업명이 비면 단계 줄(목표 종료 칸이 단계 목표일, '동시'에 글자가 있으면 앞 단계와 동시 진행)이고, 작업명이 있으면 그 단계의 작업입니다.
-                붙여 넣은 단계가 있으면 유형의 기본 단계 대신 그 단계로 등록합니다(이름이 같은 기본 단계는 종류·체크리스트를 이어받음). 목표일을 적지 않은 단계는 작업 일정에 맞춥니다. 담당을 비우면 과제 담당입니다.</span>
+            <span class="hint">Excel·CSV 내용을 붙여 넣습니다 (쉼표나 TAB, 한 줄에 하나): 단계 · 작업명 · 담당 · 목표 시작 · 목표 종료 · 선행 단계 · 선행 작업 · 동시.
+                작업명이 비면 단계 줄(목표 종료 = 단계 목표일, 동시에 글자 = 앞 단계와 동시), 있으면 그 단계의 작업입니다. 선행 단계를 비우면 같은 단계의 작업입니다.
+                목표일을 비운 단계는 작업 일정에 맞춥니다. 담당을 비우면 과제 담당입니다.</span>
         </div>
     }
 

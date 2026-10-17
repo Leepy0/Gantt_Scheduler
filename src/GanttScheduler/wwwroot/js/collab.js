@@ -55,7 +55,7 @@
             try {
                 var r = await App.post(App.url('/Projects/Detail?handler=Watch'), { projectId: +btn.dataset.watch, on: on });
                 document.querySelectorAll('[data-watch="' + btn.dataset.watch + '"]').forEach(function (b) { setWatch(b, r.watched); });
-                App.toast(r.watched ? '관심 과제로 두었습니다. 새 소식과 알림을 받습니다.' : '관심 과제에서 뺐습니다.');
+                App.toast(r.watched ? '관심 과제로 지정' : '관심 과제에서 해제');
             } catch (err) { App.toast(err.message, 'error'); }
         });
     });
@@ -66,7 +66,7 @@
     // 본문 글자는 읽는 사람을 위한 표시일 뿐이고, 알림은 칩(고른 사람 Id)이 정한다.
     // people: [{id, name}], initial: 처음 고른 사람 [{id, name}]. 돌려주는 값: { ids(), reset() }
     var listSeq = 0;
-    var HINT = '본문에서 @ 를 치거나 이 칸에 이름을 넣고 목록에서 고르면 그 사람에게 알림이 갑니다.';
+    var HINT = '@ 또는 이름 선택 시 알림';
 
     Collab.mentions = function (box, textarea, people, initial) {
         people = people || [];
@@ -114,7 +114,7 @@
             var name = input.value.trim();
             if (!name) return false;
             var p = people.filter(function (x) { return x.name === name; })[0];
-            if (!p) { say('"' + name + '" 은(는) 목록에 없습니다. 목록에 있는 사람만 고를 수 있습니다.', true); return false; }
+            if (!p) { say('"' + name + '" 은(는) 목록에 없습니다.', true); return false; }
             if (!picked.some(function (x) { return x.id === p.id; })) picked.push({ id: p.id, name: p.name });
             input.value = '';
             say(HINT, false);
@@ -150,7 +150,7 @@
                 // 단어 처음의 '@' 만 (메일 주소 a@b 는 건너뛴다)
                 if (pos > 0 && v.charAt(pos - 1) === '@' && (pos === 1 || /\s/.test(v.charAt(pos - 2)))) {
                     at = pos - 1;
-                    say('알릴 사람의 이름을 넣고 목록에서 고르세요. Esc 로 돌아갑니다.', false);
+                    say('이름을 고르세요. (Esc 취소)', false);
                     input.focus();
                 }
             });

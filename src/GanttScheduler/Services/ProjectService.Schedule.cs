@@ -130,7 +130,7 @@ public partial class ProjectService
             var s = p.Stages.FirstOrDefault(x => x.Id == r.StageId) ?? throw new ConflictException(p.Id);
             CheckVersion(r.Version, s.Version, p.Id);
             // 목표일을 작업 일정에 맞추는 단계(규칙 1 의 예외)는 표가 보낸 목표일을 쓰지 않는다 — 서버가 저장할 때 맞춘다(화면도 칸을 잠근다)
-            if (s.AutoTarget && r.TargetDate != s.TargetDate) r = r with { TargetDate = s.TargetDate };
+            if (s.AutoTarget && s.Works.Count > 0 && r.TargetDate != s.TargetDate) r = r with { TargetDate = s.TargetDate };
             if (s.TargetDate == r.TargetDate && s.CompletedDate == r.CompletedDate) continue;
             // 바뀐 날짜만 범위를 본다 (SaveStageAsync 와 같다). 오류는 표의 그 칸을 가리킨다
             if (s.TargetDate != r.TargetDate) Rules.ValidateDate(r.TargetDate, p.StartDate, $"'{s.Name}' 목표일", $"targetDate.{s.Id}");

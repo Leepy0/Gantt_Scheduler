@@ -34,7 +34,7 @@ public partial class HttpTests
         // 샘플: JSON(복사용)과 CSV 파일(UTF-8 BOM)
         var sample = await client.GetFromJsonAsync<JsonElement>($"/Projects/Edit?handler=PasteSample&categoryId={catId}&start=2026-10-01");
         var text = sample.GetProperty("text").GetString()!;
-        Assert.StartsWith("단계,작업명,담당,목표 시작,목표 종료,선행 작업명,동시\n검토,", text);
+        Assert.StartsWith("단계,작업명,담당,목표 시작,목표 종료,선행 단계,선행 작업명,동시\n검토,", text);
         var file = await client.GetAsync($"/Projects/Edit?handler=PasteSample&categoryId={catId}&start=2026-10-01&download=true");
         Assert.Equal("text/csv", file.Content.Headers.ContentType!.MediaType);
         var bytes = await file.Content.ReadAsByteArrayAsync();

@@ -4,7 +4,8 @@ using Microsoft.EntityFrameworkCore;
 namespace GanttScheduler.Services;
 
 // 붙여넣기·가져오기의 작업 한 줄 (사람이 적은 글자 그대로). Line: 원래 글·시트의 줄 번호(오류 안내에 쓴다)
-public record WorkRowInput(string? Title, string? Owner, string? PlanStart, string? PlanEnd, string? Predecessor, int Line = 0);
+// PredecessorStage: 선행 작업이 있는 단계(비우면 이 작업과 같은 단계). 등록 CSV 는 '선행 단계'와 '선행 작업'을 나눠 적는다
+public record WorkRowInput(string? Title, string? Owner, string? PlanStart, string? PlanEnd, string? Predecessor, int Line = 0, string? PredecessorStage = null);
 
 // 상세 단계의 '작업 여러 개 추가'. Text: 붙여넣은 글(미리보기), Rows: 미리보기가 돌려준 줄(저장)
 public record PreviewWorksInput(int StageId, string? Text);
@@ -34,6 +35,7 @@ public partial class ProjectService
         public const string Start = "목표 시작";
         public const string End = "목표 종료";
         public const string Predecessor = "선행 작업명";
+        public const string PredecessorStage = "선행 단계";
     }
 
     // 붙여넣은 글을 줄로 나눈다: 작업명, 담당, 목표 시작, 목표 종료[, 선행 작업명] (Excel 에서 복사하면 TAB, 아니면 쉼표).
@@ -153,24 +155,45 @@ public partial class ProjectService
             }
         }
 
-        // 선행 작업 이름: 같은 묶음의 다른 줄을 먼저 보고, 없으면 과제에 이미 있는 작업. 같은 이름이 여럿이면 같은 단계의 것, 그래도 여럿이면 문제
-        var existing = Rules.AllWorks(p).ToList();
+        // 선행: (단계, 작업명) 쌍. 단계를 적었으면 그 단계의 작업만, 비우면 같은 단계 작업을 먼저 본다(없으면 다른 단계에서 하나뿐일 때).
+        // 같은 묶음의 다른 줄을 먼저 보고, 없으면 과제에 이미 있는 작업
+        var existing = p.Stages.SelectMany(st => st.Works.Select(w => (Work: w, Stage: st))).ToList();
         foreach (var x in plans)
         {
             var text = x.Input.Predecessor?.Trim();
-            if (string.IsNullOrEmpty(text)) continue;
-            foreach (var name in PredecessorNames(text, plans, existing))
+            var stageText = x.Input.PredecessorStage?.Trim();
+            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(stageText)) continue;
+            if (string.IsNullOrEmpty(text))
             {
-                var inRows = plans.Where(o => o != x && o.Title == name).ToList();
-                if (inRows.Count > 1) { x.Issues.Add(new(WorkColumns.Predecessor, $"선행 작업 '{name}' 이(가) 붙여넣은 줄에 여러 개 있습니다. 이름을 다르게 해 주세요.")); continue; }
+                x.Issues.Add(new(WorkColumns.Predecessor, $"선행 단계 '{stageText}' 의 선행 작업도 적어 주세요."));
+                continue;
+            }
+            var names = PredecessorNames(text, plans, existing.Select(e => e.Work));
+            var stages = string.IsNullOrEmpty(stageText) ? new List<string>() : SplitList(stageText);
+            if (stages.Count > 1 && stages.Count != names.Count)
+            {
+                x.Issues.Add(new(WorkColumns.PredecessorStage, "선행 단계와 선행 작업의 개수가 다릅니다. 단계는 하나만 적거나 작업마다 적어 주세요."));
+                continue;
+            }
+            for (var k = 0; k < names.Count; k++)
+            {
+                var name = names[k];
+                var stageName = stages.Count == 0 ? null : stages.Count == 1 ? stages[0] : stages[k];
+                var label = stageName == null ? $"'{name}'" : $"'{stageName}' 단계의 '{name}'";
+                bool InStage(Stage st) => stageName == null || Same(st.Name, stageName);
+                if (stageName != null && !p.Stages.Any(InStage)) { x.Issues.Add(new(WorkColumns.PredecessorStage, $"선행 단계 '{stageName}' 을(를) 이 과제에서 찾지 못했습니다.")); continue; }
+
+                var inRows = plans.Where(o => o != x && o.Title == name && InStage(o.Stage)).ToList();
+                if (inRows.Count > 1 && stageName == null) inRows = inRows.Where(o => o.Stage == x.Stage).ToList() is { Count: 1 } same ? same : inRows;
+                if (inRows.Count > 1) { x.Issues.Add(new(WorkColumns.Predecessor, $"선행 작업 {label} 이(가) 붙여넣은 줄에 여러 개 있습니다. 이름을 다르게 하거나 선행 단계를 적어 주세요.")); continue; }
                 if (inRows.Count == 1) { x.Preds.Add((inRows[0], null)); continue; }
-                if (x.Title == name) { x.Issues.Add(new(WorkColumns.Predecessor, "자기 자신을 선행으로 둘 수 없습니다.")); continue; }
-                var found = existing.Where(w => w.Title == name).ToList();
-                if (found.Count > 1) found = found.Where(w => x.Stage.Works.Contains(w)).ToList();
-                if (found.Count == 1) x.Preds.Add((null, found[0]));
+                if (x.Title == name && InStage(x.Stage)) { x.Issues.Add(new(WorkColumns.Predecessor, "자기 자신을 선행으로 둘 수 없습니다.")); continue; }
+                var found = existing.Where(e => e.Work.Title == name && InStage(e.Stage)).ToList();
+                if (found.Count > 1 && stageName == null) found = found.Where(e => ReferenceEquals(e.Stage, x.Stage)).ToList() is { Count: 1 } same ? same : found;
+                if (found.Count == 1) x.Preds.Add((null, found[0].Work));
                 else x.Issues.Add(new(WorkColumns.Predecessor, found.Count == 0
-                    ? $"선행 작업 '{name}' 을(를) 이 과제에서 찾지 못했습니다."
-                    : $"선행 작업 '{name}' 이(가) 과제에 여러 개 있습니다."));
+                    ? $"선행 작업 {label} 을(를) 이 과제에서 찾지 못했습니다."
+                    : $"선행 작업 {label} 이(가) 과제에 여러 개 있습니다. 선행 단계를 적어 주세요."));
             }
         }
 
@@ -203,11 +226,14 @@ public partial class ProjectService
     }
 
     // 선행 칸의 이름들. 칸 전체가 작업 이름이면 그 하나, 아니면 쉼표·세미콜론으로 나눈다(이름에 쉼표가 있어도 통째로 맞으면 그대로)
-    private static IEnumerable<string> PredecessorNames(string text, List<WorkRowPlan> plans, List<WorkItem> existing)
+    private static List<string> PredecessorNames(string text, List<WorkRowPlan> plans, IEnumerable<WorkItem> existing)
     {
-        if (plans.Any(x => x.Title == text) || existing.Any(w => w.Title == text)) return new[] { text };
-        return text.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct();
+        if (plans.Any(x => x.Title == text) || existing.Any(w => w.Title == text)) return new List<string> { text };
+        return SplitList(text);
     }
+
+    private static List<string> SplitList(string text) =>
+        text.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToList();
 
     private static DateOnly? ReadDate(WorkRowPlan x, string? text, string column, DateOnly today, bool required)
     {

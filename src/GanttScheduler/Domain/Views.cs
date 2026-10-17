@@ -73,6 +73,7 @@ public record StageView
     public bool Parallel { get; init; }                 // 앞 단계와 동시 진행 (규칙 23)
     public bool AutoTarget { get; init; }               // 목표일을 작업 일정에 맞춤 (서버가 저장할 때마다 맞춘다)
     public DateOnly? WorksFrom { get; init; }           // 작업들의 가장 이른 목표 시작 (작업이 있을 때)
+    public DateOnly? WorksActualFrom { get; init; }     // 작업들의 가장 이른 실적 시작 (시작한 작업이 있을 때) — 단계 실행 막대가 작업보다 늦게 시작하지 않게
     public DateOnly? WorksTo { get; init; }             // 작업들의 가장 늦은 목표 종료 (작업이 있을 때)
 }
 
@@ -186,7 +187,7 @@ public record BaselineView(int No, DateTime At, string User, string? Reason);
 // 페이지가 수 MB 가 된다. 값은 Views.Project 가 계산한 것을 그대로 옮긴다(계산 규칙은 한 곳)
 public record TimelineStageView(
     string Name, string Status, DateOnly? PlanFrom, DateOnly? TargetDate, DateOnly? ActualFrom, DateOnly? ActualTo,
-    DateOnly? CompletedDate, int LateDays, bool DoneLate);
+    DateOnly? CompletedDate, int LateDays, bool DoneLate, DateOnly? WorksFrom = null, DateOnly? WorksActualFrom = null);
 
 // RiskDays·AtRisk·Stale·Risk(첫 위험 이유): 조기 경보 — 간트 이름 칸에 '예상 +n일'·정체 표시
 public record TimelineView(int Id, string Title, string Corporation, string? CurrentStage, int DelayDays, int Progress, List<TimelineStageView> Stages,
@@ -194,7 +195,7 @@ public record TimelineView(int Id, string Title, string Corporation, string? Cur
 {
     public static TimelineView From(ProjectView p) => new(p.Id, p.Title, p.Corporation, p.CurrentStage, p.DelayDays, p.Progress,
         p.Stages.Select(s => new TimelineStageView(s.Name, s.Status, s.PlanFrom, s.TargetDate, s.ActualFrom, s.ActualTo,
-            s.CompletedDate, s.LateDays, s.DoneLate)).ToList(),
+            s.CompletedDate, s.LateDays, s.DoneLate, s.WorksFrom, s.WorksActualFrom)).ToList(),
         p.RiskDays, p.AtRisk, p.Stale, p.Risks.FirstOrDefault()?.Text);
 }
 
@@ -389,6 +390,7 @@ public static class Views
                 Parallel = parallel,
                 AutoTarget = s.AutoTarget,
                 WorksFrom = Rules.WorksStart(s),
+                WorksActualFrom = s.Works.Where(w => w.ActualStart != null).Min(w => w.ActualStart),
                 WorksTo = s.Works.Count > 0 ? s.Works.Max(w => w.PlanEnd) : null,
             });
 

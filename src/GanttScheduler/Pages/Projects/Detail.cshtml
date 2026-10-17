@@ -47,6 +47,10 @@
             <span class="spacer"></span>
             @* 오늘 기준 예측과 목표가 다른 미착수 작업이 있을 때만 보인다 (서버가 센 ProjectView.ReplanCount) *@
             <button type="button" class="btn small" id="replan" hidden><svg class="ic"><use href="#i-refresh" /></svg>재계획 <span class="count" id="replan-count"></span></button>
+            <span class="seg small" id="stage-sort" role="group" aria-label="단계 정렬">
+                <button type="button" data-sort="start" title="단계를 시작일순으로 정렬">시작순</button>
+                <button type="button" data-sort="end" title="단계를 종료일순으로 정렬">종료순</button>
+            </span>
             <button type="button" class="btn small" id="edit-schedule"><svg class="ic"><use href="#i-calendar" /></svg>단계 일정 편집</button>
             <button type="button" class="btn small" id="add-stage"><svg class="ic"><use href="#i-plus" /></svg>단계</button>
             <button type="button" class="btn small primary" id="add-work"><svg class="ic"><use href="#i-plus" /></svg>작업</button>
@@ -57,14 +61,14 @@
                 <span><i class="lg plan"></i>목표</span>
                 <span><i class="lg done"></i>실적(완료)</span>
                 <span><i class="lg cur"></i>실적(진행 중)</span>
-                <span><i class="lg over"></i>목표 초과 완료</span>
+                <span><i class="lg over"></i>초과 완료</span>
                 <span><i class="lg late"></i>지연</span>
                 <span><i class="lg ghost"></i>시작 전</span>
-                <span><i class="lg ghost fc"></i>예상이 목표보다 늦음</span>
-                <span><i class="lg fc"></i>작업 기준 예상 종료</span>
+                <span><i class="lg ghost fc"></i>예상 지연</span>
+                <span><i class="lg fc"></i>예상 종료</span>
                 <span><i class="lg base"></i>기준선</span>
-                <span><i class="lg crit"></i>임계(여유 없음)</span>
-                <span class="hide-sm">막대를 끌어 일정 변경</span>
+                <span><i class="lg crit"></i>임계</span>
+                <span class="hide-sm">막대를 끌어 변경</span>
             </div>
         </div>
         <div id="schedule-list" class="stage-list" hidden></div>
@@ -84,7 +88,7 @@
                     <select id="file-stage"></select>
                 </label>
             </div>
-            <span class="hint">이미지·PDF·Office·한글·zip 파일, @(Model.UploadMaxMB)MB 이하</span>
+            <span class="hint">이미지·PDF·Office·한글·zip, @(Model.UploadMaxMB)MB 이하</span>
             <div class="form-actions"><button type="submit" class="btn primary" id="upload-btn"><svg class="ic"><use href="#i-upload" /></svg>올리기</button></div>
         </form>
         @* 과제 첨부 합계(와 정했으면 상한 Storage:ProjectMaxMB) — 목록 위 한 줄 *@
@@ -95,8 +99,8 @@
     <section class="tab-panel" id="tab-activity" hidden>
         <form class="card comment-form" id="comment-form">
             <label class="field">
-                <span class="label">진행 내용 남기기</span>
-                <textarea id="comment-text" rows="2" maxlength="@Limits.ActivityText" placeholder="진행 상황이나 이슈를 남겨 주세요 (@@ 로 알릴 사람 고르기, 이미지는 붙여 넣거나 단추로)"></textarea>
+                <span class="label">진행 내용</span>
+                <textarea id="comment-text" rows="2" maxlength="@Limits.ActivityText" placeholder="진행 내용 (@@ 로 알릴 사람, 이미지 붙여넣기)"></textarea>
             </label>
             @* 알릴 사람(멘션): 목록에서 고른 사람에게만 알린다 (collab.js 의 Collab.mentions) *@
             <div id="comment-mentions" data-field="mentions"></div>

@@ -282,19 +282,44 @@ function fillTemplate(template, sheets) {
     return zip(files);
 }
 
+// 시트 분류 칸에 숨은 입력을 다루기 전에 그 칸의 탭을 눌러 연다 (Page·Locator 의 입력 메서드를 한 번 감싼다)
+function patchPanes(anyPage) {
+    const reveal = (els) => els.forEach((el) => {
+        const pane = el.closest('[data-pane]');
+        if (!pane || !pane.hidden) return;
+        const dlg = el.closest('dialog');
+        const tab = dlg && dlg.querySelector('[data-pane-tab="' + pane.dataset.pane + '"]');
+        if (tab) tab.click();
+    });
+    const PageProto = Object.getPrototypeOf(anyPage);
+    const LocProto = Object.getPrototypeOf(anyPage.locator('body'));
+    for (const m of ['click', 'dblclick', 'fill', 'check', 'uncheck', 'press', 'selectOption', 'hover', 'focus', 'type', 'setInputFiles', 'scrollIntoViewIfNeeded', 'dispatchEvent', 'isVisible', 'textContent', 'innerText', 'getAttribute', 'evaluate', 'inputValue', 'isChecked']) {
+        const orig = LocProto[m];
+        if (!orig || orig.__panes) continue;
+        LocProto[m] = Object.assign(async function (...a) { await this.evaluateAll(reveal).catch(() => {}); return orig.apply(this, a); }, { __panes: true });
+    }
+    for (const m of ['click', 'dblclick', 'fill', 'check', 'uncheck', 'press', 'selectOption', 'hover', 'focus', 'type', 'waitForSelector', 'setInputFiles', 'dispatchEvent', 'isVisible', 'isChecked', 'inputValue', 'textContent', 'innerText', 'getAttribute']) {
+        const orig = PageProto[m];
+        if (!orig || orig.__panes) continue;
+        PageProto[m] = Object.assign(async function (sel, ...a) {
+            if (typeof sel === 'string') await this.locator(sel).evaluateAll(reveal).catch(() => {});
+            return orig.call(this, sel, ...a);
+        }, { __panes: true });
+    }
+}
+
 (async () => {
     const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
-    // 작업 시트의 '작업 정보·일정·선행·메모'는 기본으로 접혀 있고 펼침을 기억한다(App.pref). 여러 단계가 그 칸을 직접 고치므로
-    // 모든 화면을 펼친 것으로 시작한다(처음 저장소 값). 접힌 기본 모양은 '작업 시트 빠른 갱신' 단계가 따로 확인한다.
+    // 작업·단계 시트는 정보·일정·진행 칸으로 나뉘어 있고 한 번에 한 칸만 보인다. 여러 단계가 다른 칸의 입력을 바로 다루므로,
+    // 입력·누름 앞에서 그 입력이 든 칸의 탭을 먼저 눌러 연다(patchPanes). 칸 나눔 자체는 '시트 분류 칸' 단계가 따로 확인한다.
     // (addInitScript 는 이 환경에서 route.fetch 를 멈추게 해 쓰지 않는다)
     const plainContext = browser.newContext.bind(browser);
-    browser.newContext = (opts) => plainContext(Object.assign({
-        storageState: { cookies: [], origins: [{ origin: new URL(BASE).origin, localStorage: [{ name: 'gs.detail.workMore', value: '1' }] }] },
-    }, opts));
+    browser.newContext = (opts) => plainContext(opts);
 
     // ── 데스크톱 ────────────────────────────────────────────────────
     const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'ko-KR', timezoneId: 'Asia/Seoul' });
     const page = await desktop.newPage();
+    patchPanes(page);
     home = active = page;
     watch(page, 'desktop');
     page.setDefaultTimeout(10000);
@@ -322,6 +347,24 @@ function fillTemplate(template, sheets) {
         await page.click('#zoom [data-zoom=day]');
         assert((await page.locator('#gantt .g-tick.today').count()) === 1, '오늘 눈금이 없음');
         await page.click('#zoom [data-zoom=week]');
+    });
+
+    await step('대시보드 간트 — 겹치는 단계(동시 진행)는 줄을 나눠 최대 5줄, 겹치지 않는 과제는 한 줄 높이', async () => {
+        const heights = await page.evaluate(() => Array.from(document.querySelectorAll('#gantt .g-row.project')).map((r) => ({
+            title: r.querySelector('.g-name-title').textContent, h: Math.round(r.getBoundingClientRect().height),
+            bars: r.querySelectorAll('.g-bar').length })));
+        const sim = heights.find((x) => x.title.includes('Simulation'));
+        assert(sim && sim.h > 50 && sim.h <= 8 + 5 * 26, '동시 진행 과제가 줄을 나누지 않았거나 5줄을 넘음: ' + JSON.stringify(sim));
+        assert(heights.some((x) => x.h === 50), '겹치지 않는 과제는 한 줄(50px)이어야 함: ' + JSON.stringify(heights));
+        // 같은 줄 안에서는 목표 막대끼리 겹치지 않는다
+        const overlap = await page.evaluate(() => {
+            const row = Array.from(document.querySelectorAll('#gantt .g-row.project')).find((r) => r.textContent.includes('Simulation'));
+            const bars = Array.from(row.querySelectorAll('.g-bar.plan')).map((b) => ({ t: b.offsetTop, l: b.offsetLeft, r: b.offsetLeft + b.offsetWidth }));
+            for (let i = 0; i < bars.length; i++) for (let j = i + 1; j < bars.length; j++)
+                if (bars[i].t === bars[j].t && bars[i].l < bars[j].r && bars[j].l < bars[i].r) return true;
+            return false;
+        });
+        assert(!overlap, '같은 줄에서 목표 막대가 겹침');
     });
 
     await step('내 이름 → 사용자 바꾸기 화면, 보안 헤더', async () => {
@@ -804,7 +847,7 @@ function fillTemplate(template, sheets) {
 
         await page.click('#files [data-delete-file]');
         await page.click(SHEET + ' [data-yes]');
-        await page.waitForFunction(() => document.getElementById('files').innerText.includes('올린 자료가 없습니다'));
+        await page.waitForFunction(() => document.getElementById('files').innerText.includes('자료 없음'));
         await page.click('.tabs [data-tab=schedule]');
         await page.click('#view-mode [data-view=gantt]');
     });
@@ -2041,24 +2084,24 @@ function fillTemplate(template, sheets) {
             const r = await fetch('/Projects/Edit?handler=PasteSample&categoryId=' + cat + '&start=' + start, { headers: { Accept: 'application/json' } });
             return (await r.json()).text;
         });
-        assert(sample.startsWith('단계,작업명,담당,목표 시작,목표 종료,선행 작업명,동시\n'), '샘플 CSV 머리글이 다름: ' + sample.slice(0, 60));
+        assert(sample.startsWith('단계,작업명,담당,목표 시작,목표 종료,선행 단계,선행 작업명,동시\n'), '샘플 CSV 머리글이 다름: ' + sample.slice(0, 60));
         const lines = sample.trim().split('\n');
         const lastTarget = lines[lines.length - 1].split(',')[4] || lines[1].split(',')[4];
-        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,동시\n');
+        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,,동시\n');
         await page.waitForSelector('#paste-preview table[data-paste-stages]');
         // 붙여 넣은 글이 있으면 기본 단계 초안·템플릿 작업은 숨긴다
         assert(await page.locator('#draft-field').isHidden(), '초안 표가 숨겨지지 않음');
         const stagesText = await page.locator('#paste-preview table[data-paste-stages]').innerText();
-        assert(stagesText.includes('앞 단계와 동시'), '동시 진행 표시가 미리보기에 없음');
+        assert(stagesText.includes('동시'), '동시 진행 표시가 미리보기에 없음');
         assert((await page.locator('#paste-preview table[data-paste-works] tbody tr:not(.row-bad-detail)').count()) === 2, '샘플의 작업 두 줄이 보이지 않음');
         assert((await page.locator('#paste-preview [data-paste-summary]').innerText()).includes('붙여 넣은 단계 4개'), '요약이 다름');
         await shot(page, 'd60-edit-paste-preview');
         // 틀린 줄은 그 줄 아래에 문제를 적고 등록을 막는다
-        await page.fill('#paste-text', sample + '교육,,,,2099-13-01,,동시\n');
+        await page.fill('#paste-text', sample + '교육,,,,2099-13-01,,,동시\n');
         await page.waitForSelector('#paste-preview .row-bad');
         await page.click('#edit-form button[type=submit]');
         assert(page.url().includes('/Projects/Edit'), '문제가 있는데 등록됨');
-        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,동시\n');
+        await page.fill('#paste-text', sample + '교육,,,,' + lastTarget + ',,,동시\n');
         await page.waitForSelector('#paste-preview table[data-paste-stages]');
         await page.waitForFunction(() => !document.querySelector('#paste-preview .row-bad'));
         await page.click('#edit-form button[type=submit]');
@@ -2452,44 +2495,107 @@ function fillTemplate(template, sheets) {
         await page.waitForFunction(() => document.getElementById('feed').textContent.includes('현장 배선 절반 완료'));
     });
 
-    await step('작업 시트 빠른 갱신 — 맨 위 진행률 칩·진행 내용, 일정·선행·메모는 접힘(새 작업은 펼침)', async () => {
-        await page.evaluate(() => App.pref.set('detail.workMore', '0'));
-        try {
-            await openProject(page, '본사 A제품 3라인 AGV 도입');
-            const open = worksOf(await projectData(page)).find((w) => !w.actualEnd && !w.closedOn);
-            assert(open, '열린 작업이 없음');
-            // 같은 주소에 해시만 바꾸면 다시 읽지 않으므로 한 번 비운 뒤 연다(상세는 #w{id} 로 작업 시트를 연다)
-            const url = page.url().replace(/#.*/, '') + '#w' + open.id;
-            await page.goto('about:blank');
-            await page.goto(url);
-            await page.waitForSelector(SHEET + ' [data-quick]');
-            assert(!(await page.locator(SHEET + ' [data-work-more-fields]').evaluate((d) => d.open)), '일정·선행·메모가 펼쳐져 있음');
-            assert(await page.locator(SHEET + ' input[name=planStart]').isHidden(), '접혔는데 목표 시작이 보임');
-            const quickTop = await page.evaluate(() => {
-                const q = document.querySelector('dialog.sheet[open] [data-quick]');
-                const t = document.querySelector('dialog.sheet[open] [data-work-more-fields]');
-                return q.getBoundingClientRect().top < t.getBoundingClientRect().top;
-            });
-            assert(quickTop, '빠른 갱신이 맨 위가 아님');
-            await page.click(SHEET + ' [data-quick-progress="75"]');
-            assert((await page.inputValue(SHEET + ' input[name=progress]')) === '75', '칩이 진행률을 바꾸지 않음');
-            assert((await page.locator(SHEET + ' [data-quick-progress="75"]').getAttribute('aria-pressed')) === 'true', '누른 칩이 눌림 표시가 아님');
-            await page.fill(SHEET + ' [data-quick-note]', '시운전 준비 중');
-            await shot(page, 'd58-work-sheet-quick', false);
-            await submitSheet(page);
-            const saved = worksOf(await projectData(page)).find((w) => w.id === open.id);
-            assert(saved.progress === 75 && saved.actualStart, '저장한 진행률(75%)·실적 시작이 없음');
-            await page.click('.tabs [data-tab=activity]');
-            await page.waitForFunction(() => document.getElementById('feed').textContent.includes('시운전 준비 중'));
-            // 새 작업 추가는 처음부터 펼친다(작업명·일정을 먼저 정해야 하므로)
-            await page.click('.tabs [data-tab=schedule]');
-            await page.click('#add-work');
-            await page.waitForSelector(SHEET + ' [data-work-more-fields][open]');
-            assert(await page.locator(SHEET + ' input[name=title]').isVisible(), '새 작업인데 작업명이 접혀 있음');
-            await closeSheet(page);
-        } finally {
-            await page.evaluate(() => App.pref.set('detail.workMore', '1'));
-        }
+    await step('시트 분류 칸 — 작업 시트는 정보·일정·진행, 기존 작업은 진행 칸(빠른 갱신 맨 위)이 먼저, 새 작업은 정보 칸이 먼저, 오류는 그 입력의 칸으로', async () => {
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
+        await page.evaluate(() => App.pref.set('sheet.tab.work', ''));
+        const open = worksOf(await projectData(page)).find((w) => !w.actualEnd && !w.closedOn);
+        assert(open, '열린 작업이 없음');
+        // 같은 주소에 해시만 바꾸면 다시 읽지 않으므로 한 번 비운 뒤 연다(상세는 #w{id} 로 작업 시트를 연다)
+        const url = page.url().replace(/#.*/, '') + '#w' + open.id;
+        await page.goto('about:blank');
+        await page.goto(url);
+        await page.waitForSelector(SHEET + ' [data-quick]');
+        const panes = () => page.evaluate(() => {
+            const d = document.querySelector('dialog.sheet[open]');
+            const on = d.querySelector('[data-pane-tab].on');
+            return {
+                tabs: Array.from(d.querySelectorAll('[data-pane-tab]')).map((b) => b.textContent.trim()).join('|'),
+                on: on && on.dataset.paneTab,
+                hidden: Array.from(d.querySelectorAll('[data-pane]')).filter((p) => p.hidden).map((p) => p.dataset.pane).sort().join(','),
+            };
+        });
+        let st = await panes();
+        assert(st.tabs === '정보|일정|진행', '작업 시트 탭이 정보|일정|진행이 아님: ' + st.tabs);
+        assert(st.on === 'progress' && st.hidden === 'info,plan', '기존 작업은 진행 칸만 보여야 함: ' + JSON.stringify(st));
+        assert(await page.evaluate(() => document.activeElement.matches('[data-quick-note]')), '첫 포커스가 빠른 갱신의 진행 내용이 아님');
+        const quickTop = await page.evaluate(() => {
+            const q = document.querySelector('dialog.sheet[open] [data-quick]');
+            const p = document.querySelector('dialog.sheet[open] [data-pane=progress]');
+            return p.firstElementChild === q || p.contains(q);
+        });
+        assert(quickTop, '빠른 갱신이 진행 칸에 없음');
+        await page.click(SHEET + ' [data-quick-progress="75"]');
+        assert((await page.inputValue(SHEET + ' input[name=progress]')) === '75', '칩이 진행률을 바꾸지 않음');
+        assert((await page.locator(SHEET + ' [data-quick-progress="75"]').getAttribute('aria-pressed')) === 'true', '누른 칩이 눌림 표시가 아님');
+        await page.fill(SHEET + ' [data-quick-note]', '시운전 준비 중');
+        // 일정 칸: 선행 후보는 같은 단계만, '다른 단계 표시'를 켜면 다른 단계만
+        await page.click(SHEET + ' [data-pane-tab=plan]');
+        st = await panes();
+        assert(st.on === 'plan' && st.hidden === 'info,progress', '일정 탭을 눌렀는데 일정 칸만 보이지 않음: ' + JSON.stringify(st));
+        const shown = () => page.evaluate(() => Array.from(document.querySelectorAll('dialog.sheet[open] .pre-row')).filter((r) => !r.hidden)
+            .map((r) => r.dataset.preStage));
+        const stageNow = await page.inputValue(SHEET + ' select[name=stageId]');
+        const total = await page.locator(SHEET + ' .pre-row').count();
+        const same = await shown();
+        assert(same.length > 0 && same.every((x) => x === stageNow), '선행 후보가 같은 단계 작업만이 아님');
+        await page.check(SHEET + ' [data-pre-other]');
+        const other = await shown();
+        assert(other.every((x) => x !== stageNow), '다른 단계 표시에 같은 단계 작업이 섞여 있음');
+        assert(same.length + other.length === total, '같은 단계 + 다른 단계 후보가 전체와 다름');
+        assert((await page.locator(SHEET + ' [data-pre-empty]').isHidden()) === (other.length > 0), '후보가 없을 때만 없음 안내가 보여야 함');
+        await shot(page, 'd58-work-sheet-quick', false);
+        await page.click(SHEET + ' [data-pane-tab=progress]');
+        await submitSheet(page);
+        const saved = worksOf(await projectData(page)).find((w) => w.id === open.id);
+        assert(saved.progress === 75 && saved.actualStart, '저장한 진행률(75%)·실적 시작이 없음');
+        await page.click('.tabs [data-tab=activity]');
+        await page.waitForFunction(() => document.getElementById('feed').textContent.includes('시운전 준비 중'));
+        // 마지막으로 본 칸을 기억하고(App.pref), 새 작업은 늘 정보 칸에서 시작한다(작업명을 먼저 정해야 하므로)
+        await page.click('.tabs [data-tab=schedule]');
+        await page.click('#add-work');
+        await page.waitForSelector(SHEET + ' [data-pane-tab]');
+        st = await panes();
+        assert(st.on === 'info' && st.hidden === 'plan,progress', '새 작업은 정보 칸이 먼저여야 함: ' + JSON.stringify(st));
+        assert(await page.locator(SHEET + ' input[name=title]').isVisible(), '새 작업인데 작업명이 보이지 않음');
+        // 다른 칸에서 저장해 작업명 오류가 나면 작업명이 있는 정보 칸으로 돌아온다
+        await page.fill(SHEET + ' input[name=title]', '');
+        await page.click(SHEET + ' [data-pane-tab=plan]');
+        await page.locator(SHEET + ' button[type=submit]').click();
+        await page.waitForFunction(() => document.querySelector('dialog.sheet[open] [data-pane-tab].on').dataset.paneTab === 'info');
+        assert((await sheetError(page)).includes('작업명'), '작업명 오류 안내가 없음');
+        await closeSheet(page);
+    });
+
+    await step('단계 순서 — 정렬(시작순·종료순)과 끌어 놓기, 단계 시트는 정보·일정·진행, 새 단계는 작업 일정에 맞춤이 기본', async () => {
+        await openProject(page, '본사 A제품 3라인 AGV 도입');
+        await page.click('#add-stage');
+        await page.waitForSelector(SHEET + ' [data-pane-tab]');
+        assert((await page.evaluate(() => Array.from(document.querySelectorAll('dialog.sheet[open] [data-pane-tab]')).map((b) => b.textContent.trim()).join('|'))) === '정보|일정',
+            '새 단계 탭이 정보|일정이 아님');
+        assert(await page.locator(SHEET + ' input[name=autoTarget]').isChecked(), '새 단계의 작업 일정에 맞춤이 기본으로 켜져 있지 않음');
+        await closeSheet(page);
+
+        const names = async () => (await projectData(page)).stages.map((s) => s.name);
+        const before = await names();
+        // 종료순 정렬: 목표일 오름차순(날짜 없는 단계는 뒤)
+        await page.click('#stage-sort [data-sort=end]');
+        await page.waitForFunction(() => document.getElementById('toasts').textContent.includes('종료순'));
+        const data = await projectData(page);
+        const ends = data.stages.map((s) => s.targetDate || '9999');
+        assert(ends.every((d, i) => i === 0 || ends[i - 1] <= d), '종료순 정렬이 아님: ' + ends.join(','));
+        await page.click('#stage-sort [data-sort=start]');
+        await page.waitForFunction(() => document.getElementById('toasts').textContent.includes('시작순'));
+        assert((await names()).length === before.length, '정렬 뒤 단계 수가 달라짐');
+
+        // 끌어 놓기: 마지막 단계의 손잡이를 첫 단계 위로
+        const order0 = await names();
+        const grips = page.locator('#gantt .g-row.stage .g-grip');
+        assert((await grips.count()) === order0.length, '단계 행마다 손잡이가 있어야 함');
+        await grips.nth(order0.length - 1).dragTo(page.locator('#gantt .g-row.stage').first(), { targetPosition: { x: 40, y: 4 } });
+        await page.waitForFunction((first) => document.querySelector('#gantt .g-row.stage .g-name-title').textContent !== first, order0[0]);
+        const order1 = await names();
+        assert(order1[0] === order0[order0.length - 1], '끌어 놓은 단계가 맨 앞으로 가지 않음: ' + order1.join(','));
+        await shot(page, 'd58b-stage-drag', false);
     });
 
     // ── 입력 부담 줄이기·Excel 가져오기 ──
@@ -2834,25 +2940,23 @@ function fillTemplate(template, sheets) {
         await shot(m, 'm14-my-quick');
     });
 
-    await step('모바일 작업 시트 빠른 갱신 — 맨 위 칩, 접힌 일정', async () => {
+    await step('모바일 작업 시트 빠른 갱신 — 진행 칸의 칩, 일정은 다른 칸', async () => {
         await m.goto(BASE + '/Projects?state=all');
-        await m.evaluate(() => App.pref.set('detail.workMore', '0'));
-        try {
-            await m.locator('.ptable-row', { hasText: '본사 A제품 3라인 AGV 도입' }).first().click();
-            await m.waitForSelector('#summary .summary-meta');
-            const open = worksOf(await projectData(m)).find((w) => !w.actualEnd && !w.closedOn);
-            const url = m.url().replace(/#.*/, '') + '#w' + open.id;
-            await m.goto('about:blank');
-            await m.goto(url);
-            await m.waitForSelector(SHEET + ' [data-quick]');
-            const box = await m.locator(SHEET + ' [data-quick-progress="50"]').boundingBox();
-            assert(box && box.height >= 48, '시트의 진행률 칩 높이가 48px 미만');
-            assert(await m.locator(SHEET + ' input[name=planStart]').isHidden(), '모바일에서 일정이 접혀 있지 않음');
-            await shot(m, 'm05c-work-sheet-quick', false);
-            await closeSheet(m);
-        } finally {
-            await m.evaluate(() => App.pref.set('detail.workMore', '1'));
-        }
+        await m.evaluate(() => App.pref.set('sheet.tab.work', ''));
+        await m.locator('.ptable-row', { hasText: '본사 A제품 3라인 AGV 도입' }).first().click();
+        await m.waitForSelector('#summary .summary-meta');
+        const open = worksOf(await projectData(m)).find((w) => !w.actualEnd && !w.closedOn);
+        const url = m.url().replace(/#.*/, '') + '#w' + open.id;
+        await m.goto('about:blank');
+        await m.goto(url);
+        await m.waitForSelector(SHEET + ' [data-quick]');
+        const box = await m.locator(SHEET + ' [data-quick-progress="50"]').boundingBox();
+        assert(box && box.height >= 48, '시트의 진행률 칩 높이가 48px 미만');
+        assert(await m.locator(SHEET + ' input[name=planStart]').isHidden(), '모바일에서 일정 칸이 숨겨져 있지 않음');
+        const tab = await m.locator(SHEET + ' [data-pane-tab=plan]').boundingBox();
+        assert(tab && tab.height >= 40, '탭 높이가 터치 크기보다 작음: ' + (tab && tab.height));
+        await shot(m, 'm05c-work-sheet-quick', false);
+        await closeSheet(m);
     });
 
     await step('모바일 과제 목록', async () => {

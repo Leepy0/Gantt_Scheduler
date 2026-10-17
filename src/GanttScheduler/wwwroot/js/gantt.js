@@ -9,6 +9,7 @@
 //          fromSide/toSide: 'start'|'end' (기본 끝 → 시작 = FS. 같이 시작 SS 는 시작 → 시작, 같이 끝 FF 는 끝 → 끝)
 //   today, holidays: [{date, name}], zoom: 'day'|'week'|'month', corner,
 //   onRowClick(row), onToggle(row), onBarDrag(row, bar, {from, to}), keepScroll,
+//   onReorder(row, target, after): 행(r.reorder = true)의 손잡이를 끌어 다른 reorder 행의 앞(after=false)·뒤(true)에 놓았을 때,
 //   fit: 전체 폭(px) — 인쇄처럼 가로 스크롤 없이 모든 일정을 한 폭에 담아야 할 때. 하루 폭을 배율 값 이하로 줄여 맞춘다
 // })
 window.Gantt = (function () {
@@ -148,6 +149,11 @@ window.Gantt = (function () {
         var suppressClick = false;     // 드래그 직후의 클릭은 행 클릭으로 치지 않는다
         var geometry = {};             // 행 key → { top, anchor: {x1, x2, y} } (의존선용)
         var top = PAD;
+        var dragRow = null;            // 순서를 바꾸려고 끌고 있는 행
+        var rowEls = [];
+        function clearDrop() {
+            rowEls.forEach(function (e) { e.classList.remove('drop-before', 'drop-after', 'reorder-src'); });
+        }
 
         rows.forEach(function (r, ri) {
             var height = r.height || 48;
@@ -157,6 +163,8 @@ window.Gantt = (function () {
             var name = el(r.href ? 'a' : 'div', 'g-name');
             if (r.href) name.href = r.href;
             var nameHtml = '';
+            var reorder = !!(r.reorder && opts.onReorder);
+            if (reorder) nameHtml += '<span class="g-grip" draggable="true" title="끌어서 순서 변경" aria-hidden="true">' + App.icon('grip') + '</span>';
             if (r.toggle) {
                 nameHtml += '<button type="button" class="g-toggle" aria-expanded="' + (r.toggle.expanded ? 'true' : 'false') +
                     '" aria-label="작업 펼치기/접기">' + App.icon('down') + '</button>';
@@ -169,6 +177,36 @@ window.Gantt = (function () {
             name.innerHTML = nameHtml;
             name.title = r.title + (r.sub ? ' · ' + r.sub : '');
             row.appendChild(name);
+            rowEls.push(row);
+            if (reorder) {
+                var grip = name.querySelector('.g-grip');
+                grip.addEventListener('dragstart', function (e) {
+                    dragRow = r;
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', r.key);
+                    try { e.dataTransfer.setDragImage(row, 16, 16); } catch (err) { /* 무시 */ }
+                    row.classList.add('reorder-src');
+                });
+                grip.addEventListener('dragend', function () { dragRow = null; clearDrop(); });
+                row.addEventListener('dragover', function (e) {
+                    if (!dragRow || dragRow === r) return;
+                    e.preventDefault();
+                    var rc = row.getBoundingClientRect();
+                    var after = e.clientY > rc.top + rc.height / 2;
+                    row.classList.toggle('drop-before', !after);
+                    row.classList.toggle('drop-after', after);
+                });
+                row.addEventListener('dragleave', function () { row.classList.remove('drop-before', 'drop-after'); });
+                row.addEventListener('drop', function (e) {
+                    if (!dragRow || dragRow === r) return;
+                    e.preventDefault();
+                    var rc = row.getBoundingClientRect();
+                    var from = dragRow;
+                    dragRow = null;
+                    clearDrop();
+                    opts.onReorder(from, r, e.clientY > rc.top + rc.height / 2);
+                });
+            }
 
             var track = el('div', 'g-track');
             var t = '';
@@ -198,6 +236,7 @@ window.Gantt = (function () {
 
             row.addEventListener('click', function (e) {
                 if (suppressClick) { suppressClick = false; return; }
+                if (e.target.closest('.g-grip')) return;
                 var tg = e.target.closest('.g-toggle');
                 if (tg) {
                     e.preventDefault();
@@ -343,6 +382,8 @@ window.Gantt = (function () {
         var bars = [];
         if (stage.targetDate && stage.planFrom) {
             var pf = index > 0 && stage.planFrom < stage.targetDate ? D.add(stage.planFrom, 1) : stage.planFrom;
+            // 경계일 보정(+1)이 작업보다 늦게 시작하게 만들지 않는다 — 단계는 가장 이른 작업보다 늦게 시작하지 않는다
+            if (stage.worksFrom && stage.worksFrom <= stage.targetDate && pf > stage.worksFrom) pf = stage.worksFrom;
             bars.push({
                 from: pf, to: stage.targetDate, top: lane.planTop, h: lane.planH,
                 cls: 'plan' + (index % 2 ? ' alt' : ''), label: withLabel ? stage.name : null,
@@ -351,6 +392,7 @@ window.Gantt = (function () {
         }
         if (stage.actualFrom && stage.actualTo) {
             var af = index > 0 && stage.actualFrom < stage.actualTo ? D.add(stage.actualFrom, 1) : stage.actualFrom;
+            if (stage.worksActualFrom && stage.worksActualFrom <= stage.actualTo && af > stage.worksActualFrom) af = stage.worksActualFrom;
             if (stage.completedDate) {
                 var lateDone = stage.doneLate;      // 서버가 Rules.IsDoneLate 로 정한 값
                 bars.push({

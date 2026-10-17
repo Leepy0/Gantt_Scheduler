@@ -257,6 +257,8 @@
     //         onConflict(form, sheet, err): 저장이 409(다른 사용자가 먼저 고침)로 거절됐을 때 — 최신 버전으로 바꾸고 바뀐 값을 알린다.
     //                                       문자열을 돌려주면 그것을 오류 문구로 보인다 }
     // 입력을 바꾼 뒤 바깥·Esc·닫기·취소로 닫으려 하면 버릴지 묻는다
+    // tabs: [{key, label}] — 시트 안을 분류별 칸으로 나눈다. html 은 <div data-pane="key"> 로 묶어 넘긴다.
+    //       tab: 처음 보일 칸, tabKey: 마지막으로 본 칸을 기억할 열쇠(App.pref). 오류가 걸린 입력이 다른 칸에 있으면 그 칸으로 옮겨 보인다
     var sheetSeq = 0;
     App.sheet = function (opts) {
         var dlg = document.createElement('dialog');
@@ -267,7 +269,11 @@
             '<form class="sheet-form" novalidate>' +
             '<div class="sheet-head"><h2 id="' + titleId + '">' + App.esc(opts.title) + '</h2>' +
             '<button type="button" class="btn icon ghost" data-close aria-label="닫기">' + App.icon('x') + '</button></div>' +
-            '<div class="sheet-body"><p class="form-error" role="alert" hidden></p>' +
+            '<div class="sheet-body">' +
+            (opts.tabs ? '<div class="sheet-tabs" role="tablist">' + opts.tabs.map(function (t) {
+                return '<button type="button" role="tab" data-pane-tab="' + t.key + '">' + App.esc(t.label) + '</button>';
+            }).join('') + '</div>' : '') +
+            '<p class="form-error" role="alert" hidden></p>' +
             '<div class="form-note draft-note" data-draft-note hidden></div>' + (opts.html || '') + '</div>' +
             '<div class="sheet-foot">' +
             (opts.danger ? '<button type="button" class="btn danger" data-danger>' + App.esc(opts.danger.label) + '</button>' : '') +
@@ -283,6 +289,25 @@
         var submitBtn = dlg.querySelector('button[type=submit]');
         var busy = false;
         var draftKey = opts.draftKey || null;
+
+        // ── 분류 칸(tabs) ──
+        function showPane(key) {
+            if (!opts.tabs) return;
+            if (!opts.tabs.some(function (t) { return t.key === key; })) key = opts.tabs[0].key;
+            dlg.querySelectorAll('[data-pane]').forEach(function (el) { el.hidden = el.dataset.pane !== key; });
+            dlg.querySelectorAll('[data-pane-tab]').forEach(function (b) {
+                var on = b.dataset.paneTab === key;
+                b.classList.toggle('on', on);
+                b.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            if (opts.tabKey) App.pref.set(opts.tabKey, key);
+        }
+        if (opts.tabs) {
+            dlg.querySelectorAll('[data-pane-tab]').forEach(function (b) {
+                b.addEventListener('click', function () { showPane(b.dataset.paneTab); });
+            });
+            showPane((opts.tabKey && App.pref.get(opts.tabKey, '')) || opts.tab || opts.tabs[0].key);
+        }
 
         // 바뀌었는지 볼 입력: 이름이 있는 입력과 모든 textarea(진행 내용 등). 누르는 즉시 저장되는 체크리스트처럼
         // 이름이 없는 입력은 보지 않는다
@@ -355,6 +380,7 @@
             // 지금 입력을 '바뀌지 않은 상태'로 본다 — 시트를 열어 둔 채 저장하고 이어서 입력할 때(저장 후 계속 추가)
             markClean: function () { initial = state(); if (draftKey) App.draft.clear(draftKey); },
             saveDraft: saveDraft,
+            showPane: showPane,
             setError: function (message, field) {
                 form.querySelectorAll('.field.invalid').forEach(function (f) { f.classList.remove('invalid'); });
                 if (!message) { errorEl.hidden = true; return; }
@@ -362,6 +388,8 @@
                 errorEl.hidden = false;
                 var target = field ? form.querySelector('[data-field="' + field + '"]') : null;
                 if (target) {
+                    var pane = target.closest('[data-pane]');
+                    if (pane && pane.hidden) showPane(pane.dataset.pane);
                     target.classList.add('invalid');
                     var input = target.querySelector('input, select, textarea');
                     if (input) input.focus();
@@ -473,8 +501,10 @@
         // onOpen 이 이미 다른 곳(사유 입력 등)에 포커스를 줬으면 그대로 둔다
         var active = document.activeElement;
         if (!dlg.contains(active) || active.matches('[data-close]')) {
+            // 숨은 분류 칸(tabs)의 입력은 건너뛴다
             var first = App.isMobile() ? null
-                : body.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range]):not([disabled]), select:not([disabled]), textarea:not([disabled])');
+                : Array.prototype.filter.call(body.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=range]):not([disabled]), select:not([disabled]), textarea:not([disabled])'),
+                    function (el) { return !el.closest('[data-pane][hidden]'); })[0];
             if (first) first.focus();
             else { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
         }

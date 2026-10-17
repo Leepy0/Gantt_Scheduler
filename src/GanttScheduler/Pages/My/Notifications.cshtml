@@ -19,7 +19,7 @@
     <button type="button" class="btn" id="read-all" @(d.Unread == 0 ? "disabled" : "")><svg class="ic"><use href="#i-check" /></svg>모두 읽음</button>
 </div>
 
-<p class="muted">내 작업(담당·부담당 — 자동 밀기 포함)·내 과제·관심 과제에 다른 사람이 남긴 활동과 나를 알릴 사람으로 고른 댓글입니다.</p>
+<p class="muted">내 작업·내 과제·관심 과제의 활동, 나를 지목한 댓글</p>
 
 <section class="card flush">
     @if (d.Items.Count == 0)

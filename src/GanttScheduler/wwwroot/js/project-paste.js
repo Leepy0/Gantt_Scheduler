@@ -40,9 +40,9 @@
             '<th class="num">줄</th><th>단계</th><th>목표일</th><th>간격</th><th>작업</th><th>비고</th></tr></thead><tbody>' +
             pv.stages.map(function (s) {
                 var notes = [];
-                if (s.parallel) notes.push('앞 단계와 동시');
-                if (s.autoTarget) notes.push('목표일은 작업 기준(자동)');
-                if (s.fromTemplate) notes.push('기본 단계 이어받음' + (s.checks ? ' · 체크 ' + s.checks : ''));
+                if (s.parallel) notes.push('동시');
+                if (s.autoTarget) notes.push('작업 기준');
+                if (s.fromTemplate) notes.push('기본 단계' + (s.checks ? ' · 체크 ' + s.checks : ''));
                 return '<tr class="' + (s.issues.length ? 'row-bad' : '') + '" data-line="' + s.line + '">' +
                     '<td class="num" data-label="줄">' + s.line + '</td>' +
                     '<td data-label="단계"><span class="preview-title">' + esc(s.name || '') + '</span></td>' +
@@ -56,7 +56,7 @@
     function worksHtml(pv) {
         if (!pv.works.length) return '';
         return '<div class="table-scroll"><table class="simple-table rows-table" data-paste-works><thead><tr>' +
-            '<th class="num">줄</th><th>단계</th><th>작업명</th><th>담당</th><th>목표 시작</th><th>목표 종료</th><th>근무일</th><th>선행</th></tr></thead><tbody>' +
+            '<th class="num">줄</th><th>단계</th><th>작업명</th><th>담당</th><th>목표 시작</th><th>목표 종료</th><th>근무일</th><th>선행 단계</th><th>선행 작업</th></tr></thead><tbody>' +
             pv.works.map(function (r) {
                 return '<tr class="' + (r.issues.length ? 'row-bad' : '') + '" data-line="' + r.line + '">' +
                     '<td class="num" data-label="줄">' + r.line + '</td>' +
@@ -66,13 +66,14 @@
                     '<td class="num" data-label="목표 시작">' + esc(r.planStart || '-') + '</td>' +
                     '<td class="num" data-label="목표 종료">' + esc(r.planEnd || '-') + '</td>' +
                     '<td class="num" data-label="근무일">' + (r.workDays != null ? r.workDays + '일' : '-') + '</td>' +
-                    '<td data-label="선행">' + esc(r.predecessor || '-') + '</td></tr>' + issuesHtml(r.issues, 8);
+                    '<td data-label="선행 단계">' + (r.predecessorStage ? esc(r.predecessorStage) : r.predecessor ? '<span class="muted">같은 단계</span>' : '-') + '</td>' +
+                    '<td data-label="선행 작업">' + esc(r.predecessor || '-') + '</td></tr>' + issuesHtml(r.issues, 9);
             }).join('') + '</tbody></table></div>';
     }
 
     function previewHtml(pv) {
         var head = pv.errorCount
-            ? '<p class="form-error" data-paste-summary>' + icon('alert') + '<span>' + pv.errorCount + '줄에 문제가 있습니다. 붙여넣은 글을 고친 뒤 다시 확인해 주세요. 문제가 남아 있으면 등록되지 않습니다.</span></p>'
+            ? '<p class="form-error" data-paste-summary>' + icon('alert') + '<span>' + pv.errorCount + '줄 문제. 고친 뒤 다시 확인하세요.</span></p>'
             : '<p class="form-note" data-paste-summary>' + icon('check') + '<span>' + esc(pv.note) + ' 작업 ' + pv.works.length + '개.</span></p>';
         if (pv.newOwners.length) {
             head += '<p class="form-note" data-paste-new-owners>' + icon('user') + '<span>목록에 없는 담당 ' + pv.newOwners.length + '명(' + esc(pv.newOwners.join(', ')) +

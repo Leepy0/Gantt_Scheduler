@@ -44,7 +44,7 @@
         }
         if (r.inboundHint && r.inboundHint !== r.targetDate) {
             notes.push('<span class="sched-hint">추천 입고일 <b>' + esc(r.inboundHint) + '</b>' +
-                '<span class="muted">검수일 + 해상 운송 ' + lead + '일</span>' +
+                '<span class="muted">검수일 + 해상 ' + lead + '일</span>' +
                 '<button type="button" class="btn small" data-apply-hint="' + r.templateId + '">적용</button></span>');
         }
         return notes.join('');
@@ -72,7 +72,7 @@
             host.innerHTML = rows.length
                 ? '<div class="sched draft"><div class="sched-head" aria-hidden="true"><span>단계</span><span>목표일</span><span>간격</span></div>' +
                   rows.map(rowHtml).join('') + '</div>'
-                : '<p class="hint">이 유형에는 기본 단계가 없습니다.</p>';
+                : '<p class="hint">기본 단계 없음</p>';
         } else {
             clearError();
             rows.forEach(function (r) {
@@ -112,7 +112,7 @@
         clearTimeout(timer);
         timer = setTimeout(function () {
             var cat = categoryId();
-            if (!cat) { rows = []; rowsCategory = 0; host.innerHTML = '<p class="hint">유형을 고르면 단계 목표일 초안을 보여 줍니다.</p>'; return; }
+            if (!cat) { rows = []; rowsCategory = 0; host.innerHTML = '<p class="hint">유형을 고르면 초안이 나옵니다.</p>'; return; }
             var q = '&categoryId=' + cat + '&start=' + encodeURIComponent(startInput.value || '') +
                 (+locationInput.value ? '&locationId=' + locationInput.value : '');
             Object.keys(kept).forEach(function (id) { q += '&keep=' + encodeURIComponent(id + ':' + kept[id]); });

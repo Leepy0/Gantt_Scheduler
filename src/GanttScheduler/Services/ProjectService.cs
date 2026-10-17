@@ -688,7 +688,7 @@ public partial class ProjectService
             p.Stages.Add(new Stage
             {
                 Name = name, SortOrder = order, TargetDate = input.TargetDate, CompletedDate = input.CompletedDate,
-                Parallel = input.Parallel == true && p.Stages.Count > 0, AutoTarget = input.AutoTarget == true,
+                Parallel = input.Parallel == true && p.Stages.Count > 0, AutoTarget = input.AutoTarget ?? true,
             });
             p.Activities.Add(NewActivity(ActivityType.StageAdded, $"단계 추가: {name}" + (input.Parallel == true && p.Stages.Count > 1 ? " (앞 단계와 동시 진행)" : "")));
         }
@@ -728,7 +728,7 @@ public partial class ProjectService
                 s.AutoTarget = auto;
                 changed = true;
             }
-            var wantedTarget = auto ? s.TargetDate : input.TargetDate;
+            var wantedTarget = auto && s.Works.Count > 0 ? s.TargetDate : input.TargetDate;     // 맞출 작업이 없으면 직접 정한 값을 받는다
 
             if (s.TargetDate != wantedTarget)
             {

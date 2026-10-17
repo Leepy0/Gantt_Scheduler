@@ -16,7 +16,7 @@ public record PasteStageView(int Line, string? Name, string Kind, bool Parallel,
 
 // 해석한 작업 한 줄 (붙여넣기·가져오기의 WorkRowView 와 같은 칸에 단계 이름을 더한 것)
 public record PasteWorkView(int Line, string? Stage, string? Title, string? Owner, bool NewOwner, DateOnly? PlanStart, DateOnly? PlanEnd,
-                            string? Predecessor, int? WorkDays, List<RowIssue> Issues)
+                            string? Predecessor, int? WorkDays, List<RowIssue> Issues, string? PredecessorStage = null)
 {
     public bool Ok => Issues.Count == 0;
 }
@@ -25,7 +25,8 @@ public record ProjectPastePreview(List<PasteStageView> Stages, List<PasteWorkVie
 
 // 과제 등록 화면의 CSV 붙여넣기: 단계와 작업을 한 번에 만든다. 붙여 넣은 단계가 있으면 유형의 기본 단계 대신 그 단계로 등록한다
 // (이름이 같은 기본 단계의 종류·체크리스트는 이어받는다). 작업 줄의 해석·검증·저장은 상세의 '작업 여러 개 추가'와 같은 코드를 쓴다.
-// 칸: 단계, 작업명, 담당, 목표 시작, 목표 종료, 선행 작업명, 동시 — 작업명이 비면 단계 줄(목표 종료 칸이 단계 목표일), 있으면 그 단계의 작업
+// 칸: 단계, 작업명, 담당, 목표 시작, 목표 종료, 선행 단계, 선행 작업명, 동시 — 작업명이 비면 단계 줄(목표 종료 칸이 단계 목표일), 있으면 그 단계의 작업.
+// 선행은 단계와 작업 두 칸으로 나눠 적는다(선행 단계를 비우면 같은 단계). 머리글이 있으면 머리글 이름으로 칸을 찾아 옛 칸 순서(선행 단계 없음)도 읽는다
 public partial class ProjectService
 {
     public const int MaxPasteStages = 50;
@@ -34,12 +35,12 @@ public partial class ProjectService
     {
         public const string Stage = "단계";
         public const string Parallel = "동시";
-        public static readonly string[] All = { Stage, WorkColumns.Title, WorkColumns.Owner, WorkColumns.Start, WorkColumns.End, WorkColumns.Predecessor, Parallel };
+        public static readonly string[] All = { Stage, WorkColumns.Title, WorkColumns.Owner, WorkColumns.Start, WorkColumns.End, WorkColumns.PredecessorStage, WorkColumns.Predecessor, Parallel };
         public static string Header => string.Join(",", All);
     }
 
     // 붙여넣은 글의 한 줄 (칸 순서대로, 빈 칸은 null)
-    private sealed record PasteLine(int Line, string? Stage, string? Title, string? Owner, string? Start, string? End, string? Predecessor, string? Parallel);
+    private sealed record PasteLine(int Line, string? Stage, string? Title, string? Owner, string? Start, string? End, string? PredecessorStage, string? Predecessor, string? Parallel);
 
     // 해석 중인 단계 하나
     private sealed class PasteStagePlan
@@ -55,19 +56,33 @@ public partial class ProjectService
         public Stage? Stage { get; set; }
     }
 
-    // 글을 줄로 나눈다. 첫 줄이 머리글(첫 칸이 '단계'이고 날짜 칸에 날짜가 없음)이면 건너뛴다. 칸은 TAB(Excel) 또는 쉼표(CSV)
+    // 글을 줄로 나눈다. 첫 줄이 머리글(첫 칸이 '단계'이고 날짜 칸에 날짜가 없음)이면 건너뛰되 머리글의 이름으로 선행 단계·선행 작업·동시 칸의 자리를 정한다
+    // (옛 머리글: 선행 단계 없이 단계, 작업명, 담당, 목표 시작, 목표 종료, 선행 작업명, 동시). 머리글이 없으면 새 칸 순서다. 칸은 TAB(Excel) 또는 쉼표(CSV)
     private List<PasteLine> ParsePasteLines(string? text)
     {
         var today = _clock.Today;
         var lines = new List<PasteLine>();
+        int predStageAt = 5, predAt = 6, parallelAt = 7;
         foreach (var (line, raw) in InputText.Lines(text))
         {
             var c = InputText.Cells(raw);
-            string? At(int i) => i < c.Count && c[i].Length > 0 ? c[i] : null;
+            string? At(int i) => i >= 0 && i < c.Count && c[i].Length > 0 ? c[i] : null;
             if (lines.Count == 0 && (At(0) ?? "").Contains("단계") && !InputText.TryDate(At(3), today, out _) && !InputText.TryDate(At(4), today, out _)
                 && ((At(1) ?? "").Contains("작업") || At(1) == null))
+            {
+                int Find(Func<string, bool> match) => c.FindIndex(x => match(x.Trim()));
+                var hasStageCol = Find(x => x.Replace(" ", "") == "선행단계") >= 0;
+                var predCol = Find(x => x.Replace(" ", "").StartsWith("선행작업"));
+                var parallelCol = Find(x => x == PasteColumns.Parallel);
+                if (hasStageCol || predCol >= 0 || parallelCol >= 0)
+                {
+                    predStageAt = hasStageCol ? Find(x => x.Replace(" ", "") == "선행단계") : -1;
+                    predAt = predCol >= 0 ? predCol : -1;
+                    parallelAt = parallelCol >= 0 ? parallelCol : -1;
+                }
                 continue;
-            lines.Add(new PasteLine(line, At(0), At(1), At(2), At(3), At(4), At(5), At(6)));
+            }
+            lines.Add(new PasteLine(line, At(0), At(1), At(2), At(3), At(4), At(predStageAt), At(predAt), At(parallelAt)));
         }
         return lines;
     }
@@ -95,7 +110,7 @@ public partial class ProjectService
         var stageViews = plans.Select((x, i) => new PasteStageView(x.Line, x.Name, Views.Key(x.Stage!.Kind), x.Stage.Parallel, x.Stage.AutoTarget,
             x.Stage.TargetDate, gaps[i], x.Template != null, x.Stage.Checks.Count, x.Works.Count, x.Issues)).ToList();
         var workViews = workPlans.Select(w => new PasteWorkView(w.Input.Line, w.Stage.Name, w.Title, w.Owner, w.NewOwner, w.Start, w.End,
-            w.Input.Predecessor?.Trim(), w.WorkDays, w.Issues)).ToList();
+            w.Input.Predecessor?.Trim(), w.WorkDays, w.Issues, w.Input.PredecessorStage?.Trim())).ToList();
         var errors = stageViews.Count(s => !s.Ok) + workViews.Count(w => !w.Ok);
         var inherited = plans.Count(x => x.Template != null);
         var note = $"유형 '{category.Name}' 의 기본 단계 대신 붙여 넣은 단계 {plans.Count}개로 등록합니다"
@@ -124,12 +139,13 @@ public partial class ProjectService
             return string.Join("\n", new[]
             {
                 PasteColumns.Header,
-                Csv("설계", null, null, null, Fmt(d1), null, null),
-                Csv("설계", "현장 실사", null, Fmt(start), Fmt(w1End), null, null),
-                Csv("설계", "사양 검토", null, Fmt(w2Start), Fmt(d1), "현장 실사", null),
-                Csv("제작", null, null, null, Fmt(d2), null, null),
-                Csv("설치", null, null, null, Fmt(d3), null, null),
-                Csv("교육", null, null, null, Fmt(d3), null, "동시"),
+                Csv("설계", null, null, null, Fmt(d1), null, null, null),
+                Csv("설계", "현장 실사", null, Fmt(start), Fmt(w1End), null, null, null),
+                Csv("설계", "사양 검토", null, Fmt(w2Start), Fmt(d1), null, "현장 실사", null),
+                Csv("제작", null, null, null, Fmt(d2), null, null, null),
+                Csv("제작", "프레임 제작", null, Fmt(cal.EarliestStartAfter(d1, 0)), Fmt(d2), "설계", "사양 검토", null),
+                Csv("설치", null, null, null, Fmt(d3), null, null, null),
+                Csv("교육", null, null, null, Fmt(d3), null, null, "동시"),
             }) + "\n";
         }
 
@@ -141,20 +157,22 @@ public partial class ProjectService
         for (var i = 0; i < templates.Count; i++)
         {
             var t = templates[i];
-            lines.Add(Csv(t.Name, null, null, null, Fmt(targets[i]) == "미정" ? null : Fmt(targets[i]), null, flags[i] ? "동시" : null));
+            lines.Add(Csv(t.Name, null, null, null, Fmt(targets[i]) == "미정" ? null : Fmt(targets[i]), null, null, flags[i] ? "동시" : null));
             var works = t.Works.OrderBy(w => w.SortOrder).ThenBy(w => w.Id).ToList();
             // 템플릿 작업이 하나도 없는 유형은 첫 단계에 작업 두 줄을 예로 넣는다(선행 쓰는 법을 보이려고)
             if (!anyWorks && i == 0)
             {
                 var w1End = cal.AddWorkingDays(starts[0], 2);
-                lines.Add(Csv(t.Name, "현장 실사", null, Fmt(starts[0]), Fmt(w1End), null, null));
-                lines.Add(Csv(t.Name, "사양 검토", null, Fmt(cal.EarliestStartAfter(w1End, 0)), Fmt(cal.AddWorkingDays(w1End, 3)), "현장 실사", null));
+                lines.Add(Csv(t.Name, "현장 실사", null, Fmt(starts[0]), Fmt(w1End), null, null, null));
+                lines.Add(Csv(t.Name, "사양 검토", null, Fmt(cal.EarliestStartAfter(w1End, 0)), Fmt(cal.AddWorkingDays(w1End, 3)), null, "현장 실사", null));
             }
-            var names = works.ToDictionary(w => w.Id, w => w.Title);
+            var names = templates.SelectMany(x => x.Works.Select(w => (w.Id, w.Title, Stage: x.Name))).ToDictionary(x => x.Id);
             foreach (var w in works)
             {
                 var (ws, we) = Rules.PlaceTemplateWork(starts[i], w.OffsetWorkDays, w.DurationWorkDays, cal);
-                lines.Add(Csv(t.Name, w.Title, null, Fmt(ws), Fmt(we), w.PredecessorTemplateWorkId is int pred ? names.GetValueOrDefault(pred) : null, null));
+                // 다른 단계 작업이 선행이면 선행 단계 칸에 그 단계를 적는다(같은 단계면 비운다)
+                var pred = w.PredecessorTemplateWorkId is int pid && names.TryGetValue(pid, out var pn) ? pn : default;
+                lines.Add(Csv(t.Name, w.Title, null, Fmt(ws), Fmt(we), pred.Title == null || pred.Stage == t.Name ? null : pred.Stage, pred.Title, null));
             }
         }
         return string.Join("\n", lines) + "\n";
@@ -218,7 +236,7 @@ public partial class ProjectService
             }
             else
             {
-                plan.Works.Add(new WorkRowInput(l.Title, l.Owner, l.Start, l.End, l.Predecessor, l.Line));
+                plan.Works.Add(new WorkRowInput(l.Title, l.Owner, l.Start, l.End, l.Predecessor, l.Line, l.PredecessorStage));
             }
         }
         if (plans.Count > MaxPasteStages) throw new RuleException($"단계는 한 번에 {MaxPasteStages}개까지 넣을 수 있습니다(지금 {plans.Count}개).", "pasteText");

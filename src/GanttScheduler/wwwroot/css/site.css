@@ -366,6 +366,19 @@ input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-colo
 .stage-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 56px; padding: 8px 16px; border: 0; background: transparent; text-align: left; cursor: pointer; flex-wrap: wrap; }
 .stage-head:hover { background: var(--surface-2); }
 .stage-head h3 { font-size: var(--fs-md); }
+.sheet-tabs { display: flex; gap: 4px; position: sticky; top: -20px; z-index: 2; margin: -20px -20px 0; padding: 8px 20px 0; flex: none; background: var(--surface); border-bottom: 1px solid var(--line); }
+.sheet-tabs button { min-height: 36px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font: inherit; font-weight: 600; cursor: pointer; }
+.sheet-tabs button:hover { color: var(--text); }
+.sheet-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+[data-pane] { display: flex; flex-direction: column; gap: 16px; }
+[data-pane][hidden] { display: none; }
+.stage-top { display: flex; align-items: center; }
+.stage-top .stage-head { flex: 1; min-width: 0; }
+.stage-card .stage-grip { padding-left: 12px; flex: none; display: flex; align-items: center; color: var(--text-3); cursor: grab; }
+.stage-card .stage-grip .ic { width: 16px; height: 16px; stroke-width: 3; }
+.stage-card.reorder-src { opacity: .45; }
+.stage-card.drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.stage-card.drop-after { box-shadow: 0 3px 0 var(--accent); }
 .stage-dates { margin-left: auto; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: right; }
 .stage-warn { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--warn-weak); color: var(--warn); font-size: var(--fs-xs); font-weight: 600; }
 .work-list > li { border-top: 1px solid var(--line); }
@@ -453,6 +466,12 @@ a.g-name:hover { text-decoration: none; }
 .g-name-side .alarm { color: var(--alarm); }
 .g-name-side .warn { color: var(--warn); }
 .g-name-side .ok { color: var(--ok); }
+.g-grip { flex: none; display: flex; align-items: center; margin-left: -4px; color: var(--text-3); cursor: grab; }
+.g-grip .ic { width: 16px; height: 16px; stroke-width: 3; }
+.g-grip:hover { color: var(--text-2); }
+.g-row.reorder-src { opacity: .45; }
+.g-row.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+.g-row.drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
 .g-toggle { flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .g-toggle:hover { background: var(--line); }
 .g-toggle .ic { transition: transform .12s; }
@@ -541,6 +560,9 @@ dialog.sheet::backdrop { background: rgba(16, 24, 40, .45); }
 
 /* ── 모바일 ────────────────────────────────────────────────── */
 @media (max-width: 767px) {
+    .sheet-tabs button { min-height: 44px; flex: 1; padding: 0 8px; }
+    .g-grip { display: none; }
+    .stage-card .stage-grip { display: none; }
     :root { --tap: 48px; --bottom-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
 
     /* iOS 가 입력 시 화면을 확대하지 않도록 16px */
@@ -655,6 +677,7 @@ dialog.sheet.wide { width: min(960px, calc(100vw - 32px)); }
 .pick-list { max-height: 168px; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 0 12px; }
 .pick-list .check { display: flex; min-height: 40px; border-bottom: 1px solid var(--line); }
 .pick-list .check:last-child { border-bottom: 0; }
+.sheet-section.first { border-top: 0; padding-top: 0; }
 .sheet-section h3 { display: flex; align-items: center; gap: 8px; }
 
 /* ── 자료(첨부) ────────────────────────────────────────────── */

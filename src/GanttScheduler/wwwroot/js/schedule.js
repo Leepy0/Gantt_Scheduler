@@ -25,7 +25,7 @@
     // ctx: { project(), api(handler, body), previewUrl, mergeField, conflict(문구), userToday() }
     function open(ctx) {
         var P = ctx.project();
-        if (!P.stages.length) { App.toast('단계가 없습니다. 단계를 먼저 추가해 주세요.', 'error'); return; }
+        if (!P.stages.length) { App.toast('단계 없음', 'error'); return; }
 
         var base = {};          // 단계 id → 표를 연 때(동시 수정 뒤에는 최신)의 값과 버전
         var computed = {};      // 단계 id → 서버가 계산한 { gap, inboundHint, targetNote }
@@ -47,8 +47,9 @@
             if (s.checkTotal) meta.push('체크 ' + s.checkDone + '/' + s.checkTotal);
             if (s.works.length) meta.push('작업 ' + s.works.length);
             // 목표일을 작업 일정에 맞추는 단계는 서버가 정하므로 칸을 잠근다(단계 창에서 풀 수 있다)
-            var auto = s.autoTarget ? ' disabled title="작업 일정에 맞추는 단계입니다. 단계 창에서 \'목표일을 작업 일정에 맞춤\'을 끄면 직접 정할 수 있습니다."' : '';
-            if (s.autoTarget) meta.push('목표일은 작업 기준(자동)');
+            var locked = s.autoTarget && s.works.length > 0;
+            var auto = locked ? ' disabled title="작업 일정에 맞춤 — 단계 창에서 끄면 직접 정합니다"' : '';
+            if (locked) meta.push('작업 기준');
             return '<div class="sched-row" data-stage="' + s.id + '">' +
                 '<div class="sched-name"><span class="sched-title">' + label + '</span>' +
                 '<span class="sched-meta">' + App.chip(s.chip) + (meta.length ? '<span class="hint">' + esc(meta.join(' · ')) + '</span>' : '') + '</span></div>' +
@@ -69,13 +70,13 @@
         }
 
         var html =
-            '<p class="hint">모든 단계의 날짜를 한 번에 고칩니다. 간격은 앞 단계 목표일(첫 단계는 착수일 ' + esc(P.startDate) + ', 동시 진행 단계는 묶음의 기준일)부터의 근무일입니다. ' +
-            '처음 정하는 목표일은 사유 없이 기록되고, 이미 정한 목표일을 바꾸면 사유를 한 번 받습니다.</p>' +
+            '<p class="hint">간격: 앞 단계 목표일(첫 단계는 착수일 ' + esc(P.startDate) + ', 동시는 묶음 기준일)부터 근무일. ' +
+            '목표일을 바꾸면 사유가 필요합니다.</p>' +
             '<div class="sched" data-rows>' + rowsHtml({}) + '</div>' +
             '<div data-reason hidden class="form">' +
             '<p class="form-warn" data-reason-note>' + icon('clock') + '<span></span></p>' +
             '<label class="field" data-field="reason"><span class="label">변경 사유</span>' +
-            '<textarea name="reason" rows="2" maxlength="' + ((App.data().limits || {}).reason || '') + '" placeholder="목표일을 바꾸는 이유 (바꾼 단계 모두에 남습니다)"></textarea></label>' + reasonCodeHtml() + '</div>' +
+            '<textarea name="reason" rows="2" maxlength="' + ((App.data().limits || {}).reason || '') + '" placeholder="사유"></textarea></label>' + reasonCodeHtml() + '</div>' +
             '<p class="hint" data-summary></p>';
 
         var form = null;
@@ -126,17 +127,17 @@
                 }
                 if (s.kind === 'inbound' && !cur.completed && calc.inboundHint && calc.inboundHint !== cur.target) {
                     notes.push('<span class="sched-hint">추천 입고일 <b>' + esc(calc.inboundHint) + '</b>' +
-                        '<span class="muted">검수일 + 해상 운송 ' + P.oceanLeadDays + '일</span>' +
+                        '<span class="muted">검수일 + 해상 ' + P.oceanLeadDays + '일</span>' +
                         '<button type="button" class="btn small" data-apply-hint="' + s.id + '">적용</button></span>');
                 }
                 if (cur.completed && !b.completed && s.checkTotal > s.checkDone) {
-                    notes.push('<span class="form-warn">' + icon('alert') + '<span>체크리스트 ' + (s.checkTotal - s.checkDone) + '개 항목이 남아 있어 완료할 수 없습니다. 단계 창에서 먼저 체크해 주세요.</span></span>');
+                    notes.push('<span class="form-warn">' + icon('alert') + '<span>체크리스트 ' + (s.checkTotal - s.checkDone) + '개 항목이 남아 완료할 수 없습니다.</span></span>');
                 }
                 if (cur.completed && cur.completed > ctx.userToday()) {
-                    notes.push('<span class="hint warn">' + icon('alert') + '완료일이 오늘보다 미래입니다.</span>');
+                    notes.push('<span class="hint warn">' + icon('alert') + '완료일이 미래입니다.</span>');
                 }
                 if (cur.completed && !b.completed && s.openWorks > 0) {
-                    notes.push('<span class="hint">남은 작업 ' + s.openWorks + '건은 완료(단계)로 봅니다. 작업마다 실적을 넣으려면 단계 창에서 완료해 주세요.</span>');
+                    notes.push('<span class="hint">남은 작업 ' + s.openWorks + '건은 단계 완료로 처리됩니다.</span>');
                 }
                 row.querySelector('[data-notes]').innerHTML = notes.join('');
             });
@@ -146,7 +147,7 @@
             form.querySelector('[data-reason-note] span').textContent =
                 '이미 정한 목표일을 바꾸는 단계 ' + targetMoves.length + '개: ' + targetMoves.join(', ');
             var n = changedRows().length;
-            form.querySelector('[data-summary]').textContent = n ? '바꾼 단계 ' + n + '개를 저장합니다. 한 번의 변경으로 묶어 기록합니다.' : '';
+            form.querySelector('[data-summary]').textContent = n ? '바꾼 단계 ' + n + '개를 저장합니다.' : '';
         }
 
         // 고친 날짜로 간격·추천 입고일을 서버에서 다시 계산한다 (빠르게 여러 번 고치면 마지막 응답만 쓴다)

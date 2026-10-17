@@ -24,11 +24,11 @@
     function previewHtml(pv) {
         var okCount = pv.rows.length - pv.errorCount;
         var head = pv.errorCount
-            ? '<p class="form-error" data-paste-summary>' + icon('alert') + '<span>' + pv.rows.length + '줄 중 ' + pv.errorCount + '줄에 문제가 있습니다. 붙여넣은 글을 고친 뒤 다시 확인해 주세요.</span></p>'
+            ? '<p class="form-error" data-paste-summary>' + icon('alert') + '<span>' + pv.rows.length + '줄 중 ' + pv.errorCount + '줄 문제. 고친 뒤 다시 확인하세요.</span></p>'
             : '<p class="form-note" data-paste-summary>' + icon('check') + '<span>' + okCount + '개 작업을 \'' + esc(pv.stageName) + '\' 단계에 추가합니다.</span></p>';
         if (pv.newOwners.length) {
             head += '<p class="form-note" data-paste-new-owners>' + icon('user') + '<span>목록에 없는 담당 ' + pv.newOwners.length + '명(' + esc(pv.newOwners.join(', ')) +
-                ')은 저장하면 새 사용자로 등록됩니다. 오타가 아닌지 확인해 주세요.</span></p>';
+                ') 새 사용자로 등록됩니다. 오타인지 확인하세요.</span></p>';
         }
         return head + '<div class="table-scroll"><table class="simple-table rows-table" data-paste-table><thead><tr>' +
             '<th class="num">줄</th><th>작업명</th><th>담당</th><th>목표 시작</th><th>목표 종료</th><th>근무일</th><th>선행</th></tr></thead><tbody>' +
@@ -44,8 +44,8 @@
 
         var html = '<div class="field" data-field="text"><span class="label">붙여넣기</span>' +
             '<textarea name="text" rows="7" spellcheck="false" placeholder="작업명&#9;담당&#9;목표 시작&#9;목표 종료&#9;선행 작업명&#10;현장 실사&#9;김물류&#9;2026-10-12&#9;2026-10-14&#10;사양 검토&#9;김물류&#9;10/15&#9;10/21&#9;현장 실사" aria-describedby="paste-hint"></textarea>' +
-            '<span class="hint" id="paste-hint">Excel 에서 작업명 · 담당 · 목표 시작 · 목표 종료 · 선행 작업명(선택) 열을 복사해 붙여 넣습니다. 한 줄에 작업 하나, 머리글 줄은 건너뜁니다. ' +
-            '날짜는 2026-10-12 · 2026.10.12 · 10/12(올해) 모두 됩니다. 종료를 비우면 하루짜리 작업입니다. 선행은 붙여넣은 줄이나 이 과제의 작업 이름입니다(끝나면 시작).</span></div>' +
+            '<span class="hint" id="paste-hint">Excel 열 복사: 작업명 · 담당 · 목표 시작 · 목표 종료 · 선행 작업명(선택). 한 줄에 하나. ' +
+            '날짜: 2026-10-12 · 2026.10.12 · 10/12. 종료를 비우면 하루. 선행은 작업 이름.</span></div>' +
             '<div class="inline-btns"><button type="button" class="btn small" data-paste-check>' + icon('search') + '확인</button></div>' +
             '<div data-paste-preview class="paste-preview"></div>';
 
@@ -103,7 +103,7 @@
                     return false;
                 }
                 if (preview.errorCount) {
-                    var bad = new Error('문제 있는 줄 ' + preview.errorCount + '개를 고친 뒤 다시 확인해 주세요.');
+                    var bad = new Error('문제 있는 줄 ' + preview.errorCount + '개 문제. 고친 뒤 다시 확인하세요.');
                     bad.field = 'text';
                     throw bad;
                 }

@@ -214,6 +214,16 @@ public class DetailModel : PageModel
     public Task<IActionResult> OnPostMoveStageAsync([FromBody] MoveInput input) =>
         Run(null, () => _projects.MoveStageAsync(input.Id, input.Dir, input.Version, input.OtherId, input.OtherVersion));
 
+    // 단계 끌어 놓기·정렬
+    public record ReorderInput(int ProjectId, List<StageOrderItem>? Order);
+    public record SortInput(int ProjectId, string? By);
+
+    public Task<IActionResult> OnPostReorderStagesAsync([FromBody] ReorderInput input) =>
+        Run(input.ProjectId, () => _projects.ReorderStagesAsync(input.ProjectId, input.Order ?? new()));
+
+    public Task<IActionResult> OnPostSortStagesAsync([FromBody] SortInput input) =>
+        Run(input.ProjectId, () => _projects.SortStagesAsync(input.ProjectId, input.By ?? ""));
+
     public Task<IActionResult> OnPostDeleteStageAsync([FromBody] IdInput input) =>
         Run(null, () => _projects.DeleteStageAsync(input.Id, input.Version));
 

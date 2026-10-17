@@ -7,7 +7,7 @@
     <RootNamespace>GanttScheduler</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- 정식 배포할 때 올린다. 서버의 자동 업데이트가 이 값으로 새 버전인지 판단한다 -->
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <!-- release = 정식 배포, dev = main 테스트 빌드, local = 로컬 빌드(자동 적용 안 함). CI 가 지정한다 -->
     <BuildChannel Condition="'$(BuildChannel)' == ''">local</BuildChannel>
     <!-- 배포(win-x64)와 업데이트 자체 시험(linux-x64)이 게시하는 대상. packages.lock.json 에 이 대상의 패키지까지 기록해 두어야

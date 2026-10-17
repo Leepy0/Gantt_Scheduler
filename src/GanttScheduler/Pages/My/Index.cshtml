@@ -30,7 +30,7 @@
 @if (Model.News.Count > 0)
 {
     <section class="card" id="news">
-        <header class="card-head"><h2>새 소식</h2><span class="count">@Model.News.Count</span><span class="muted">마지막으로 본 뒤 다른 사람이 남긴 활동</span><partial name="_HelpQ" model='"notify"' /></header>
+        <header class="card-head"><h2>새 소식</h2><span class="count">@Model.News.Count</span><span class="muted">마지막 확인 이후 활동</span><partial name="_HelpQ" model='"notify"' /></header>
         <ul class="rows">
             @foreach (var n in Model.News)
             {
@@ -85,7 +85,7 @@ else
         @{ await WorkRows(d.Late); }
     </section>
     <section class="card" data-my-group="soon">
-        <header class="card-head"><h2>이번 주</h2><span class="count" data-my-count>@d.Soon.Count</span><span class="muted">진행 중이거나 @(Rules.SoonDays)일 안에 끝나야 하는 작업</span><partial name="_HelpQ" model='"quick"' /></header>
+        <header class="card-head"><h2>이번 주</h2><span class="count" data-my-count>@d.Soon.Count</span><span class="muted">진행 중 · @(Rules.SoonDays)일 내 종료</span><partial name="_HelpQ" model='"quick"' /></header>
         <p class="empty" data-my-empty hidden="@(d.Soon.Count > 0)">이번 주에 챙길 작업이 없습니다.</p>
         @{ await WorkRows(d.Soon); }
     </section>

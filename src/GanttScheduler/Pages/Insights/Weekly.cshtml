@@ -84,7 +84,7 @@
 
 @if (r.Past && r.AsOf != null)
 {
-    <p class="form-note" data-weekly-asof><svg class="ic"><use href="#i-clock" /></svg><span>지연·밀린 항목은 @(r.AsOf.Value.ToString("yyyy-MM-dd"))(그 기간 마지막 날) 기준입니다. 진행률·현재 단계는 지금 기준입니다.</span></p>
+    <p class="form-note" data-weekly-asof><svg class="ic"><use href="#i-clock" /></svg><span>지연·밀림은 @(r.AsOf.Value.ToString("yyyy-MM-dd")) 기준, 진행률·현재 단계는 지금 기준</span></p>
 }
 
 @if (r.Projects.Count == 0)
@@ -125,7 +125,7 @@
 {
     @* 직전 기간 끝의 스냅샷과 견준 변화 — 스냅샷이 없으면 보이지 않는다 *@
     <section class="card" data-delay-flips>
-        <header class="card-head"><h2>지연 변화</h2><span class="spacer"></span><span class="muted">직전 기간 끝의 기록과 비교</span></header>
+        <header class="card-head"><h2>지연 변화</h2><span class="spacer"></span><span class="muted">직전 기간 대비</span></header>
         <dl class="dl weekly-dl">
             <dt>새로 지연 <span class="weekly-count">@(r.NewDelayed.Count)건</span></dt>
             <dd>@if (r.NewDelayed.Count == 0) {<span class="muted">없음</span>} else {<ul class="bullets">@foreach (var f in r.NewDelayed) {<li data-new-delayed><a asp-page="/Projects/Detail" asp-route-id="@f.ProjectId">@f.Project</a> <span class="muted num">D+@f.DelayDays</span></li>}</ul>}</dd>
@@ -138,7 +138,7 @@
 @if (missed.Count > 0)
 {
     <section class="card" data-missed>
-        <header class="card-head"><h2>@r.PeriodWord 미달</h2><span class="count">@missed.Count</span><span class="muted">목표일이 이 기간 안이었는데 끝나지 않은 단계·작업</span></header>
+        <header class="card-head"><h2>@r.PeriodWord 미달</h2><span class="count">@missed.Count</span><span class="muted">기간 내 목표 미완료</span></header>
         <div class="table-scroll">
             <table class="simple-table">
                 <thead><tr><th>과제</th><th>구분</th><th>단계·작업</th><th>목표</th><th>담당</th></tr></thead>

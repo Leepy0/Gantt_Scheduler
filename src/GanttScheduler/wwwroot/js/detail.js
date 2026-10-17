@@ -77,8 +77,7 @@
     }
 
     // 동시 수정 안내 (시트의 onConflict 가 돌려주는 문구)
-    var CONFLICT = '다른 사용자가 먼저 수정했습니다. 손대지 않은 항목은 그 사람이 바꾼 값으로 맞췄고, 둘 다 바꾼 항목은 지금 입력한 값을 두고 ' +
-        '그 사람의 값을 옆에 표시했습니다. 확인한 뒤 다시 저장해 주세요.';
+    var CONFLICT = '다른 사용자가 먼저 수정했습니다. 바뀐 값은 반영했습니다. 확인 후 다시 저장하세요.';
 
     // 동시 수정 뒤 한 칸 맞추기 (세 갈래 비교): 시트를 연 때의 값(base)·최신 값(latest)·지금 입력 값.
     // 내가 손대지 않은 칸은 최신 값으로 바꿔 넣는다 — 그대로 다시 저장하면 다른 사람이 바꾼 값을 옛 값으로 되돌리기 때문이다.
@@ -283,7 +282,7 @@
                 marks.push({ date: s.baselineDate, top: 4, cls: 'tick', title: '기준선 ' + s.baselineDate + (s.slipDays ? ' (' + signed(s.slipDays) + '일)' : '') });
             }
             rows.push({
-                key: 's' + s.id, cls: 'stage', title: s.name, sub: sub, height: 50,
+                key: 's' + s.id, cls: 'stage', title: s.name, sub: sub, height: 50, reorder: true,
                 side: sideIcon + '<span>' + s.progress + '%</span>',
                 toggle: s.works.length ? { expanded: !collapsed[s.id] } : null,
                 bars: bars, marks: marks,
@@ -322,11 +321,12 @@
         gantt = Gantt.render($('gantt'), {
             rows: ganttRows(), links: ganttLinks(), today: today, holidays: data.holidays, zoom: print ? 'month' : zoom,
             fit: print ? PRINT_WIDTH : null,
-            corner: '단계 · 작업', keepScroll: keepScroll && !print, empty: '단계가 없습니다. 단계를 추가해 주세요.',
+            corner: '단계 · 작업', keepScroll: keepScroll && !print, empty: '단계 없음',
             onRowClick: function (r) {
                 if (r.data.stage) openStageSheet(stageById(r.data.stage));
                 else if (r.data.work) openWorkSheet(workById(r.data.work));
             },
+            onReorder: function (from, target, after) { reorderStages(from.data.stage, target.data.stage, after); },
             onToggle: function (r) {
                 var id = r.data.stage;
                 if (collapsed[id]) delete collapsed[id]; else collapsed[id] = true;
@@ -339,6 +339,63 @@
             }
         });
     }
+
+    // ── 단계 순서: 끌어 놓기·정렬 ───────────────────────────────────
+    // 끌어 놓은 단계를 대상 단계 앞(after=false)·뒤에 두고, 바뀐 순서 전체를 보낸다(서버가 자리가 바뀐 단계의 버전을 확인한다)
+    function reorderStages(id, targetId, after) {
+        if (id === targetId) return;
+        var ids = P.stages.map(function (x) { return x.id; });
+        var next = ids.filter(function (x) { return x !== id; });
+        next.splice(next.indexOf(targetId) + (after ? 1 : 0), 0, id);
+        if (next.join() === ids.join()) return;
+        api('ReorderStages', {
+            projectId: P.id,
+            order: next.map(function (x) { return { id: x, version: stageById(x).version }; })
+        }).then(function () { App.toast('단계 순서를 바꿨습니다.'); },
+            function (err) { App.toast(err.message, 'error'); });
+    }
+
+    function sortStages(by) {
+        api('SortStages', { projectId: P.id, by: by }).then(function () { App.toast(by === 'end' ? '종료순으로 정렬했습니다.' : '시작순으로 정렬했습니다.'); },
+            function (err) { App.toast(err.message, 'error'); });
+    }
+
+    // 목록의 단계 카드 끌어 놓기 (간트는 gantt.js 가 같은 일을 한다)
+    (function bindListReorder() {
+        var list = $('schedule-list');
+        var dragId = null;
+        function card(e) { return e.target.closest ? e.target.closest('[data-stage-card]') : null; }
+        function clear() { list.querySelectorAll('.stage-card').forEach(function (c) { c.classList.remove('drop-before', 'drop-after', 'reorder-src'); }); }
+        function after(e, c) { var rc = c.getBoundingClientRect(); return e.clientY > rc.top + rc.height / 2; }
+        list.addEventListener('dragstart', function (e) {
+            var g = e.target.closest && e.target.closest('.stage-grip');
+            var c = g && card(e);
+            if (!c) return;
+            dragId = +c.dataset.stageCard;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(dragId));
+            c.classList.add('reorder-src');
+        });
+        list.addEventListener('dragend', function () { dragId = null; clear(); });
+        list.addEventListener('dragover', function (e) {
+            var c = card(e);
+            if (dragId == null || !c || +c.dataset.stageCard === dragId) return;
+            e.preventDefault();
+            var a = after(e, c);
+            clear();
+            c.classList.add(a ? 'drop-after' : 'drop-before');
+            list.querySelector('[data-stage-card="' + dragId + '"]').classList.add('reorder-src');
+        });
+        list.addEventListener('drop', function (e) {
+            var c = card(e);
+            if (dragId == null || !c) return;
+            e.preventDefault();
+            var from = dragId, a = after(e, c);
+            dragId = null;
+            clear();
+            reorderStages(from, +c.dataset.stageCard, a);
+        });
+    })();
 
     // ── 일정: 목록 ──────────────────────────────────────────────────
     function renderList() {
@@ -374,17 +431,18 @@
                     '<span class="work-progress"><span class="progress" aria-hidden="true"><i style="width:' + w.progress + '%"></i></span>' +
                     '<span class="num">' + w.progress + '%</span></span></button></li>';
             }).join('');
-            return '<section class="stage-card ' + s.status + '">' +
+            return '<section class="stage-card ' + s.status + '" data-stage-card="' + s.id + '">' +
+                '<div class="stage-top"><span class="stage-grip" draggable="true" title="끌어서 순서 변경" aria-hidden="true">' + icon('grip') + '</span>' +
                 '<button type="button" class="stage-head" data-stage="' + s.id + '"><h3>' + esc(s.name) + '</h3>' + stageChip(s) +
                 (s.parallel ? chip('', null, '앞 단계와 동시') : '') +
                 (s.checkTotal ? chip(s.checkDone === s.checkTotal ? 'ok' : '', 'tasks', '체크 ' + s.checkDone + '/' + s.checkTotal) : '') +
-                '<span class="stage-dates">' + dates + '</span></button>' + warn + cross +
+                '<span class="stage-dates">' + dates + '</span></button></div>' + warn + cross +
                 (works ? '<ul class="work-list">' + works + '</ul>' : '') +
                 '<div class="stage-foot"><button type="button" class="btn small" data-add-work="' + s.id + '">' + icon('plus') + '작업</button>' +
                 '<button type="button" class="btn small" data-add-works="' + s.id + '">' + icon('tasks') + '여러 개 추가</button></div>' +
                 '</section>';
         }).join('');
-        $('schedule-list').innerHTML = html || '<div class="card"><p class="empty">단계가 없습니다. 단계를 추가해 주세요.</p></div>';
+        $('schedule-list').innerHTML = html || '<div class="card"><p class="empty">단계 없음</p></div>';
     }
 
     function setPressed(id, on) {
@@ -428,7 +486,7 @@
                     items.map(function (it) {
                         return '<tr><td>' + esc(it.name) + '</td><td class="r">' + it.quantity + '</td><td>' + esc(it.note || '') + '</td></tr>';
                     }).join('') + '</tbody></table>'
-                    : '<p class="empty">등록된 내역이 없습니다.</p>') +
+                    : '<p class="empty">내역 없음</p>') +
                 '</section>';
         }
         compare = P.compareNo == null ? null : P.compareNo;
@@ -439,7 +497,7 @@
         // 삭제 단추는 지울 수 있는 사람(담당자·등록자·관리자)에게만 — 서버가 canDelete 로 알려 준다
         var danger = P.canDelete
             ? '<section class="card danger-zone"><div><h3>과제 삭제</h3>' +
-              '<p class="muted">휴지통으로 보냅니다. 보관 기간 안에는 관리자가 되살릴 수 있고, 그 뒤 첨부·활동 이력과 함께 영구 삭제됩니다.</p></div>' +
+              '<p class="muted">휴지통으로 이동 (보관 기간 안에는 복원 가능)</p></div>' +
               '<span class="spacer"></span><button type="button" class="btn danger" id="btn-delete">' + icon('trash') + '과제 삭제</button></section>'
             : '';
         $('tab-info').innerHTML =
@@ -503,7 +561,7 @@
             return '<option value="' + s.id + '">' + esc(s.name) + '</option>';
         }).join('');
         if (!list.length) {
-            $('files').innerHTML = '<li class="files-empty muted">올린 자료가 없습니다.</li>';
+            $('files').innerHTML = '<li class="files-empty muted">자료 없음</li>';
             return;
         }
         $('files').innerHTML = list.map(function (a) {
@@ -534,7 +592,7 @@
     async function deleteFile(id) {
         var a = (P.attachments || []).filter(function (x) { return x.id === id; })[0];
         if (!a) return;
-        var ok = await App.confirm({ title: '첨부 삭제', message: '"' + a.fileName + '" 파일을 삭제합니다. 되돌릴 수 없습니다.', verb: '삭제' });
+        var ok = await App.confirm({ title: '첨부 삭제', message: '"' + a.fileName + '" 파일 삭제 (되돌릴 수 없음)', verb: '삭제' });
         if (!ok) return;
         try {
             await api('DeleteFile', { id: id });
@@ -639,7 +697,7 @@
             // 조건을 건 동안 과제가 바뀌었으면(내 저장·새로 고침) 조건 목록도 다시 받는다
             if (filtered.stamp !== P.updatedAt && !filtered.loading) { loadFiltered(); return; }
             $('feed').innerHTML = filtered.items.length ? filtered.items.map(feedItem).join('')
-                : '<li><span></span><p class="muted">' + (filtered.loading ? '불러오는 중…' : '조건에 맞는 활동이 없습니다.') + '</p></li>';
+                : '<li><span></span><p class="muted">' + (filtered.loading ? '불러오는 중…' : '활동 없음') + '</p></li>';
             $('feed-more').hidden = filtered.end || !filtered.items.length;
             $('feed-status').textContent = filtered.loading ? '' : '조건에 맞는 활동 ' + filtered.items.length + '건' + (filtered.end ? '' : ' 이상');
             return;
@@ -654,7 +712,7 @@
                 html += '<li class="feed-divider" role="separator"><span>' + icon('up') + '여기부터 위가 새 활동입니다 (' + fresh + '건 · 지난번에 본 뒤)</span></li>';
             }
         });
-        $('feed').innerHTML = html || '<li><span></span><p class="muted">아직 활동이 없습니다.</p></li>';
+        $('feed').innerHTML = html || '<li><span></span><p class="muted">활동 없음</p></li>';
         var more = !feedEnd && feedItems.length < total;
         $('feed-more').hidden = !more;
         $('feed-status').textContent = total > 0 ? (more ? '최근 ' + feedItems.length + '건 / 전체 ' + total + '건' : '전체 ' + total + '건') : '';
@@ -758,7 +816,7 @@
         }
         renderFeed();
         var el = document.getElementById('a' + id);
-        if (!el) { App.toast('활동을 찾지 못했습니다. 지워진 과제의 기록이거나 너무 오래된 기록입니다.', 'error'); return; }
+        if (!el) { App.toast('활동을 찾지 못했습니다.', 'error'); return; }
         document.querySelectorAll('#feed > li.hit').forEach(function (x) { x.classList.remove('hit'); });
         el.classList.add('hit');
         el.setAttribute('tabindex', '-1');
@@ -843,7 +901,7 @@
 
         async function upload(file) {
             if (!file) return;
-            if (!/^image\/(png|jpeg|gif)$/.test(file.type)) { onError('이미지(PNG·JPG·GIF)만 넣을 수 있습니다.'); return; }
+            if (!/^image\/(png|jpeg|gif)$/.test(file.type)) { onError('PNG·JPG·GIF 만 가능'); return; }
             if (file.size > data.upload.maxBytes) { onError('이미지는 ' + data.upload.maxMB + 'MB 이하만 넣을 수 있습니다.'); return; }
             var name = file.name && /\.(png|jpe?g|gif)$/i.test(file.name) ? file.name
                 : '붙여넣기-' + App.today.replace(/-/g, '') + '-' + Date.now().toString(36) + (file.type === 'image/png' ? '.png' : file.type === 'image/gif' ? '.gif' : '.jpg');
@@ -855,7 +913,7 @@
             try {
                 var r = await change(App.upload(App.url('/Projects/Files?handler=Upload') + compareQuery(), form));
                 if (r.attachmentId) insertAt('[이미지:' + r.attachmentId + ']');
-                App.toast('이미지를 넣었습니다. 등록하면 본문에 보입니다.');
+                App.toast('이미지 추가됨');
             } catch (err) { onError(err.message); }
             finally { button.disabled = false; }
         }
@@ -918,7 +976,7 @@
 
     // ── 시트: 단계 ──────────────────────────────────────────────────
     function checksHtml(s) {
-        if (!s.checks.length) return '<li class="muted">체크 항목이 없습니다.</li>';
+        if (!s.checks.length) return '<li class="muted">항목 없음</li>';
         return s.checks.map(function (c) {
             return '<li data-check-row="' + c.id + '"><label class="check"><input type="checkbox" data-check="' + c.id + '"' + (c.done ? ' checked' : '') + ' />' +
                 '<span>' + esc(c.text) + '</span></label>' +
@@ -932,7 +990,7 @@
     // 목표일을 옮길 때 이후 단계의 미착수 작업도 같은 근무일만큼 옮길지 (건수는 서버가 센다, 기본 꺼짐)
     function cascadeWorksHtml(s) {
         if (!s || !s.laterWorks) return '';
-        return '<label class="check"><input type="checkbox" name="cascadeWorks" />이후 단계의 미착수 작업 ' + s.laterWorks + '건도 같은 근무일 수만큼 이동</label>';
+        return '<label class="check"><input type="checkbox" name="cascadeWorks" />이후 미착수 작업 ' + s.laterWorks + '건도 이동</label>';
     }
 
     // ── 과제 간 단계 연결 (단계 시트 안) ──────────────────────────────
@@ -959,19 +1017,19 @@
     }
 
     function crossLinksSectionHtml() {
-        return '<div class="sheet-section" data-cross><h3>다른 과제 단계와 연결 <span class="count" data-cross-count></span></h3>' +
+        return '<div class="sheet-section" data-cross><h3>다른 과제 연결 <span class="count" data-cross-count></span></h3>' +
             '<ul class="cross-list" data-cross-list></ul>' +
             '<div class="cross-add form" data-cross-add hidden>' +
             '<label class="field"><span class="label">방향</span><select data-cross-role>' +
-            '<option value="pred">선행 — 그 단계가 끝난 뒤에 이 단계 목표일</option>' +
-            '<option value="succ">후행 — 이 단계가 끝난 뒤에 그 단계 목표일</option></select></label>' +
+            '<option value="pred">선행 (그 단계 후 이 단계)</option>' +
+            '<option value="succ">후행 (이 단계 후 그 단계)</option></select></label>' +
             '<label class="field"><span class="label">과제 검색</span><input type="search" data-cross-q maxlength="100" placeholder="과제명 일부" autocomplete="off" /></label>' +
             '<label class="field" data-field="otherStageId"><span class="label">단계</span><select data-cross-stage></select></label>' +
             '<label class="field" data-field="lagDays"><span class="label">간격 (근무일)</span><input type="number" data-cross-lag min="0" max="250" step="1" value="0" inputmode="numeric" /></label>' +
             '<div class="inline-btns"><button type="button" class="btn small primary" data-cross-save>' + icon('link') + '연결</button>' +
             '<button type="button" class="btn small" data-cross-cancel>취소</button></div></div>' +
-            '<div class="inline-btns" data-cross-open-row><button type="button" class="btn small" data-cross-open>' + icon('link') + '다른 과제 단계에 연결</button></div>' +
-            '<span class="hint">연결해도 일정을 자동으로 옮기지 않습니다. 어긋나면 두 과제의 단계에 경고가 보입니다.</span></div>';
+            '<div class="inline-btns" data-cross-open-row><button type="button" class="btn small" data-cross-open>' + icon('link') + '다른 과제 연결</button></div>' +
+            '<span class="hint">일정은 자동으로 옮기지 않고 어긋나면 경고합니다.</span></div>';
     }
 
     // 연결 목록·추가 칸. 입력에 name 을 두지 않는다 — 누르는 즉시 저장되므로 시트의 '작성 중인 내용' 확인 대상이 아니다
@@ -992,7 +1050,7 @@
                     '<a href="' + App.url('/Projects/Detail?id=' + x.projectId) + '">' + esc(crossLinkText(x)) + '</a>' +
                     (x.violated ? '<span class="cross-bad">' + icon('alert') + esc(crossViolationText(x)) + '</span>' : '') + '</span>' +
                     '<button type="button" class="btn icon small ghost" data-cross-del="' + x.id + '" aria-label="연결 해제" title="연결 해제">' + icon('x') + '</button></li>';
-            }).join('') : '<li class="muted">연결된 다른 과제 단계가 없습니다.</li>';
+            }).join('') : '<li class="muted">연결 없음</li>';
         }
 
         function search() {
@@ -1006,7 +1064,7 @@
                             var d = st.completedDate ? '완료 ' + D.md(st.completedDate) : st.targetDate ? '목표 ' + D.md(st.targetDate) : '목표일 미정';
                             return '<option value="' + st.id + '">' + esc(p.title + ' · ' + st.name + ' (' + d + ')') + '</option>';
                         }).join('') + '</optgroup>';
-                    }).join('') : '<option value="">찾은 과제가 없습니다</option>';
+                    }).join('') : '<option value="">과제 없음</option>';
                 }, function (err) { sheet.setError(err.message); });
             }, 300);
         }
@@ -1036,7 +1094,7 @@
                     sheet.setError(null);
                     add.hidden = true;
                     box.querySelector('[data-cross-open-row]').hidden = false;
-                    App.toast('다른 과제 단계와 연결했습니다.');
+                    App.toast('연결했습니다.');
                 } catch (err) { sheet.setError(err.message, err.field); }
                 refresh();
             });
@@ -1064,58 +1122,64 @@
         var sid = isNew ? null : s.id;
         var refreshUi = function () {};      // onOpen 이 채운다 (충돌 뒤 사유 칸 표시 등을 최신 값 기준으로 다시 맞춤)
 
-        var html = field('name', '단계명', '<input name="name" maxlength="' + LIM.stageName + '" required value="' + esc(isNew ? '' : s.name) + '" />');
+        // 시트는 세 칸으로 나눈다: 정보(이름·작업 추가·순서) · 일정(목표일·방식·연결) · 진행(체크리스트·완료일). 새 단계는 정보·일정만
+        var infoPane = field('name', '단계명', '<input name="name" maxlength="' + LIM.stageName + '" required value="' + esc(isNew ? '' : s.name) + '" />');
+        var planPane = '';
+        var progressPane = '';
         if (!isNew && s.forecastOver > 0) {
-            html += '<p class="form-warn">' + icon('clock') + '<span>작업 기준 예상 종료 ' + s.forecast + ' · 목표일보다 ' + s.forecastOver + '일 늦습니다.</span></p>';
+            planPane += '<p class="form-warn">' + icon('clock') + '<span>작업 기준 예상 종료 ' + s.forecast + ' (+' + s.forecastOver + '일)</span></p>';
         }
-        html += field('targetDate', '목표일', '<input type="date" name="targetDate" value="' + (isNew ? '' : s.targetDate || '') + '" />', true) +
+        planPane += field('targetDate', '목표일', '<input type="date" name="targetDate" value="' + (isNew ? '' : s.targetDate || '') + '" />', true) +
             '<span class="hint" data-target-hint></span>';
-        // 선후 관계·목표일 정하는 방식(규칙 23·규칙 1 의 예외). 첫 단계에는 '앞 단계'가 없어 동시 진행을 고를 수 없다
+        // 선후 관계·목표일 정하는 방식(규칙 23·규칙 1 의 예외). 첫 단계에는 '앞 단계'가 없어 동시 진행을 고를 수 없다.
+        // 목표일은 기본으로 작업 일정에 맞춘다(새 단계는 켠 채로 시작)
         var canParallel = isNew ? P.stages.length > 0 : index > 0;
-        html += '<div class="field stage-flags" data-field="flags">' +
-            (canParallel ? '<label class="check"><input type="checkbox" name="parallel"' + (!isNew && s.parallel ? ' checked' : '') + ' />앞 단계와 동시 진행 (선후 관계 없음)' + helpQ('parallel', '동시 진행 단계') + '</label>' : '') +
-            '<label class="check"><input type="checkbox" name="autoTarget"' + (!isNew && s.autoTarget ? ' checked' : '') + ' />목표일을 작업 일정에 맞춤 (가장 늦은 작업 목표 종료일로 자동)' + helpQ('parallel', '작업 일정에 맞춘 목표일') + '</label>' +
+        planPane += '<div class="field stage-flags" data-field="flags">' +
+            (canParallel ? '<label class="check"><input type="checkbox" name="parallel"' + (!isNew && s.parallel ? ' checked' : '') + ' />앞 단계와 동시' + helpQ('parallel', '동시 진행 단계') + '</label>' : '') +
+            '<label class="check"><input type="checkbox" name="autoTarget"' + (isNew || s.autoTarget ? ' checked' : '') + ' />작업 일정에 맞춤' + helpQ('parallel', '작업 일정에 맞춘 목표일') + '</label>' +
             '<span class="hint" data-auto-hint hidden></span></div>';
         if (!isNew && s.inboundHint && s.inboundHint !== s.targetDate) {
-            html += '<div class="form-note"><span>추천 입고일 <b>' + s.inboundHint + '</b></span>' +
-                '<span class="muted">검수일 + 해상 운송 ' + P.oceanLeadDays + '일</span>' +
+            planPane += '<div class="form-note"><span>추천 입고일 <b>' + s.inboundHint + '</b></span>' +
+                '<span class="muted">검수일 + 해상 ' + P.oceanLeadDays + '일</span>' +
                 '<button type="button" class="btn small" data-apply-hint>적용</button></div>';
         }
-        if (isNew) html += '<div data-target-preview></div>';
+        if (isNew) planPane += '<div data-target-preview></div>';
         if (!isNew) {
-            html += '<div data-reason hidden class="form">' +
-                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유"></textarea>') +
+            planPane += '<div data-reason hidden class="form">' +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유"></textarea>') +
                 reasonCodeHtml() +
-                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
+                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 ' + later + '개 단계도 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
                 cascadeWorksHtml(s) +
                 '</div>';
             // 저장 전 미리보기: 목표일을 바꾸면 함께 옮겨지는 단계·작업과 예상 종료 전/후 (서버 계산)
-            html += '<div data-target-preview></div>';
-            html += crossLinksSectionHtml();
-            html += '<div class="sheet-section" data-field="check"><h3>체크리스트 <span class="count" data-check-count></span></h3>' +
+            planPane += '<div data-target-preview></div>';
+            planPane += crossLinksSectionHtml();
+            progressPane += '<div class="sheet-section first" data-field="check"><h3>체크리스트 <span class="count" data-check-count></span></h3>' +
                 '<ul class="check-list" data-checks></ul>' +
-                '<div class="add-inline"><input data-new-check maxlength="' + LIM.checkText + '" placeholder="완료 조건 추가" aria-label="체크 항목" />' +
+                '<div class="add-inline"><input data-new-check maxlength="' + LIM.checkText + '" placeholder="항목 추가" aria-label="체크 항목" />' +
                 '<button type="button" class="btn small" data-add-check>' + icon('plus') + '추가</button></div></div>';
-            html += '<div class="field" data-field="completedDate"><span class="label">완료일</span>' +
+            progressPane += '<div class="field" data-field="completedDate"><span class="label">완료일</span>' +
                 '<input type="date" name="completedDate" value="' + (s.completedDate || '') + '" />' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-done-today>' + icon('check') + '오늘 완료</button>' +
                 '<button type="button" class="btn small" data-clear-done>완료 취소</button></div></div>' +
-                '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>완료일이 오늘보다 미래입니다.</span></p>' +
+                '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>완료일이 미래입니다.</span></p>' +
                 (!s.completedDate && s.openWorks > 0
                     ? '<label class="check" data-close-works hidden><input type="checkbox" name="closeWorks" />' +
-                      '남은 작업 ' + s.openWorks + '건을 완료일로 닫고 완료</label>'
+                      '남은 작업 ' + s.openWorks + '건도 완료 처리</label>'
                     : '');
             // Excel 에서 복사한 작업 목록을 이 단계에 한 번에 넣는다
-            html += '<div class="field"><span class="label">작업</span><div class="inline-btns">' +
-                '<button type="button" class="btn small" data-stage-add-works>' + icon('tasks') + '작업 여러 개 추가</button></div></div>';
-            html += '<div class="field"><span class="label">순서</span><div class="inline-btns">' +
+            infoPane += '<div class="field"><span class="label">작업</span><div class="inline-btns">' +
+                '<button type="button" class="btn small" data-stage-add-works>' + icon('tasks') + '여러 개 추가</button></div></div>';
+            infoPane += '<div class="field"><span class="label">순서</span><div class="inline-btns">' +
                 '<button type="button" class="btn small" data-move="-1"' + (index <= 0 ? ' disabled' : '') + '>' + icon('up') + '앞으로</button>' +
                 '<button type="button" class="btn small" data-move="1"' + (index >= P.stages.length - 1 ? ' disabled' : '') + '>' + icon('down') + '뒤로</button></div></div>';
         }
+        var html = '<div data-pane="info">' + infoPane + '</div><div data-pane="plan">' + planPane + '</div>' +
+            (isNew ? '' : '<div data-pane="progress">' + progressPane + '</div>');
 
         function stageConflict(form, sheet) {
             var cur = stageById(sid);
-            if (!cur) return '다른 사용자가 이 단계를 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
+            if (!cur) return '다른 사용자가 단계를 삭제했습니다.';
             sheet.clearConflictNotes();
             var f = form.elements;
             mergeField(sheet, f.name, 'name', s.name, cur.name);
@@ -1145,6 +1209,10 @@
         App.sheet({
             title: isNew ? '단계 추가' : '단계 · ' + s.name,
             html: html,
+            tabs: isNew ? [{ key: 'info', label: '정보' }, { key: 'plan', label: '일정' }]
+                : [{ key: 'info', label: '정보' }, { key: 'plan', label: '일정' }, { key: 'progress', label: '진행' }],
+            tab: 'info',
+            tabKey: isNew ? null : 'sheet.tab.stage',
             primary: isNew ? '추가' : '저장',
             draftKey: 'stage.' + (isNew ? 'new.' + P.id : sid),
             // 다른 사용자가 먼저 고쳤으면: 최신 버전으로 바꾸고, 그 사람이 바꾼 값을 항목 옆에 보인다. 입력한 값은 그대로 둔다
@@ -1154,7 +1222,7 @@
                 onClick: async function (sheet) {
                     var ok = await App.confirm({
                         title: '단계 삭제',
-                        message: '"' + s.name + '" 단계' + (s.works.length ? '와 작업 ' + s.works.length + '건' : '') + '을 삭제합니다. 되돌릴 수 없습니다.',
+                        message: '"' + s.name + '" 단계' + (s.works.length ? '와 작업 ' + s.works.length + '건' : '') + ' 삭제 (되돌릴 수 없음)',
                         verb: '단계 삭제'
                     });
                     if (!ok) return;
@@ -1186,24 +1254,24 @@
                         }
                         return v ? previewUrl({ kind: 'day', date: v }) : null;
                     },
-                    noMoves: '다른 단계·작업은 옮겨지지 않습니다.'
+                    noMoves: '다른 일정은 그대로'
                 });
 
                 var autoBox = f.autoTarget;
                 var autoHint = form.querySelector('[data-auto-hint]');
-                // 작업 일정에 맞추면 목표일 칸은 잠기고(서버가 정한다) 사유도 받지 않는다. 작업이 없으면 지금 목표일을 그대로 둔다
+                // 작업이 있는 단계에서 작업 일정에 맞추면 목표일 칸은 잠기고(서버가 정한다) 사유도 받지 않는다.
+                // 작업이 없으면 맞출 일정이 없어 목표일을 직접 정한다(작업을 추가하면 그 일정으로 맞춘다)
+                var nWorks = isNew ? 0 : s.works.length;
                 function onAuto() {
                     var on = autoBox.checked;
-                    target.disabled = on;
+                    var lock = on && nWorks > 0;
+                    target.disabled = lock;
                     autoHint.hidden = !on;
-                    if (on) {
-                        var n = isNew ? 0 : s.works.length;
-                        if (n) {
-                            target.value = s.worksTo || target.value;
-                            autoHint.textContent = '작업 ' + n + '개 중 가장 늦은 목표 종료 ' + (s.worksTo || '') + ' 로 맞춥니다. 작업 일정이 바뀌면 함께 바뀝니다.';
-                        } else {
-                            autoHint.textContent = '작업이 없어 지금 목표일을 그대로 둡니다. 작업을 추가하면 그 일정으로 맞춥니다.';
-                        }
+                    if (lock) {
+                        target.value = s.worksTo || target.value;
+                        autoHint.textContent = '작업 ' + nWorks + '개 중 가장 늦은 종료 ' + (s.worksTo || '');
+                    } else if (on) {
+                        autoHint.textContent = '작업 추가 시 자동 맞춤';
                     } else if (!isNew) {
                         target.value = s.targetDate || '';
                     }
@@ -1215,7 +1283,7 @@
                         notes += '기준선 ' + s.baselineDate + (slip == null ? '' : slip === 0 ? ' (그대로)' : ' (' + signed(slip) + '일)');
                     }
                     hint.textContent = notes;
-                    if (reasonBox) reasonBox.hidden = autoBox.checked || !(s.targetDate && target.value !== s.targetDate);
+                    if (reasonBox) reasonBox.hidden = (autoBox.checked && nWorks > 0) || !(s.targetDate && target.value !== s.targetDate);
                     preview.update();
                 }
                 autoBox.addEventListener('change', function () { onAuto(); onTarget(); });
@@ -1248,7 +1316,7 @@
                 var addWorks = form.querySelector('[data-stage-add-works]');
                 // 단계 시트는 저장하지 않은 입력이 없을 때만 닫고 붙여넣기 시트로 넘어간다(입력이 있으면 먼저 저장하거나 버리게)
                 if (addWorks) addWorks.addEventListener('click', function () {
-                    if (sheet.isDirty()) { sheet.setError('저장하지 않은 입력이 있습니다. 먼저 저장하거나 취소한 뒤 작업을 추가해 주세요.'); return; }
+                    if (sheet.isDirty()) { sheet.setError('저장하지 않은 입력이 있습니다.'); return; }
                     sheet.close();
                     openWorksPaste(stageById(sid));
                 });
@@ -1375,7 +1443,7 @@
             draftKey: 'target.' + s.id,
             onConflict: function (form, sheet) {
                 var cur = stageById(s.id);
-                if (!cur) return '다른 사용자가 이 단계를 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
+                if (!cur) return '다른 사용자가 단계를 삭제했습니다.';
                 sheet.clearConflictNotes();
                 var changed = [];
                 if (cur.targetDate !== s.targetDate) changed.push('목표일 ' + (cur.targetDate || '미정'));
@@ -1388,9 +1456,9 @@
             },
             html: '<div class="form-note" data-target-note></div>' +
                 field('targetDate', '바꿀 목표일', '<input type="date" name="targetDate" required value="' + newDate + '" />') +
-                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표일을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유" required></textarea>') +
                 reasonCodeHtml() +
-                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 미완료 단계 ' + later + '개도 같은 근무일 수만큼 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
+                (later > 0 ? '<label class="check"><input type="checkbox" name="cascade" />이후 ' + later + '개도 이동' + helpQ('cascade', '연쇄 이동') + '</label>' : '') +
                 cascadeWorksHtml(s) +
                 '<div data-target-preview></div>',
             primary: '변경',
@@ -1405,7 +1473,7 @@
                             works: f.cascadeWorks && f.cascadeWorks.checked ? 'true' : null
                         });
                     },
-                    noMoves: '다른 단계·작업은 옮겨지지 않습니다.',
+                    noMoves: '다른 일정은 그대로',
                     onResult: function (r) {
                         var shift = r && r.shift != null ? '근무일 ' + signed(r.shift) + '일' : '';
                         note.innerHTML = '<b>' + (s.targetDate || '미정') + ' → ' + (f.targetDate.value || '미정') + '</b>' + (shift ? '<span class="muted">' + shift + '</span>' : '');
@@ -1451,7 +1519,7 @@
             draftKey: 'plan.' + w.id,
             onConflict: function (form, sheet) {
                 var cur = workById(w.id);
-                if (!cur) return '다른 사용자가 이 작업을 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
+                if (!cur) return '다른 사용자가 작업을 삭제했습니다.';
                 sheet.clearConflictNotes();
                 if (cur.planStart !== w.planStart || cur.planEnd !== w.planEnd) sheet.conflictNote(null, '목표 일정 ' + cur.planStart + ' ~ ' + cur.planEnd);
                 w = cur;      // 끌어 온 날짜 말고는 최신 값으로 저장한다
@@ -1463,7 +1531,7 @@
                 field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + from + '" />') +
                 field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + to + '" />') +
                 '</div>' +
-                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유" required></textarea>') +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유" required></textarea>') +
                 reasonCodeHtml() +
                 '<div data-plan-preview></div>',
             primary: '변경',
@@ -1479,7 +1547,7 @@
                         if (!f.planStart.value || !f.planEnd.value) return null;
                         return previewUrl({ kind: 'work', id: w.id, from: f.planStart.value, to: f.planEnd.value });
                     },
-                    noMoves: '함께 옮겨지는 다른 작업이 없습니다.',
+                    noMoves: '함께 옮길 작업 없음',
                     onResult: function (r) { head(r ? r.workDays : null); }
                 });
                 head(null);
@@ -1502,27 +1570,27 @@
     function openReplanSheet() {
         var preview = null;
         App.sheet({
-            title: '재계획 — 오늘 기준 예측으로 옮기기',
+            title: '재계획',
             wide: true,
             draftKey: 'replan.' + P.id,
-            html: '<p class="hint">시작일이 지났거나 늦어진 선행 작업 때문에 예측 일정이 목표보다 늦은 미착수 작업의 목표 일정을 예측대로 옮깁니다. ' +
-                '진행 중·완료 작업과 단계 목표일은 바꾸지 않습니다.</p>' +
+            html: '<p class="hint">예측이 목표보다 늦은 미착수 작업을 예측대로 옮깁니다. ' +
+                '진행 중·완료 작업은 그대로.</p>' +
                 '<div data-replan-preview></div>' +
-                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="예: 선행 작업 지연을 반영해 남은 일정 재계획" required></textarea>') +
+                field('reason', '재계획 사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유" required></textarea>') +
                 reasonCodeHtml(),
             primary: '재계획',
             onOpen: function (form) {
                 preview = PlanPreview.attach(form.querySelector('[data-replan-preview]'), {
                     url: function () { return previewUrl({ kind: 'replan', id: P.id }); },
                     movedTitle: '옮겨질 작업',
-                    noMoves: '예측과 다른 미착수 작업이 없습니다.'
+                    noMoves: '대상 없음'
                 });
                 preview.now();
             },
             onConflict: function (form, sheet) {
                 sheet.clearConflictNotes();
                 if (preview) preview.now();
-                return '그사이 다른 사용자가 일정을 바꿨습니다. 다시 계산한 목록을 확인한 뒤 다시 저장해 주세요.';
+                return '다른 사용자가 일정을 바꿨습니다. 목록을 확인 후 다시 저장하세요.';
             },
             onClose: function () { if (preview) preview.stop(); },
             onSubmit: async function (form) {
@@ -1532,7 +1600,7 @@
                     projectId: P.id, reason: form.elements.reason.value, reasonCode: reasonCodeOf(form), version: P.version,
                     rows: r.moved.map(function (m) { return { workId: m.id, version: m.version, planStart: m.newStart, planEnd: m.newEnd }; })
                 });
-                App.toast('작업 ' + r.moved.length + '건을 예측 일정으로 옮겼습니다.');
+                App.toast('작업 ' + r.moved.length + '건 옮겼습니다.');
             }
         });
     }
@@ -1559,7 +1627,7 @@
             var old = box.querySelector('[data-work-more]');
             if (old) old.remove();
             var html = r.activities.map(workFeedItemHtml).join('');
-            if (!beforeId) box.innerHTML = html || '<li class="muted">아직 기록이 없습니다.</li>';
+            if (!beforeId) box.innerHTML = html || '<li class="muted">기록 없음</li>';
             else box.insertAdjacentHTML('beforeend', html);
             var last = r.activities[r.activities.length - 1];
             if (r.more && last) {
@@ -1570,7 +1638,7 @@
             }
         } catch (err) {
             if (!box.isConnected || +box.dataset.gen !== gen) return;
-            if (!beforeId) box.innerHTML = '<li class="muted">진행 내용을 불러오지 못했습니다. ' + esc(err.message) + '</li>';
+            if (!beforeId) box.innerHTML = '<li class="muted">불러오지 못했습니다. ' + esc(err.message) + '</li>';
             else App.toast(err.message, 'error');
         }
     }
@@ -1599,6 +1667,7 @@
             }).join('');
         }
         // 선행 작업 후보: 같은 과제의 다른 작업. 고른 선행마다 유형(끝나면 시작·같이 시작·같이 끝)과 간격(근무일)을 둔다.
+        // 처음엔 이 작업의 단계 작업만 보이고, '다른 단계'를 켜면 다른 단계 작업만 보인다(filterPre). 고른 것은 숨겨져도 그대로 남는다.
         // selected: [{predecessorId, type, lagDays}]
         function preListHtml(selected) {
             var others = allWorks().filter(function (x) { return isNew || x.work.id !== w.id; });
@@ -1607,17 +1676,36 @@
                     var id = x.work.id;
                     var on = selected.filter(function (l) { return l.predecessorId === id; })[0];
                     var type = on ? on.type : 'fs';
-                    return '<div class="pre-row" data-pre-row="' + id + '">' +
+                    return '<div class="pre-row" data-pre-row="' + id + '" data-pre-stage="' + x.stage.id + '">' +
                         '<label class="check"><input type="checkbox" name="pre" value="' + id + '"' + (on ? ' checked' : '') + ' />' +
                         '<span>' + esc(x.work.title) + ' <span class="muted">' + esc(x.stage.name) + ' · ' + D.md(x.work.planStart) + '~' + D.md(x.work.planEnd) + '</span></span></label>' +
                         '<span class="pre-opts"' + (on ? '' : ' hidden') + '>' +
-                        '<select name="preType.' + id + '" aria-label="' + esc(x.work.title) + ' 의존 유형">' +
+                        '<select name="preType.' + id + '" aria-label="' + esc(x.work.title) + ' 유형">' +
                         LINK_TYPES.map(function (t) { return '<option value="' + t[0] + '"' + (t[0] === type ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') +
                         '</select>' +
                         '<input type="number" name="preLag.' + id + '" min="0" max="250" step="1" inputmode="numeric" value="' + (on ? on.lagDays : 0) + '" aria-label="' + esc(x.work.title) + ' 간격(근무일)" />' +
                         '<span class="hint">근무일 뒤</span></span></div>';
-                }).join('') + '</div>'
-                : '<span class="hint">다른 작업이 없습니다.</span>';
+                }).join('') + '<p class="hint" data-pre-empty hidden>없음</p></div>'
+                : '<span class="hint">작업 없음</span>';
+        }
+        var formRef = null;      // onOpen 이 채운다
+        // 보이는 후보를 정한다: 기본은 지금 고른 단계, '다른 단계'를 켜면 그 밖의 단계. 고른 선행은 아래 줄에 이름으로 남긴다
+        function filterPre() {
+            if (!formRef) return;
+            var other = formRef.querySelector('[data-pre-other]').checked;
+            var now = +formRef.elements.stageId.value;
+            var shown = 0;
+            formRef.querySelectorAll('.pre-row').forEach(function (row) {
+                var same = +row.dataset.preStage === now;
+                row.hidden = other ? same : !same;
+                if (!row.hidden) shown++;
+            });
+            var empty = formRef.querySelector('[data-pre-empty]');
+            if (empty) empty.hidden = shown > 0;
+            var picked = selectedLinks(formRef).map(function (l) { var x = workById(l.predecessorId); return x ? x.title : ''; }).filter(Boolean);
+            var line = formRef.querySelector('[data-pre-picked]');
+            line.textContent = picked.length ? '선택: ' + picked.join(', ') : '';
+            line.hidden = !picked.length;
         }
         // 지금 시트에서 고른 선행 연결
         function selectedLinks(form) {
@@ -1635,58 +1723,59 @@
         var stageOptions = stageOptionsHtml(stage.id);
         var preHtml = '<div data-pre-list>' + preListHtml(baseLinks) + '</div>';
 
-        var status = '';
+        // 시트는 세 칸으로 나눈다: 정보(이름·담당·메모) · 일정(목표·선행) · 진행(진행률·실적·진행 내용)
+        var planStatus = '', progressStatus = '';
         if (!isNew) {
-            if (w.depViolation) status += '<p class="form-error">' + icon('link') + '<span>선행 작업이 끝나기 전에 시작하도록 잡혀 있습니다. 목표 일정을 조정해 주세요.</span></p>';
-            if (w.closedOn) status += '<div class="form-note">' + icon('check') + '<div>단계 완료(' + D.md(w.closedOn) + ')로 함께 끝난 것으로 봅니다. 지연·임계·일정 밀기에서 빠집니다.</div></div>';
+            if (w.depViolation) planStatus += '<p class="form-error">' + icon('link') + '<span>선행보다 먼저 시작합니다. 일정을 조정하세요.</span></p>';
+            if (w.closedOn) progressStatus += '<div class="form-note">' + icon('check') + '<div>단계 완료 ' + D.md(w.closedOn) + ' 로 종료</div></div>';
             var bits = [];
-            if (w.float != null && !w.closedOn) bits.push(w.float <= 0 ? '여유 없음 — 밀리면 단계 목표일이 밀립니다' : '여유 ' + w.float + '근무일');
+            if (w.float != null && !w.closedOn) bits.push(w.float <= 0 ? '여유 없음' : '여유 ' + w.float + '근무일');
             if (w.baselineStart) bits.push('기준선 ' + D.md(w.baselineStart) + ' ~ ' + D.md(w.baselineEnd));
-            if (bits.length) status += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
+            if (bits.length) planStatus += '<div class="form-note">' + (w.critical ? icon('bolt') : icon('pin')) + '<span>' + bits.join(' · ') + '</span></div>';
         }
 
-        // 맨 위 '빠른 갱신'(내 할 일과 같은 조각 — quick.js): 진행률 칩·오늘 시작/완료·진행 내용 한 줄. 진행률 직접 입력은 기존 슬라이더다.
-        // 일정·선행·메모 같은 드문 수정은 아래 <details> 로 접는다(새 작업은 펼친다 — 작업명·일정을 먼저 정해야 하므로).
-        // 펼침 여부는 기억한다(App.pref)
-        var moreOpen = isNew || App.pref.get('detail.workMore', '0') === '1';
+        // 진행 칸 맨 위 '빠른 갱신'(내 할 일과 같은 조각 — quick.js): 진행률 칩·오늘 시작/완료·진행 내용 한 줄. 진행률 직접 입력은 슬라이더다
         var quickHtml = Quick.html({ progress: isNew ? 0 : w.progress, actualStart: isNew ? null : w.actualStart, actualEnd: isNew ? null : w.actualEnd }, {
             noteMax: LIM.text, label: '빠른 갱신',
             custom: '<span class="range-row" data-field="progress"><input type="range" name="progress" min="0" max="100" step="5" value="' + (isNew ? 0 : w.progress) + '" aria-label="진행률" /><output></output></span>'
         });
         if (isNew) quickHtml = quickHtml.replace(/<input type="text" class="quick-note"[^>]*>/, '');     // 새 작업은 저장 뒤에 진행 내용을 남긴다
-        var html = status + quickHtml +
-            '<div class="field-row">' +
-            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
-            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
-            '</div>' +
-            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 오늘보다 미래입니다.</span></p>' +
-            '<details class="sheet-more" data-work-more-fields' + (moreOpen ? ' open' : '') + '><summary>' + icon('edit') + '작업 정보·일정·선행·메모</summary><div class="more-body">' +
-            field('title', '작업명', '<input name="title" maxlength="' + LIM.workTitle + '" required value="' + esc(isNew ? '' : w.title) + '" />') +
+
+        var infoPane = field('title', '작업명', '<input name="title" maxlength="' + LIM.workTitle + '" required value="' + esc(isNew ? '' : w.title) + '" />') +
             field('stageId', '단계', '<select name="stageId">' + stageOptions + '</select>') +
             '<div class="field-row">' +
             field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? data.me.name : w.owner || '') + '" />') +
             field('coOwner', '부담당', '<input name="coOwner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(isNew ? '' : w.coOwner || '') + '" />', true) +
-            '</div><div class="field-row">' +
+            '</div>' +
+            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true);
+
+        var planPane = planStatus +
+            '<div class="field-row">' +
             field('planStart', '목표 시작', '<input type="date" name="planStart" required value="' + planStart + '" />') +
             field('planEnd', '목표 종료', '<input type="date" name="planEnd" required value="' + planEnd + '" />') +
             '</div><span class="hint" data-plan-hint></span>' +
             (isNew ? '' : '<div data-reason hidden>' +
-                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="목표 일정을 바꾸는 이유"></textarea>') + reasonCodeHtml() + '</div>') +
-            '<div class="field" data-field="predecessors"><span class="label">선행 작업 <span class="opt">선택 — 유형과 간격(근무일)을 함께 고릅니다</span>' + helpQ('links', '의존 관계 — 유형과 간격') + '</span>' + preHtml +
-            '<span class="hint">끝나면 시작: 선행이 끝난 다음 근무일부터 · 같이 시작: 선행 시작일부터 · 같이 끝: 선행 종료일 이후에 끝</span></div>' +
+                field('reason', '변경 사유' + helpQ('reason', '목표일을 바꿀 때 사유'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유"></textarea>') + reasonCodeHtml() + '</div>') +
+            '<div class="field" data-field="predecessors"><span class="label">선행 <span class="opt">선택</span>' + helpQ('links', '의존 관계 — 유형과 간격') + '</span>' +
+            '<label class="check pre-other"><input type="checkbox" data-pre-other />다른 단계 표시</label>' +
+            preHtml + '<span class="hint" data-pre-picked hidden></span></div>' +
             // 저장 전 미리보기: 근무일 수·휴일 안내, 함께 밀리는 후행 작업, 단계 예상 종료, 저장이 막히는 이유 (서버 계산)
-            '<div data-work-preview></div>' +
-            field('note', '메모', '<textarea name="note" rows="2" maxlength="' + LIM.workNote + '">' + esc(isNew ? '' : w.note || '') + '</textarea>', true) +
-            '</div></details>';
+            '<div data-work-preview></div>';
 
+        var progressPane = progressStatus + quickHtml +
+            '<div class="field-row">' +
+            field('actualStart', '실적 시작', '<input type="date" name="actualStart" value="' + (isNew ? '' : w.actualStart || '') + '" />', true) +
+            field('actualEnd', '실적 종료', '<input type="date" name="actualEnd" value="' + (isNew ? '' : w.actualEnd || '') + '" />', true) +
+            '</div>' +
+            '<p class="form-warn" data-future hidden>' + icon('alert') + '<span>실적 일자가 미래입니다.</span></p>';
         if (!isNew) {
-            html += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
-                '<textarea data-comment data-draft="comment" rows="2" maxlength="' + LIM.text + '" placeholder="이 작업의 진행 내용 남기기 (@ 로 알릴 사람 고르기, 이미지는 붙여 넣거나 단추로)" aria-label="진행 내용"></textarea>' +
+            progressPane += '<div class="sheet-section"><h3>진행 내용</h3><ul class="mini-feed" data-feed></ul>' +
+                '<textarea data-comment data-draft="comment" rows="2" maxlength="' + LIM.text + '" placeholder="진행 내용 (@ 로 알릴 사람, 이미지 붙여넣기)" aria-label="진행 내용"></textarea>' +
                 '<div data-work-mentions data-field="mentions"></div>' +
                 '<div class="inline-btns"><button type="button" class="btn small" data-add-comment>' + icon('comment') + '등록</button>' +
-                '<button type="button" class="btn small" data-add-image>' + icon('clip') + '이미지</button>' +
-                '<span class="hint">이미지는 자료(첨부)에 저장되고 본문에 [이미지:번호]로 들어갑니다.</span></div></div>';
+                '<button type="button" class="btn small" data-add-image>' + icon('clip') + '이미지</button></div></div>';
         }
+        var html = '<div data-pane="info">' + infoPane + '</div><div data-pane="plan">' + planPane + '</div><div data-pane="progress">' + progressPane + '</div>';
 
         // 동시 수정 뒤 '다른 사용자가 바꾼 값' 표시용 이름
         function linksText(links) {
@@ -1702,11 +1791,14 @@
         App.sheet({
             title: isNew ? '작업 추가' : '작업 · ' + w.title,
             html: html,
+            tabs: [{ key: 'info', label: '정보' }, { key: 'plan', label: '일정' }, { key: 'progress', label: '진행' }],
+            tab: isNew ? 'info' : 'progress',
+            tabKey: isNew ? null : 'sheet.tab.work',
             primary: isNew ? '추가' : '저장',
             draftKey: 'work.' + (isNew ? 'new.' + P.id : w.id),
             onConflict: isNew ? null : workConflict = function (form, sheet) {
                 var cur = workById(w.id);
-                if (!cur) return '다른 사용자가 이 작업을 삭제했습니다. 창을 닫고 화면을 확인해 주세요.';
+                if (!cur) return '다른 사용자가 작업을 삭제했습니다.';
                 sheet.clearConflictNotes();
                 var f = form.elements;
                 // 고른 값은 그대로 두고 목록만 최신 과제로 다시 그린다. 고른 단계가 없어졌으면 최신 단계로 둔다(아래 비교에서 안내)
@@ -1734,6 +1826,7 @@
                 var untouched = key(mine) === key(baseLinks);
                 var keep = (untouched ? latest : mine).filter(function (l) { return !!workById(l.predecessorId); });   // 삭제된 작업은 뺀다
                 form.querySelector('[data-pre-list]').innerHTML = preListHtml(keep);
+                filterPre();
                 if (key(baseLinks) !== key(latest)) sheet.conflictNote('predecessors', linksText(latest), untouched);
                 baseLinks = latest;
                 w = cur;
@@ -1743,7 +1836,7 @@
             danger: isNew ? null : {
                 label: '작업 삭제',
                 onClick: async function (sheet) {
-                    var ok = await App.confirm({ title: '작업 삭제', message: '"' + w.title + '" 작업을 삭제합니다. 되돌릴 수 없습니다.', verb: '작업 삭제' });
+                    var ok = await App.confirm({ title: '작업 삭제', message: '"' + w.title + '" 작업 삭제 (되돌릴 수 없음)', verb: '작업 삭제' });
                     if (!ok) return;
                     try {
                         // 시트를 연 뒤 다른 사람이 실적·일정을 적었으면 모르고 지우지 않게 본 버전을 함께 보낸다
@@ -1793,9 +1886,14 @@
                 ['planStart', 'planEnd', 'actualStart', 'actualEnd', 'progress'].forEach(function (n) { f[n].addEventListener('input', function () { preview.update(); }); });
                 f.stageId.addEventListener('change', function () { preview.update(); });
                 var preList = form.querySelector('[data-pre-list]');
+                formRef = form;
+                filterPre();
+                form.querySelector('[data-pre-other]').addEventListener('change', filterPre);
+                f.stageId.addEventListener('change', filterPre);
                 preList.addEventListener('change', function (e) {
                     var box = e.target.closest('input[name=pre]');
                     if (box) box.closest('.pre-row').querySelector('.pre-opts').hidden = !box.checked;
+                    filterPre();
                     preview.update();
                 });
                 preList.addEventListener('input', function (e) { if (e.target.type === 'number') preview.update(); });
@@ -1815,8 +1913,6 @@
                         preview.update();
                     }
                 });
-                var more = form.querySelector('[data-work-more-fields]');
-                if (!isNew) more.addEventListener('toggle', function () { App.pref.set('detail.workMore', more.open ? '1' : '0'); });
                 sync();
                 refreshUi = function () { sync(); preview.update(); };
 
@@ -1861,13 +1957,6 @@
                 continueNext = false;
                 var f = form.elements;
                 var quickNote = Quick.note(form);
-                // 접힌 칸(일정·선행·메모)에 걸린 오류는 펼쳐서 보이게 한다
-                var showField = function (err) {
-                    var more = form.querySelector('[data-work-more-fields]');
-                    var el = err && err.field ? form.querySelector('[data-field="' + err.field + '"]') : null;
-                    if (more && el && more.contains(el)) more.open = true;
-                };
-                try {
                 await api('SaveWork', {
                     id: isNew ? null : w.id,
                     stageId: +f.stageId.value,
@@ -1886,25 +1975,26 @@
                     links: selectedLinks(form),
                     clientToday: App.localToday()
                 });
-                } catch (err) { showField(err); throw err; }
                 if (isNew && again) {
                     // 방금 만든 작업도 다음 작업의 선행으로 고를 수 있게 목록을 다시 그린다(고른 선행은 유지)
                     var picked = selectedLinks(form);
                     form.querySelector('[data-pre-list]').innerHTML = preListHtml(picked);
+                    filterPre();
                     var added = f.title.value.trim();
                     f.title.value = '';
                     if (sheet.markClean) sheet.markClean();
                     sheet.setError(null);
                     if (preview) preview.update();
+                    sheet.showPane('info');
                     f.title.focus();
-                    App.toast('\'' + added + '\' 을(를) 추가했습니다. 다음 작업을 입력해 주세요.');
+                    App.toast('\'' + added + '\' 추가했습니다.');
                     return false;
                 }
                 // 빠른 갱신의 진행 내용 한 줄은 저장 뒤 이 작업의 진행 내용(댓글)으로 남긴다
                 if (quickNote && !isNew) {
                     try {
                         await api('Comment', { projectId: P.id, stageId: +f.stageId.value, workId: w.id, text: quickNote });
-                    } catch (err) { App.toast('작업은 저장했지만 진행 내용을 남기지 못했습니다: ' + err.message, 'error'); }
+                    } catch (err) { App.toast('저장했지만 진행 내용은 남기지 못했습니다: ' + err.message, 'error'); }
                 }
                 App.toast(isNew ? '작업을 추가했습니다.' : '작업을 저장했습니다.');
             }
@@ -1922,7 +2012,7 @@
             options.map(function (o, i) {
                 return '<label class="choice"><input type="radio" name="state" value="' + o[0] + '"' + (i === 0 ? ' checked' : '') + ' /><span>' + o[1] + '</span></label>';
             }).join('') + '</div></div>' +
-            field('reason', '사유', '<textarea name="reason" rows="3" maxlength="' + LIM.reason + '" placeholder="보류·중단은 사유가 필요합니다"></textarea>');
+            field('reason', '사유', '<textarea name="reason" rows="3" maxlength="' + LIM.reason + '" placeholder="사유 (보류·중단 필수)"></textarea>');
 
         var opened = P.state;
         App.sheet({
@@ -1957,7 +2047,7 @@
                 '<div class="field" data-field="locationId"><span class="label">위치</span>' + LocationPicker.html('clone') + '</div>' +
                 field('owner', '담당', '<input name="owner" maxlength="' + LIM.userName + '" list="dl-users" autocomplete="off" value="' + esc(data.me.name) + '" />') +
                 '<label class="check"><input type="checkbox" name="works" checked />작업과 의존 관계도 복사</label>' +
-                '<span class="hint">단계·체크리스트·내역을 복사하고, 날짜는 원본 착수일로부터의 근무일 간격 그대로 새 착수일에 맞춰 옮깁니다. 실적·활동·첨부·기준선은 복사하지 않습니다. 작업 담당은 원본 그대로입니다.</span>',
+                '<span class="hint">단계·체크리스트·내역을 복사합니다. 날짜는 새 착수일에 맞춥니다. 실적·활동·첨부·기준선은 제외. 작업 담당은 원본 그대로입니다.</span>',
             primary: '복제',
             onOpen: function (form) {
                 picker = LocationPicker.bind(form.querySelector('[data-location-picker]'), locations, P.locationId);
@@ -1986,7 +2076,7 @@
         if (!P.baselineAt) {
             try {
                 await api('Baseline', { id: P.id, version: P.version });
-                App.toast('지금의 목표 일정을 기준선으로 확정했습니다.');
+                App.toast('기준선을 확정했습니다.');
             } catch (err) { App.toast(err.message, 'error'); }
             return;
         }
@@ -1994,16 +2084,16 @@
         App.sheet({
             title: '기준선 다시 확정',
             primary: '다시 확정',
-            html: '<p class="form-warn">' + icon('alert') + '<span>지금의 목표 일정으로 기준선을 덮어씁니다. 기준선 대비 밀린 일수가 0 으로 돌아가고 이전 기준선은 되돌릴 수 없습니다.</span></p>' +
+            html: '<p class="form-warn">' + icon('alert') + '<span>기준선을 덮어씁니다. 밀린 일수가 0 이 되고 되돌릴 수 없습니다.</span></p>' +
                 '<div class="form-note" data-baseline-ends>' + icon('pin') + '<span>기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' + esc(P.endTarget || '미정') + '</b>' +
                 (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '') + '</span></div>' +
-                field('reason', '사유' + helpQ('baseline', '기준선과 차수'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" required placeholder="기준선을 다시 정하는 이유 (계약 변경, 범위 조정 등)"></textarea>'),
+                field('reason', '사유' + helpQ('baseline', '기준선과 차수'), '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" required placeholder="사유"></textarea>'),
             // 다른 사람이 과제를 바꿨으면 최신 일정을 보고 다시 확정하게 한다 (api 가 P 를 최신으로 바꿔 둔다)
             onConflict: function (form) {
                 opened = P.version;
                 form.querySelector('[data-baseline-ends] span').innerHTML = '기준선 목표 종료 <b>' + esc(P.baselineEnd || '미정') + '</b> → 지금 목표 종료 <b>' +
                     esc(P.endTarget || '미정') + '</b>' + (P.slipDays ? ' (' + signed(P.slipDays) + '일)' : '');
-                return '다른 사용자가 먼저 과제를 바꿨습니다. 최신 목표 일정을 확인한 뒤 다시 확정해 주세요.';
+                return '다른 사용자가 과제를 바꿨습니다. 확인 후 다시 확정하세요.';
             },
             onSubmit: async function (form) {
                 await api('Baseline', { id: P.id, reason: form.elements.reason.value, version: opened });
@@ -2020,7 +2110,7 @@
             primary: '휴지통으로 보내기',
             html: '<p class="form-warn">' + icon('trash') + '<span>"' + esc(P.title) + '" 과제를 휴지통으로 보냅니다. 목록·대시보드·보고에서 빠지고, ' +
                 '보관 기간 안에는 관리 &gt; 휴지통에서 되살릴 수 있습니다.</span></p>' +
-                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="지우는 이유 (중복 등록, 취소 등)"></textarea>', true),
+                field('reason', '사유', '<textarea name="reason" rows="2" maxlength="' + LIM.reason + '" placeholder="사유"></textarea>', true),
             onSubmit: async function (form) {
                 try {
                     var r = await App.post(detailUrl('Delete'), { id: P.id, reason: form.elements.reason.value, version: opened });
@@ -2029,7 +2119,7 @@
                     if (err.data && err.data.conflict) {
                         await reload();
                         opened = P.version;
-                        throw new Error('다른 사용자가 먼저 과제를 바꿨습니다. 최신 내용을 확인한 뒤 다시 삭제해 주세요.');
+                        throw new Error('다른 사용자가 과제를 바꿨습니다. 확인 후 다시 삭제하세요.');
                     }
                     throw err;
                 }
@@ -2095,6 +2185,9 @@
 
     $('go-today').addEventListener('click', function () { if (gantt) gantt.scrollToToday(); });
     $('add-stage').addEventListener('click', function () { openStageSheet(null); });
+    document.querySelectorAll('#stage-sort [data-sort]').forEach(function (b) {
+        b.addEventListener('click', function () { sortStages(b.dataset.sort); });
+    });
     $('replan').addEventListener('click', openReplanSheet);
     // 단계 일정 표: 모든 단계의 목표일·완료일을 한 시트에서 고친다 (schedule.js)
     $('edit-schedule').addEventListener('click', function () {
@@ -2287,7 +2380,7 @@
                 });
             });
         } else if (kind === 'deleted') {
-            el.innerHTML = icon('alert') + '<span>이 과제는 다른 사용자가 삭제했습니다. 저장할 수 없습니다.</span>' +
+            el.innerHTML = icon('alert') + '<span>다른 사용자가 삭제한 과제입니다.</span>' +
                 '<a class="btn small" href="' + App.url('/Projects') + '">과제 목록</a>';
         } else {
             el.innerHTML = '';
