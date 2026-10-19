@@ -106,7 +106,7 @@ jobs:
 
       - name: 테스트 실행 파일 업로드
         if: success() && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: GanttScheduler-win-x64-test
           path: ${{ runner.temp }}/GanttScheduler-win-x64-test.zip
