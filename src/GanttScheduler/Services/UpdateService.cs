@@ -377,22 +377,35 @@ public class UpdateService
         }
     }
 
-    // zip 을 풀어 내용을 확인하고 "받아 둔 업데이트"로 기록한다
+    // zip 을 풀어 내용을 확인하고 "받아 둔 업데이트"로 기록한다.
+    // 풀린 폴더를 Directory.Move 로 옮기면 Windows 에서 방금 만든 dll·exe 를 백신·인덱서가 잡고 있어 "액세스 거부"가 나므로,
+    // 버전은 zip 안의 release.json 에서 먼저 읽고 최종 폴더에 바로 푼다 (이름 바꾸기 없음)
     private void Stage(string zip, string sha, string origin, string by, ReleaseInfo? expected)
     {
-        var temp = Path.Combine(_paths.StagedRoot, "_" + Guid.NewGuid().ToString("N"));
+        string? dir = null;
+        var done = false;
         try
         {
-            Directory.CreateDirectory(temp);
-            try { ZipFile.ExtractToDirectory(zip, temp, overwriteFiles: true); }
+            ReleaseInfo? info;
+            bool hasEntry;
+            try
+            {
+                using var za = ZipFile.OpenRead(zip);
+                var inner = za.GetEntry("release.json");
+                if (inner == null) info = null;
+                else
+                {
+                    using var rd = new StreamReader(inner.Open(), System.Text.Encoding.UTF8);
+                    info = UpdateSource.ParseManifest(rd.ReadToEnd());
+                }
+                hasEntry = za.GetEntry(UpdateApplier.EntryDll) != null;
+            }
             catch (Exception ex) when (ex is InvalidDataException or IOException)
             {
                 throw new UpdateException("zip 파일을 열 수 없습니다.", "릴리스의 GanttScheduler-win-x64.zip 을 다시 받아 올려 주세요.");
             }
 
-            var inner = Path.Combine(temp, "release.json");
-            var info = File.Exists(inner) ? UpdateSource.ParseManifest(File.ReadAllText(inner)) : null;
-            if (info == null || !File.Exists(Path.Combine(temp, UpdateApplier.EntryDll)))
+            if (info == null || !hasEntry)
                 throw new UpdateException("과제 스케줄러 배포 파일이 아닙니다.", "릴리스의 GanttScheduler-win-x64.zip 을 그대로 올려 주세요 (압축을 풀거나 다시 묶지 않은 파일).");
             if (expected != null && info.Version != expected.Version)
                 throw new UpdateException($"받은 파일의 버전(v{info.Version})이 배포 정보(v{expected.Version})와 다릅니다.", "잠시 후 다시 확인해 주세요.");
@@ -402,19 +415,35 @@ public class UpdateService
             if (!string.IsNullOrEmpty(info.Rid) && info.Rid.StartsWith("win", StringComparison.OrdinalIgnoreCase) != windows)
                 throw new UpdateException($"이 서버의 운영체제용 파일이 아닙니다 ({info.Rid}).", "서버 운영체제에 맞는 배포 파일을 올려 주세요.");
 
-            var dir = Path.Combine(_paths.StagedRoot, info.Version);
-            if (Directory.Exists(dir)) Directory.Delete(dir, true);
-            Directory.Move(temp, dir);
-            MakeExecutable(dir);
+            var target = dir = Path.Combine(_paths.StagedRoot, info.Version);
+            RetryIo(() => { if (Directory.Exists(target)) Directory.Delete(target, true); });
+            Directory.CreateDirectory(_paths.StagedRoot);
+            try { ZipFile.ExtractToDirectory(zip, target, overwriteFiles: true); }
+            catch (InvalidDataException)
+            {
+                throw new UpdateException("zip 파일을 열 수 없습니다.", "릴리스의 GanttScheduler-win-x64.zip 을 다시 받아 올려 주세요.");
+            }
+            MakeExecutable(target);
 
             var schema = string.IsNullOrEmpty(info.Schema) ? expected?.Schema : info.Schema;
             var notes = string.IsNullOrEmpty(info.Notes) ? expected?.Notes : info.Notes;
-            Change(s => s.Staged = new StagedUpdate(info.Version, dir, sha, schema, notes, DateTime.UtcNow, origin, by));
+            Change(s => s.Staged = new StagedUpdate(info.Version, target, sha, schema, notes, DateTime.UtcNow, origin, by));
+            done = true;
             _log.LogInformation("업데이트 v{Version} 받아 둠 ({Origin})", info.Version, origin);
         }
         finally
         {
-            if (Directory.Exists(temp)) TryDeleteDir(temp);
+            if (!done && dir != null && Directory.Exists(dir)) TryDeleteDir(dir);
+        }
+    }
+
+    // 백신·인덱서가 방금 만든 파일을 잠깐 잡고 있으면 IOException/UnauthorizedAccessException 이 난다 — 몇 번 기다렸다 다시 한다
+    private static void RetryIo(Action action)
+    {
+        for (var i = 0; ; i++)
+        {
+            try { action(); return; }
+            catch (Exception ex) when (i < 9 && ex is IOException or UnauthorizedAccessException) { Thread.Sleep(500); }
         }
     }
 
