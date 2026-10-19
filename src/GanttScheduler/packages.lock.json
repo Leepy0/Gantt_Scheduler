@@ -65,11 +65,11 @@
       },
       "PDFsharp-MigraDoc": {
         "type": "Direct",
-        "requested": "[6.2.4, )",
-        "resolved": "6.2.4",
-        "contentHash": "ZlRUJaAAo4K2oMt1v02GTeGOHIOoOvcH1e1WYMpunCG1MK8jd4EBrbzSHoYSN7yOfKWFtOIUfzvmKhRGPsyWQQ==",
+        "requested": "[6.5.0, )",
+        "resolved": "6.5.0",
+        "contentHash": "1fCVgphYiDxS82a0UhtJcDr3CGywhuBA0/A1h/SMdnOj1sLB7iDnBHpgiW45PLxSRTdxnUWlMnSesUyi+v5WEQ==",
         "dependencies": {
-          "PDFsharp": "6.2.4",
+          "PDFsharp": "6.5.0",
           "System.Security.Cryptography.Pkcs": "8.0.1"
         }
       },
@@ -370,8 +370,8 @@
       },
       "PDFsharp": {
         "type": "Transitive",
-        "resolved": "6.2.4",
-        "contentHash": "GhTr9F1uOYXHCIEOB5PXIgqn5a8WLsJL2m0eewTA0IvY1j6N4HGXHKKmEyB90/N6vrjmYamf41V9zbmdW2HY3g==",
+        "resolved": "6.5.0",
+        "contentHash": "H9PYxFBvbevuYT5Q/d64MX7YxzEUuhl887fFTwN4By9vAKy9m54yBk5/Pm989KmBbtB2i6cUNa3Gve8loPSYkg==",
         "dependencies": {
           "System.Security.Cryptography.Pkcs": "8.0.1"
         }
