@@ -1,0 +1,18 @@
+info: DbInitializer[0]
+      기준선 차수 이력: 과제 3건의 기존 기준선을 1차로 옮겼습니다.
+warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+      No XML encryptor configured. Key {85baf4bf-bfad-42f2-88d8-54ecd9110001} may be persisted to storage in unencrypted form.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5080
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /home/runner/work/Gantt_Scheduler/Gantt_Scheduler/src/GanttScheduler
+info: GanttScheduler.Services.SnapshotWorker[0]
+      진척 스냅샷: 2026-10-19 과제 7건
+info: GanttScheduler.Services.BackupService[0]
+      백업 완료 gantt-20261019-204732 (manual, 평영, 0초)
+warn: GanttScheduler.Services.TrashService[0]
+      과제 영구 삭제: #11 동남아 A제품 1라인 컨베이어 개선 — 삭제 평영 2026-10-19 11:48Z, 영구 삭제 평영
